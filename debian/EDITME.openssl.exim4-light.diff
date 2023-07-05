@@ -1,0 +1,19 @@
+--- EDITME.exim4-light	2017-10-28 08:02:20.930695089 +0200
++++ EDITME.exim4-light	2017-10-28 08:03:25.433584564 +0200
+@@ -760,13 +760,13 @@ SUPPORT_TLS=yes
+ 
+ # Uncomment one of these settings if you are using OpenSSL; pkg-config vs not
+ # USE_OPENSSL_PC=openssl
+-# TLS_LIBS=-lssl -lcrypto
++TLS_LIBS=-lssl -lcrypto
+ 
+ # Uncomment the first and either the second or the third of these if you
+ # are using GnuTLS.  If you have pkg-config, then the second, else the third.
+-USE_GNUTLS=yes
++# USE_GNUTLS=yes
+ # USE_GNUTLS_PC=gnutls
+-TLS_LIBS=-lgnutls
++# TLS_LIBS=-lgnutls
+ 
+ # If using GnuTLS older than 2.10 and using pkg-config then note that Exim's
+ # build process will require libgcrypt-config to exist in your $PATH.  A
