@@ -1,0 +1,10 @@
+--- exim_monitor/EDITME	2018-03-15 20:22:06.000000000 +0000
++++ EDITME.eximon	2018-03-16 18:27:06.609171034 +0000
+@@ -1,6 +1,7 @@
+ ##################################################
+ #                The Exim Monitor                #
+ ##################################################
++# -*- makefile -*-
+ 
+ # This is the template for the Exim monitor's main build-time configuration
+ # file. It contains settings that are independent of any operating system. It
