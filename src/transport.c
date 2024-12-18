@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* General functions concerned with transportation, and generic options for all
 transports. */
@@ -15,75 +17,76 @@ transports. */
 data blocks and which therefore have the opt_public flag set. Note that there
 are other options living inside this structure which can be set only from
 certain transports. */
+#define LOFF(field) OPT_OFF(transport_instance, field)
 
 optionlist optionlist_transports[] = {
   /*	name		type					value */
   { "*expand_group",    opt_stringptr|opt_hidden|opt_public,
-                 (void *)offsetof(transport_instance, expand_gid) },
+                 LOFF(expand_gid) },
   { "*expand_user",     opt_stringptr|opt_hidden|opt_public,
-                 (void *)offsetof(transport_instance, expand_uid) },
+                 LOFF(expand_uid) },
   { "*headers_rewrite_flags", opt_int|opt_public|opt_hidden,
-                 (void *)offsetof(transport_instance, rewrite_existflags) },
+                 LOFF(rewrite_existflags) },
   { "*headers_rewrite_rules", opt_void|opt_public|opt_hidden,
-                 (void *)offsetof(transport_instance, rewrite_rules) },
+                 LOFF(rewrite_rules) },
   { "*set_group",       opt_bool|opt_hidden|opt_public,
-                 (void *)offsetof(transport_instance, gid_set) },
+                 LOFF(gid_set) },
   { "*set_user",        opt_bool|opt_hidden|opt_public,
-                 (void *)offsetof(transport_instance, uid_set) },
+                 LOFF(uid_set) },
   { "body_only",        opt_bool|opt_public,
-                 (void *)offsetof(transport_instance, body_only) },
+                 LOFF(body_only) },
   { "current_directory", opt_stringptr|opt_public,
-                 (void *)offsetof(transport_instance, current_dir) },
+                 LOFF(current_dir) },
   { "debug_print",      opt_stringptr | opt_public,
-                 (void *)offsetof(transport_instance, debug_string) },
+                 LOFF(debug_string) },
   { "delivery_date_add", opt_bool|opt_public,
-                 (void *)(offsetof(transport_instance, delivery_date_add)) },
+                 LOFF(delivery_date_add) },
   { "disable_logging",  opt_bool|opt_public,
-                 (void *)(offsetof(transport_instance, disable_logging)) },
+                 LOFF(disable_logging) },
   { "driver",           opt_stringptr|opt_public,
-                 (void *)offsetof(transport_instance, driver_name) },
+                 LOFF(driver_name) },
   { "envelope_to_add",   opt_bool|opt_public,
-                 (void *)(offsetof(transport_instance, envelope_to_add)) },
+                 LOFF(envelope_to_add) },
 #ifndef DISABLE_EVENT
   { "event_action",     opt_stringptr | opt_public,
-                 (void *)offsetof(transport_instance, event_action) },
+                 LOFF(event_action) },
 #endif
   { "group",             opt_expand_gid|opt_public,
-                 (void *)offsetof(transport_instance, gid) },
+                 LOFF(gid) },
   { "headers_add",      opt_stringptr|opt_public|opt_rep_str,
-                 (void *)offsetof(transport_instance, add_headers) },
+                 LOFF(add_headers) },
   { "headers_only",     opt_bool|opt_public,
-                 (void *)offsetof(transport_instance, headers_only) },
+                 LOFF(headers_only) },
   { "headers_remove",   opt_stringptr|opt_public|opt_rep_str,
-                 (void *)offsetof(transport_instance, remove_headers) },
+                 LOFF(remove_headers) },
   { "headers_rewrite",  opt_rewrite|opt_public,
-                 (void *)offsetof(transport_instance, headers_rewrite) },
+                 LOFF(headers_rewrite) },
   { "home_directory",   opt_stringptr|opt_public,
-                 (void *)offsetof(transport_instance, home_dir) },
+                 LOFF(home_dir) },
   { "initgroups",       opt_bool|opt_public,
-                 (void *)offsetof(transport_instance, initgroups) },
+                 LOFF(initgroups) },
   { "max_parallel",     opt_stringptr|opt_public,
-                 (void *)offsetof(transport_instance, max_parallel) },
+                 LOFF(max_parallel) },
   { "message_size_limit", opt_stringptr|opt_public,
-                 (void *)offsetof(transport_instance, message_size_limit) },
+                 LOFF(message_size_limit) },
   { "rcpt_include_affixes", opt_bool|opt_public,
-                 (void *)offsetof(transport_instance, rcpt_include_affixes) },
+                 LOFF(rcpt_include_affixes) },
   { "retry_use_local_part", opt_bool|opt_public,
-                 (void *)offsetof(transport_instance, retry_use_local_part) },
+                 LOFF(retry_use_local_part) },
   { "return_path",      opt_stringptr|opt_public,
-                 (void *)(offsetof(transport_instance, return_path)) },
+                 LOFF(return_path) },
   { "return_path_add",   opt_bool|opt_public,
-                 (void *)(offsetof(transport_instance, return_path_add)) },
+                 LOFF(return_path_add) },
   { "shadow_condition", opt_stringptr|opt_public,
-                 (void *)offsetof(transport_instance, shadow_condition) },
+                 LOFF(shadow_condition) },
   { "shadow_transport", opt_stringptr|opt_public,
-                 (void *)offsetof(transport_instance, shadow) },
+                 LOFF(shadow) },
   { "transport_filter", opt_stringptr|opt_public,
-                 (void *)offsetof(transport_instance, filter_command) },
+                 LOFF(filter_command) },
   { "transport_filter_timeout", opt_time|opt_public,
-                 (void *)offsetof(transport_instance, filter_timeout) },
+                 LOFF(filter_timeout) },
   { "user",             opt_expand_uid|opt_public,
-                 (void *)offsetof(transport_instance, uid) }
+                 LOFF(uid) }
 };
 
 int optionlist_transports_size = nelem(optionlist_transports);
@@ -95,12 +98,11 @@ int optionlist_transports_size = nelem(optionlist_transports);
 void
 options_transports(void)
 {
-struct transport_info * ti;
 uschar buf[64];
 
 options_from_list(optionlist_transports, nelem(optionlist_transports), US"TRANSPORTS", NULL);
 
-for (ti = transports_available; ti->driver_name[0]; ti++)
+for (transport_info * ti = transports_available; ti->driver_name[0]; ti++)
   {
   spf(buf, sizeof(buf), US"_DRIVER_TRANSPORT_%T", ti->driver_name);
   builtin_macro_create(buf);
@@ -142,8 +144,6 @@ the work. */
 void
 transport_init(void)
 {
-transport_instance *t;
-
 readconf_driver_init(US"transport",
   (driver_instance **)(&transports),     /* chain anchor */
   (driver_info *)transports_available,   /* available drivers */
@@ -156,7 +156,7 @@ readconf_driver_init(US"transport",
 /* Now scan the configured transports and check inconsistencies. A shadow
 transport is permitted only for local transports. */
 
-for (t = transports; t; t = t->next)
+for (transport_instance * t = transports; t; t = t->next)
   {
   if (!t->info->local && t->shadow)
     log_write(0, LOG_PANIC_DIE|LOG_CONFIG,
@@ -174,6 +174,20 @@ for (t = transports; t; t = t->next)
 /*************************************************
 *             Write block of data                *
 *************************************************/
+
+static int
+tpt_write(int fd, uschar * block, int len, BOOL more, int options)
+{
+return
+#ifndef DISABLE_TLS
+  tls_out.active.sock == fd
+    ? tls_write(tls_out.active.tls_ctx, block, len, more) :
+#endif
+#ifdef MSG_MORE
+  more && !(options & topt_not_socket) ? send(fd, block, len, MSG_MORE) :
+#endif
+  write(fd, block, len);
+}
 
 /* Subroutine called by write_chunk() and at the end of the message actually
 to write a data block. Also called directly by some transports to write
@@ -218,63 +232,57 @@ Returns:    TRUE on success, FALSE on failure (with errno preserved);
 */
 
 static BOOL
-transport_write_block_fd(transport_ctx * tctx, uschar *block, int len, BOOL more)
+transport_write_block_fd(transport_ctx * tctx, uschar * block, int len, BOOL more)
 {
-int i, rc, save_errno;
+int rc, save_errno;
 int local_timeout = transport_write_timeout;
+int connretry = 1;
 int fd = tctx->u.fd;
 
 /* This loop is for handling incomplete writes and other retries. In most
 normal cases, it is only ever executed once. */
 
-for (i = 0; i < 100; i++)
+for (int i = 0; i < 100; i++)
   {
   DEBUG(D_transport)
     debug_printf("writing data block fd=%d size=%d timeout=%d%s\n",
       fd, len, local_timeout, more ? " (more expected)" : "");
 
-  /* This code makes use of alarm() in order to implement the timeout. This
-  isn't a very tidy way of doing things. Using non-blocking I/O with select()
-  provides a neater approach. However, I don't know how to do this when TLS is
-  in use. */
+  /* When doing TCP Fast Open we may get this far before the 3-way handshake
+  is complete, and write returns ENOTCONN.  Detect that, wait for the socket
+  to become writable, and retry once only. */
 
-  if (transport_write_timeout <= 0)   /* No timeout wanted */
+  for(;;)
     {
-    rc =
-#ifdef SUPPORT_TLS
-	tls_out.active.sock == fd ? tls_write(tls_out.active.tls_ctx, block, len, more) :
-#endif
-#ifdef MSG_MORE
-	more && !(tctx->options & topt_not_socket)
-	  ? send(fd, block, len, MSG_MORE) :
-#endif
-	write(fd, block, len);
-    save_errno = errno;
-    }
+    /* This code makes use of alarm() in order to implement the timeout. This
+    isn't a very tidy way of doing things. Using non-blocking I/O with select()
+    provides a neater approach. However, I don't know how to do this when TLS is
+    in use. */
 
-  /* Timeout wanted. */
-
-  else
-    {
-    ALARM(local_timeout);
-
-    rc =
-#ifdef SUPPORT_TLS
-	tls_out.active.sock == fd ? tls_write(tls_out.active.tls_ctx, block, len, more) :
-#endif
-#ifdef MSG_MORE
-	more && !(tctx->options & topt_not_socket)
-	  ? send(fd, block, len, MSG_MORE) :
-#endif
-	write(fd, block, len);
-
-    save_errno = errno;
-    local_timeout = ALARM_CLR(0);
-    if (sigalrm_seen)
+    if (transport_write_timeout <= 0)   /* No timeout wanted */
       {
-      errno = ETIMEDOUT;
-      return FALSE;
+      rc = tpt_write(fd, block, len, more, tctx->options);
+      save_errno = errno;
       }
+    else				/* Timeout wanted. */
+      {
+      sigalrm_seen = FALSE;
+      ALARM(local_timeout);
+	rc = tpt_write(fd, block, len, more, tctx->options);
+	save_errno = errno;
+      local_timeout = ALARM_CLR(0);
+      if (sigalrm_seen)
+	{
+	errno = ETIMEDOUT;
+	return FALSE;
+	}
+      }
+
+    if (rc >= 0 || errno != ENOTCONN || connretry <= 0)
+      break;
+
+    poll_one_fd(fd, POLLOUT, -1);		/* could set timeout? retval check? */
+    connretry--;
     }
 
   /* Hopefully, the most common case is success, so test that first. */
@@ -378,8 +386,11 @@ transport_ctx tctx = {{0}};
 gstring gs = { .size = big_buffer_size, .ptr = 0, .s = big_buffer };
 va_list ap;
 
+/* Use taint-unchecked routines for writing into big_buffer, trusting
+that the result will never be expanded. */
+
 va_start(ap, format);
-if (!string_vformat(&gs, FALSE, format, ap))
+if (!string_vformat(&gs, SVFMT_TAINT_NOCHK, format, ap))
   log_write(0, LOG_MAIN|LOG_PANIC_DIE, "overlong formatted string in transport");
 va_end(ap);
 tctx.u.fd = fd;
@@ -423,11 +434,10 @@ Returns:     TRUE on success, FALSE on failure (with errno preserved)
 */
 
 BOOL
-write_chunk(transport_ctx * tctx, uschar *chunk, int len)
+write_chunk(transport_ctx * tctx, const uschar * chunk, int len)
 {
-uschar *start = chunk;
-uschar *end = chunk + len;
-uschar *ptr;
+const uschar * start = chunk;
+const uschar * end = chunk + len;
 int mlen = DELIVER_OUT_BUFFER_SIZE - nl_escape_length - 2;
 
 /* The assumption is made that the check string will never stretch over move
@@ -464,7 +474,7 @@ if (nl_partial_match >= 0)
 for possible escaping. The code for the non-NL route should be as fast as
 possible. */
 
-for (ptr = start; ptr < end; ptr++)
+for (const uschar * ptr = start; ptr < end; ptr++)
   {
   int ch, len;
 
@@ -570,7 +580,7 @@ Arguments:
 Returns:            a string
 */
 
-uschar *
+const uschar *
 transport_rcpt_address(address_item *addr, BOOL include_affixes)
 {
 uschar *at;
@@ -582,14 +592,14 @@ if (include_affixes)
   return addr->address;
   }
 
-if (addr->suffix == NULL)
+if (!addr->suffix)
   {
-  if (addr->prefix == NULL) return addr->address;
+  if (!addr->prefix) return addr->address;
   return addr->address + Ustrlen(addr->prefix);
   }
 
 at = Ustrrchr(addr->address, '@');
-plen = (addr->prefix == NULL)? 0 : Ustrlen(addr->prefix);
+plen = addr->prefix ? Ustrlen(addr->prefix) : 0;
 slen = Ustrlen(addr->suffix);
 
 return string_sprintf("%.*s@%s", (int)(at - addr->address - plen - slen),
@@ -642,7 +652,7 @@ so that we don't handle it again. */
 
 for (ppp = *pdlist; ppp; ppp = ppp->next) if (p == ppp->ptr) return TRUE;
 
-ppp = store_get(sizeof(struct aci));
+ppp = store_get(sizeof(struct aci), GET_UNTAINTED);
 ppp->next = *pdlist;
 *pdlist = ppp;
 ppp->ptr = p;
@@ -666,7 +676,7 @@ if (ppp) return TRUE;
 
 /* Remember what we have output, and output it. */
 
-ppp = store_get(sizeof(struct aci));
+ppp = store_get(sizeof(struct aci), GET_UNTAINTED);
 ppp->next = *pplist;
 *pplist = ppp;
 ppp->ptr = pp;
@@ -694,10 +704,9 @@ Returns:                TRUE on success; FALSE on failure.
 */
 BOOL
 transport_headers_send(transport_ctx * tctx,
-  BOOL (*sendfn)(transport_ctx * tctx, uschar * s, int len))
+  BOOL (*sendfn)(transport_ctx * tctx, const uschar * s, int len))
 {
-header_line *h;
-const uschar *list;
+const uschar * list;
 transport_instance * tblock = tctx ? tctx->tblock : NULL;
 address_item * addr = tctx ? tctx->addr : NULL;
 
@@ -708,13 +717,12 @@ match any entries therein.  It is a colon-sep list; expand the items
 separately and squash any empty ones.
 Then check addr->prop.remove_headers too, provided that addr is not NULL. */
 
-for (h = header_list; h; h = h->next) if (h->type != htype_old)
+for (header_line * h = header_list; h; h = h->next) if (h->type != htype_old)
   {
-  int i;
   BOOL include_header = TRUE;
 
   list = tblock ? tblock->remove_headers : NULL;
-  for (i = 0; i < 2; i++)    /* For remove_headers && addr->prop.remove_headers */
+  for (int i = 0; i < 2; i++)    /* For remove_headers && addr->prop.remove_headers */
     {
     if (list)
       {
@@ -731,10 +739,17 @@ for (h = header_list; h; h = h->next) if (h->type != htype_old)
 	    return FALSE;
 	    }
 	len = s ? Ustrlen(s) : 0;
-	if (strncmpic(h->text, s, len) != 0) continue;
-	ss = h->text + len;
-	while (*ss == ' ' || *ss == '\t') ss++;
-	if (*ss == ':') break;
+	if (len && s[len-1] == '*')	/* trailing glob */
+	  {
+	  if (strncmpic(h->text, s, len-1) == 0) break;
+	  }
+	else
+	  {
+	  if (strncmpic(h->text, s, len) != 0) continue;
+	  ss = h->text + len;
+	  while (*ss == ' ' || *ss == '\t') ss++;
+	  if (*ss == ':') break;
+	  }
 	}
       if (s) { include_header = FALSE; break; }
       }
@@ -746,15 +761,18 @@ for (h = header_list; h; h = h->next) if (h->type != htype_old)
 
   if (include_header)
     {
+    int len;
     if (tblock && tblock->rewrite_rules)
       {
-      void *reset_point = store_get(0);
-      header_line *hh;
+      rmark reset_point = store_mark();
+      header_line * hh;
 
       if ((hh = rewrite_header(h, NULL, NULL, tblock->rewrite_rules,
 		  tblock->rewrite_existflags, FALSE)))
 	{
-	if (!sendfn(tctx, hh->text, hh->slen)) return FALSE;
+	len = hh->slen;
+	if (tctx->options & topt_truncate_headers && len > 998) len = 998;
+	if (!sendfn(tctx, hh->text, len)) return FALSE;
 	store_reset(reset_point);
 	continue;     /* With the next header line */
 	}
@@ -762,13 +780,15 @@ for (h = header_list; h; h = h->next) if (h->type != htype_old)
 
     /* Either no rewriting rules, or it didn't get rewritten */
 
-    if (!sendfn(tctx, h->text, h->slen)) return FALSE;
+    len = h->slen;
+    if (tctx->options & topt_truncate_headers && len > 998) len = 998;
+    if (!sendfn(tctx, h->text, len)) return FALSE;
     }
 
   /* Header removed */
 
   else
-    DEBUG(D_transport) debug_printf("removed header line:\n%s---\n", h->text);
+    DEBUG(D_transport) debug_printf("removed header line:\n %s---\n", h->text);
   }
 
 /* Add on any address-specific headers. If there are multiple addresses,
@@ -784,10 +804,9 @@ Headers added to an address by a router are guaranteed to end with a newline.
 
 if (addr)
   {
-  int i;
-  header_line *hprev = addr->prop.extra_headers;
-  header_line *hnext;
-  for (i = 0; i < 2; i++)
+  header_line * hprev = addr->prop.extra_headers, * hnext, * h;
+
+  for (int i = 0; i < 2; i++)
     for (h = hprev, hprev = NULL; h; h = hnext)
       {
       hnext = h->next;
@@ -797,7 +816,7 @@ if (addr)
 	{
 	if (!sendfn(tctx, h->text, h->slen)) return FALSE;
 	DEBUG(D_transport)
-	  debug_printf("added header line(s):\n%s---\n", h->text);
+	  debug_printf("added header line(s):\n %s---\n", h->text);
 	}
       }
   }
@@ -825,7 +844,7 @@ if (tblock && (list = CUS tblock->add_headers))
 	  return FALSE;
 	DEBUG(D_transport)
 	  {
-	  debug_printf("added header line:\n%s", s);
+	  debug_printf("added header line:\n %s", s);
 	  if (s[len-1] != '\n') debug_printf("\n");
 	  debug_printf("---\n");
 	  }
@@ -871,7 +890,7 @@ transport_write_timeout non-zero.
 
 Arguments:
   tctx
-    (fd, msg)		Either and fd, to write the message to,
+    (fd, msg)		Either an fd, to write the message to,
 			or a string: if null write message to allocated space
 			otherwire take content as headers.
     addr                (chain of) addresses (for extra headers), or NULL;
@@ -890,6 +909,7 @@ Arguments:
       add_delivery_date     if TRUE, add a "delivery-date" header
       use_crlf              if TRUE, turn NL into CR LF
       end_dot               if TRUE, send a terminating "." line at the end
+      no_flush		    if TRUE, do not flush at end
       no_headers            if TRUE, omit the headers
       no_body               if TRUE, omit the body
     check_string          a string to check for at the start of lines, or NULL
@@ -943,10 +963,10 @@ if (!(tctx->options & topt_no_headers))
 
   if (tctx->options & topt_add_return_path)
     {
-    uschar buffer[ADDRESS_MAXLENGTH + 20];
-    int n = sprintf(CS buffer, "Return-path: <%.*s>\n", ADDRESS_MAXLENGTH,
-      return_path);
-    if (!write_chunk(tctx, buffer, n)) goto bad;
+    int n;
+    uschar * s = string_sprintf("Return-path: <%.*s>\n%n",
+                          EXIM_EMAILADDR_MAX, return_path, &n);
+    if (!write_chunk(tctx, s, n)) goto bad;
     }
 
   /* Add envelope-to: if requested */
@@ -954,10 +974,9 @@ if (!(tctx->options & topt_no_headers))
   if (tctx->options & topt_add_envelope_to)
     {
     BOOL first = TRUE;
-    address_item *p;
     struct aci *plist = NULL;
     struct aci *dlist = NULL;
-    void *reset_point = store_get(0);
+    rmark reset_point = store_mark();
 
     if (!write_chunk(tctx, US"Envelope-to: ", 13)) goto bad;
 
@@ -965,8 +984,9 @@ if (!(tctx->options & topt_no_headers))
     anchors for lists of addresses already handled; they have to be defined at
     this level because write_env_to() calls itself recursively. */
 
-    for (p = tctx->addr; p; p = p->next)
-      if (!write_env_to(p, &plist, &dlist, &first, tctx)) goto bad;
+    for (address_item * p = tctx->addr; p; p = p->next)
+      if (!write_env_to(p, &plist, &dlist, &first, tctx))
+	goto bad;
 
     /* Add a final newline and reset the store used for tracking duplicates */
 
@@ -1023,7 +1043,7 @@ if (tctx->options & topt_use_bdat)
   if (!(tctx->options & topt_no_body))
     {
     if ((fsize = lseek(deliver_datafile, 0, SEEK_END)) < 0) return FALSE;
-    fsize -= SPOOL_DATA_START_OFFSET;
+    fsize -= spool_data_start_offset(message_id);
     if (size_limit > 0  &&  fsize > size_limit)
       fsize = size_limit;
     size = hsize + fsize;
@@ -1081,7 +1101,7 @@ if (  f.spool_file_wireformat
    )
   {
   ssize_t copied = 0;
-  off_t offset = SPOOL_DATA_START_OFFSET;
+  off_t offset = spool_data_start_offset(message_id);
 
   /* Write out any header data in the buffer */
 
@@ -1119,7 +1139,7 @@ if (!(tctx->options & topt_no_body))
 
   nl_check_length = abs(nl_check_length);
   nl_partial_match = 0;
-  if (lseek(deliver_datafile, SPOOL_DATA_START_OFFSET, SEEK_SET) < 0)
+  if (lseek(deliver_datafile, spool_data_start_offset(message_id), SEEK_SET) < 0)
     return FALSE;
   while (  (len = MIN(DELIVER_IN_BUFFER_SIZE, size)) > 0
 	&& (len = read(deliver_datafile, deliver_in_buffer, len)) > 0)
@@ -1141,13 +1161,18 @@ f.spool_file_wireformat = FALSE;
 
 /* If requested, add a terminating "." line (SMTP output). */
 
-if (tctx->options & topt_end_dot && !write_chunk(tctx, US".\n", 2))
-  return FALSE;
+if (tctx->options & topt_end_dot)
+  {
+  smtp_debug_cmd(US".", 0);
+  if (!write_chunk(tctx, US".\n", 2))
+    return FALSE;
+  }
 
 /* Write out any remaining data in the buffer before returning. */
 
-return (len = chunk_ptr - deliver_out_buffer) <= 0 ||
-  transport_write_block(tctx, deliver_out_buffer, len, FALSE);
+return (len = chunk_ptr - deliver_out_buffer) <= 0
+  || transport_write_block(tctx, deliver_out_buffer, len,
+			    !!(tctx->options & topt_no_flush));
 }
 
 
@@ -1175,7 +1200,8 @@ transport_write_message(transport_ctx * tctx, int size_limit)
 {
 BOOL last_filter_was_NL = TRUE;
 BOOL save_spool_file_wireformat = f.spool_file_wireformat;
-int rc, len, yield, fd_read, fd_write, save_errno;
+BOOL yield;
+int rc, len, fd_read, fd_write, save_errno;
 int pfd[2] = {-1, -1};
 pid_t filter_pid, write_pid;
 
@@ -1219,10 +1245,10 @@ write_pid = (pid_t)(-1);
 
   {
   int bits = fcntl(tctx->u.fd, F_GETFD);
-  (void)fcntl(tctx->u.fd, F_SETFD, bits | FD_CLOEXEC);
+  (void) fcntl(tctx->u.fd, F_SETFD, bits | FD_CLOEXEC);
   filter_pid = child_open(USS transport_filter_argv, NULL, 077,
-   &fd_write, &fd_read, FALSE);
-  (void)fcntl(tctx->u.fd, F_SETFD, bits & ~FD_CLOEXEC);
+			  &fd_write, &fd_read, FALSE, US"transport-filter");
+  (void) fcntl(tctx->u.fd, F_SETFD, bits & ~FD_CLOEXEC);
   }
 if (filter_pid < 0) goto TIDY_UP;      /* errno set */
 
@@ -1235,7 +1261,7 @@ via a(nother) pipe. While writing to the filter, we do not do the CRLF,
 smtp dots, or check string processing. */
 
 if (pipe(pfd) != 0) goto TIDY_UP;      /* errno set */
-if ((write_pid = fork()) == 0)
+if ((write_pid = exim_fork(US"tpt-filter-writer")) == 0)
   {
   BOOL rc;
   (void)close(fd_read);
@@ -1244,7 +1270,7 @@ if ((write_pid = fork()) == 0)
 
   tctx->u.fd = fd_write;
   tctx->check_string = tctx->escape_string = NULL;
-  tctx->options &= ~(topt_use_crlf | topt_end_dot | topt_use_bdat);
+  tctx->options &= ~(topt_use_crlf | topt_end_dot | topt_use_bdat | topt_no_flush);
 
   rc = internal_transport_write_message(tctx, size_limit);
 
@@ -1255,11 +1281,11 @@ if ((write_pid = fork()) == 0)
         != sizeof(int)
      || write(pfd[pipe_write], (void *)&tctx->addr->more_errno, sizeof(int))
         != sizeof(int)
-     || write(pfd[pipe_write], (void *)&tctx->addr->delivery_usec, sizeof(int))
-        != sizeof(int)
+     || write(pfd[pipe_write], (void *)&tctx->addr->delivery_time, sizeof(struct timeval))
+        != sizeof(struct timeval)
      )
     rc = FALSE;	/* compiler quietening */
-  _exit(0);
+  exim_underbar_exit(EXIT_SUCCESS);
   }
 save_errno = errno;
 
@@ -1279,7 +1305,7 @@ if (write_pid < 0)
 
 /* When testing, let the subprocess get going */
 
-if (f.running_in_test_harness) millisleep(250);
+testharness_pause_ms(250);
 
 DEBUG(D_transport)
   debug_printf("process %d writing to transport filter\n", (int)write_pid);
@@ -1307,6 +1333,7 @@ for (;;)
   ALARM_CLR(0);
   if (sigalrm_seen)
     {
+    DEBUG(D_transport) debug_printf("timed out reading from filter\n");
     errno = ETIMEDOUT;
     f.transport_filter_timed_out = TRUE;
     goto TIDY_UP;
@@ -1379,11 +1406,10 @@ if (write_pid > 0)
         yield = FALSE;
 	}
       else if (!ok)
-        {
+        {		/* Try to drain the pipe; read fails are don't care */
 	int dummy = read(pfd[pipe_read], (void *)&save_errno, sizeof(int));
         dummy = read(pfd[pipe_read], (void *)&tctx->addr->more_errno, sizeof(int));
-        dummy = read(pfd[pipe_read], (void *)&tctx->addr->delivery_usec, sizeof(int));
-	dummy = dummy;		/* compiler quietening */
+        dummy = read(pfd[pipe_read], (void *)&tctx->addr->delivery_time, sizeof(struct timeval));
         yield = FALSE;
         }
       }
@@ -1410,7 +1436,7 @@ if (yield)
         ? !write_chunk(tctx, US".\n", 2)
 	: !write_chunk(tctx, US"\n.\n", 3)
      )  )
-    yield = FALSE;
+    { smtp_debug_cmd(US".", 0); yield = FALSE; }
 
   /* Write out any remaining data in the buffer. */
 
@@ -1425,7 +1451,7 @@ DEBUG(D_transport)
   {
   debug_printf("end of filtering transport writing: yield=%d\n", yield);
   if (!yield)
-    debug_printf("errno=%d more_errno=%d\n", errno, tctx->addr->more_errno);
+    debug_printf(" errno=%d more_errno=%d\n", errno, tctx->addr->more_errno);
   }
 
 return yield;
@@ -1471,30 +1497,35 @@ Returns:    nothing
 */
 
 void
-transport_update_waiting(host_item *hostlist, uschar *tpname)
+transport_update_waiting(host_item * hostlist, uschar * tpname)
 {
 const uschar *prevname = US"";
-host_item *host;
 open_db dbblock;
 open_db *dbm_file;
+
+if (!is_new_message_id(message_id))
+  {
+  DEBUG(D_transport) debug_printf("message_id %s is not new format; "
+    "skipping wait-%s database update\n", message_id, tpname);
+  return;
+  }
 
 DEBUG(D_transport) debug_printf("updating wait-%s database\n", tpname);
 
 /* Open the database for this transport */
 
 if (!(dbm_file = dbfn_open(string_sprintf("wait-%.200s", tpname),
-		      O_RDWR, &dbblock, TRUE)))
+		      O_RDWR, &dbblock, TRUE, TRUE)))
   return;
 
 /* Scan the list of hosts for which this message is waiting, and ensure
 that the message id is in each host record. */
 
-for (host = hostlist; host; host = host->next)
+for (host_item * host = hostlist; host; host = host->next)
   {
   BOOL already = FALSE;
-  dbdata_wait *host_record;
-  uschar *s;
-  int i, host_length;
+  dbdata_wait * host_record;
+  int host_length;
   uschar buffer[256];
 
   /* Skip if this is the same host as we just processed; otherwise remember
@@ -1507,7 +1538,7 @@ for (host = hostlist; host; host = host->next)
 
   if (!(host_record = dbfn_read(dbm_file, host->name)))
     {
-    host_record = store_get(sizeof(dbdata_wait) + MESSAGE_ID_LENGTH);
+    host_record = store_get(sizeof(dbdata_wait) + MESSAGE_ID_LENGTH, GET_UNTAINTED);
     host_record->count = host_record->sequence = 0;
     }
 
@@ -1517,22 +1548,41 @@ for (host = hostlist; host; host = host->next)
 
   /* Search the record to see if the current message is already in it. */
 
-  for (s = host_record->text; s < host_record->text + host_length;
+  for (uschar * s = host_record->text; s < host_record->text + host_length;
        s += MESSAGE_ID_LENGTH)
+    {
+    /* If any ID is seen which is not new-format, wipe the record and
+    any continuations */
+
+    if (!is_new_message_id(s))
+      {
+      DEBUG(D_hints_lookup)
+	debug_printf_indent("NOTE: old or corrupt message-id found in wait=%.200s"
+	  " hints DB; deleting records for %s\n", tpname, host->name);
+
+      (void) dbfn_delete(dbm_file, host->name);
+      for (int i = host_record->sequence - 1; i >= 0; i--)
+	(void) dbfn_delete(dbm_file,
+		    (sprintf(CS buffer, "%.200s:%d", host->name, i), buffer));
+
+      host_record->count = host_record->sequence = 0;
+      break;
+      }
     if (Ustrncmp(s, message_id, MESSAGE_ID_LENGTH) == 0)
       { already = TRUE; break; }
+    }
 
   /* If we haven't found this message in the main record, search any
   continuation records that exist. */
 
-  for (i = host_record->sequence - 1; i >= 0 && !already; i--)
+  for (int i = host_record->sequence - 1; i >= 0 && !already; i--)
     {
     dbdata_wait *cont;
     sprintf(CS buffer, "%.200s:%d", host->name, i);
     if ((cont = dbfn_read(dbm_file, buffer)))
       {
       int clen = cont->count * MESSAGE_ID_LENGTH;
-      for (s = cont->text; s < cont->text + clen; s += MESSAGE_ID_LENGTH)
+      for (uschar * s = cont->text; s < cont->text + clen; s += MESSAGE_ID_LENGTH)
         if (Ustrncmp(s, message_id, MESSAGE_ID_LENGTH) == 0)
           { already = TRUE; break; }
       }
@@ -1549,12 +1599,17 @@ for (host = hostlist; host; host = host->next)
 
   /* If this record is full, write it out with a new name constructed
   from the sequence number, increase the sequence number, and empty
-  the record. */
+  the record.  If we're doing a two-phase queue run initial phase, ping the
+  daemon to consider running a delivery on this host. */
 
   if (host_record->count >= WAIT_NAME_MAX)
     {
     sprintf(CS buffer, "%.200s:%d", host->name, host_record->sequence);
     dbfn_write(dbm_file, buffer, host_record, sizeof(dbdata_wait) + host_length);
+#ifndef DISABLE_QUEUE_RAMP
+    if (f.queue_2stage && queue_fast_ramp && !queue_run_in_order)
+      queue_notify_daemon(message_id);
+#endif
     host_record->sequence++;
     host_record->count = 0;
     host_length = 0;
@@ -1566,7 +1621,7 @@ for (host = hostlist; host; host = host->next)
   else
     {
     dbdata_wait *newr =
-      store_get(sizeof(dbdata_wait) + host_length + MESSAGE_ID_LENGTH);
+      store_get(sizeof(dbdata_wait) + host_length + MESSAGE_ID_LENGTH, GET_UNTAINTED);
     memcpy(newr, host_record, sizeof(dbdata_wait) + host_length);
     host_record = newr;
     }
@@ -1580,7 +1635,8 @@ for (host = hostlist; host; host = host->next)
   /* Update the database */
 
   dbfn_write(dbm_file, host->name, host_record, sizeof(dbdata_wait) + host_length);
-  DEBUG(D_transport) debug_printf("added to list for %s\n", host->name);
+  DEBUG(D_transport) debug_printf("added %.*s to queue for %s\n",
+				  MESSAGE_ID_LENGTH, message_id, host->name);
   }
 
 /* All now done */
@@ -1602,13 +1658,16 @@ another message waiting for the same host. However, it doesn't do this if the
 current continue sequence is greater than the maximum supplied as an argument,
 or greater than the global connection_max_messages, which, if set, overrides.
 
+It is also called if conditions are otherwise right for pipelining a QUIT after
+the message data, since if there is another message waiting we do not want to
+send that QUIT.
+
 Arguments:
   transport_name     name of the transport
   hostname           name of the host
   local_message_max  maximum number of messages down one connection
                        as set by the caller transport
   new_message_id     set to the message id of a waiting message
-  more               set TRUE if there are yet more messages waiting
   oicf_func          function to call to validate if it is ok to send
                      to this message_id from the current instance.
   oicf_data          opaque data for oicf_func
@@ -1623,50 +1682,50 @@ typedef struct msgq_s
 } msgq_t;
 
 BOOL
-transport_check_waiting(const uschar *transport_name, const uschar *hostname,
-  int local_message_max, uschar *new_message_id, BOOL *more, oicf oicf_func, void *oicf_data)
+transport_check_waiting(const uschar * transport_name, const uschar * hostname,
+  int local_message_max, uschar * new_message_id,
+  oicf oicf_func, void * oicf_data)
 {
-dbdata_wait *host_record;
+dbdata_wait * host_record;
 int host_length;
 open_db dbblock;
-open_db *dbm_file;
+open_db * dbm_file;
 
 int         i;
 struct stat statbuf;
-
-*more = FALSE;
 
 DEBUG(D_transport)
   {
   debug_printf("transport_check_waiting entered\n");
   debug_printf("  sequence=%d local_max=%d global_max=%d\n",
     continue_sequence, local_message_max, connection_max_messages);
+  acl_level++;
   }
 
-/* Do nothing if we have hit the maximum number that can be send down one
+/* Do nothing if we have hit the maximum number that can be sent down one
 connection. */
 
 if (connection_max_messages >= 0) local_message_max = connection_max_messages;
 if (local_message_max > 0 && continue_sequence >= local_message_max)
   {
   DEBUG(D_transport)
-    debug_printf("max messages for one connection reached: returning\n");
-  return FALSE;
+    debug_printf_indent("max messages for one connection reached: returning\n");
+  goto retfalse;
   }
 
 /* Open the waiting information database. */
 
 if (!(dbm_file = dbfn_open(string_sprintf("wait-%.200s", transport_name),
-			  O_RDWR, &dbblock, TRUE)))
-  return FALSE;
+			  O_RDWR, &dbblock, TRUE, TRUE)))
+  goto retfalse;
 
 /* See if there is a record for this host; if not, there's nothing to do. */
 
 if (!(host_record = dbfn_read(dbm_file, hostname)))
   {
   dbfn_close(dbm_file);
-  DEBUG(D_transport) debug_printf("no messages waiting for %s\n", hostname);
-  return FALSE;
+  DEBUG(D_transport) debug_printf_indent("no messages waiting for %s\n", hostname);
+  goto retfalse;
   }
 
 /* If the data in the record looks corrupt, just log something and
@@ -1677,10 +1736,10 @@ if (host_record->count > WAIT_NAME_MAX)
   dbfn_close(dbm_file);
   log_write(0, LOG_MAIN|LOG_PANIC, "smtp-wait database entry for %s has bad "
     "count=%d (max=%d)", hostname, host_record->count, WAIT_NAME_MAX);
-  return FALSE;
+  goto retfalse;
   }
 
-/* Scan the message ids in the record from the end towards the beginning,
+/* Scan the message ids in the record in order
 until one is found for which a spool file actually exists. If the record gets
 emptied, delete it and continue with any continuation records that may exist.
 */
@@ -1693,28 +1752,41 @@ host_length = host_record->count * MESSAGE_ID_LENGTH;
 
 while (1)
   {
-  msgq_t      *msgq;
-  int         msgq_count = 0;
-  int         msgq_actual = 0;
-  BOOL        bFound = FALSE;
-  BOOL        bContinuation = FALSE;
+  msgq_t * msgq;
+  int msgq_count = 0, msgq_actual = 0;
+  BOOL bFound = FALSE, bContinuation = FALSE;
 
   /* create an array to read entire message queue into memory for processing  */
 
-  msgq = store_malloc(sizeof(msgq_t) * host_record->count);
-  msgq_count = host_record->count;
-  msgq_actual = msgq_count;
+  msgq = store_get(sizeof(msgq_t) * host_record->count, GET_UNTAINTED);
+  msgq_actual = msgq_count = host_record->count;
 
   for (i = 0; i < host_record->count; ++i)
     {
+    /* If any ID is seen which is not new-format, wipe the record and
+    any continuations */
+
+    if (!is_new_message_id(host_record->text + (i * MESSAGE_ID_LENGTH)))
+      {
+      uschar buffer[256];
+      DEBUG(D_hints_lookup)
+	debug_printf_indent("NOTE: old or corrupt message-id found in wait=%.200s"
+	  " hints DB; deleting records for %s\n", transport_name, hostname);
+      (void) dbfn_delete(dbm_file, hostname);
+      for (int j = host_record->sequence - 1; j >= 0; j--)
+	(void) dbfn_delete(dbm_file,
+		    (sprintf(CS buffer, "%.200s:%d", hostname, j), buffer));
+      goto retfalse;
+      }
     msgq[i].bKeep = TRUE;
 
-    Ustrncpy(msgq[i].message_id, host_record->text + (i * MESSAGE_ID_LENGTH),
+    Ustrncpy_nt(msgq[i].message_id, host_record->text + (i * MESSAGE_ID_LENGTH),
       MESSAGE_ID_LENGTH);
     msgq[i].message_id[MESSAGE_ID_LENGTH] = 0;
     }
 
   /* first thing remove current message id if it exists */
+  /*XXX but what if it has un-sent addrs? */
 
   for (i = 0; i < msgq_count; ++i)
     if (Ustrcmp(msgq[i].message_id, message_id) == 0)
@@ -1725,19 +1797,17 @@ while (1)
 
   /* now find the next acceptable message_id */
 
-  for (i = msgq_count - 1; i >= 0; --i) if (msgq[i].bKeep)
+  for (i = 0; i < msgq_count; i++) if (msgq[i].bKeep)
     {
     uschar subdir[2];
+    uschar * mid = msgq[i].message_id;
 
-    subdir[0] = split_spool_directory ? msgq[i].message_id[5] : 0;
-    subdir[1] = 0;
-
-    if (Ustat(spool_fname(US"input", subdir, msgq[i].message_id, US"-D"),
-	      &statbuf) != 0)
+    set_subdir_str(subdir, mid, 0);
+    if (Ustat(spool_fname(US"input", subdir, mid, US"-D"), &statbuf) != 0)
       msgq[i].bKeep = FALSE;
-    else if (!oicf_func || oicf_func(msgq[i].message_id, oicf_data))
+    else if (!oicf_func || oicf_func(mid, oicf_data))
       {
-      Ustrcpy(new_message_id, msgq[i].message_id);
+      Ustrcpy_nt(new_message_id, mid);
       msgq[i].bKeep = FALSE;
       bFound = TRUE;
       break;
@@ -1778,13 +1848,12 @@ while (1)
 
   while (host_length <= 0)
     {
-    int i;
     dbdata_wait * newr = NULL;
     uschar buffer[256];
 
     /* Search for a continuation */
 
-    for (i = host_record->sequence - 1; i >= 0 && !newr; i--)
+    for (int i = host_record->sequence - 1; i >= 0 && !newr; i--)
       {
       sprintf(CS buffer, "%.200s:%d", hostname, i);
       newr = dbfn_read(dbm_file, buffer);
@@ -1808,10 +1877,7 @@ while (1)
     }
 
   if (bFound)		/* Usual exit from main loop */
-    {
-    store_free (msgq);
     break;
-    }
 
   /* If host_length <= 0 we have emptied a record and not found a good message,
   and there are no continuation records. Otherwise there is a continuation
@@ -1820,22 +1886,20 @@ while (1)
   if (host_length <= 0)
     {
     dbfn_close(dbm_file);
-    DEBUG(D_transport) debug_printf("waiting messages already delivered\n");
-    return FALSE;
+    DEBUG(D_transport) debug_printf_indent("waiting messages already delivered\n");
+    goto retfalse;
     }
 
   /* we were not able to find an acceptable message, nor was there a
-   * continuation record.  So bug out, outer logic will clean this up.
-   */
+  continuation record.  So bug out, outer logic will clean this up.
+  */
 
   if (!bContinuation)
     {
     Ustrcpy(new_message_id, message_id);
     dbfn_close(dbm_file);
-    return FALSE;
+    goto retfalse;
     }
-
-  store_free(msgq);
   }		/* we need to process a continuation record */
 
 /* Control gets here when an existing message has been encountered; its
@@ -1846,13 +1910,20 @@ record if required, close the database, and return TRUE. */
 if (host_length > 0)
   {
   host_record->count = host_length/MESSAGE_ID_LENGTH;
-
   dbfn_write(dbm_file, hostname, host_record, (int)sizeof(dbdata_wait) + host_length);
-  *more = TRUE;
   }
 
 dbfn_close(dbm_file);
+DEBUG(D_transport)
+  {
+  acl_level--;
+  debug_printf("transport_check_waiting: TRUE (found %s)\n", new_message_id);
+  }
 return TRUE;
+
+retfalse:
+DEBUG(D_transport) {acl_level--; debug_printf("transport_check_waiting: FALSE\n"); }
+return FALSE;
 }
 
 /*************************************************
@@ -1861,11 +1932,23 @@ return TRUE;
 
 /* Just the regain-root-privilege exec portion */
 void
-transport_do_pass_socket(const uschar *transport_name, const uschar *hostname,
-  const uschar *hostaddress, uschar *id, int socket_fd)
+transport_do_pass_socket(const uschar * transport_name, const uschar * hostname,
+  const uschar * hostaddress, uschar * id, int socket_fd)
 {
-int i = 20;
+int i = 13;
 const uschar **argv;
+
+#ifndef DISABLE_TLS
+if (smtp_peer_options & OPTION_TLS) i += 6;
+#endif
+#ifndef DISABLE_ESMTP_LIMITS
+if (continue_limit_mail || continue_limit_rcpt || continue_limit_rcptdom)
+				    i += 4;
+#endif
+if (queue_run_pid != (pid_t)0)	    i += 3;
+#ifdef SUPPORT_SOCKS
+if (proxy_session)		    i += 5;
+#endif
 
 /* Set up the calling arguments; use the standard function for the basics,
 but we have a number of extras that may be added. */
@@ -1877,7 +1960,7 @@ if (smtp_peer_options & OPTION_CHUNKING)	argv[i++] = US"-MCK";
 if (smtp_peer_options & OPTION_DSN)		argv[i++] = US"-MCD";
 if (smtp_peer_options & OPTION_PIPE)		argv[i++] = US"-MCP";
 if (smtp_peer_options & OPTION_SIZE)		argv[i++] = US"-MCS";
-#ifdef SUPPORT_TLS
+#ifndef DISABLE_TLS
 if (smtp_peer_options & OPTION_TLS)
   if (tls_out.active.sock >= 0 || continue_proxy_cipher)
     {
@@ -1885,9 +1968,29 @@ if (smtp_peer_options & OPTION_TLS)
     argv[i++] = sending_ip_address;
     argv[i++] = string_sprintf("%d", sending_port);
     argv[i++] = tls_out.active.sock >= 0 ? tls_out.cipher : continue_proxy_cipher;
+
+    if (tls_out.sni)
+      {
+      argv[i++] =
+#ifdef SUPPORT_DANE
+        tls_out.dane_verified ? US"-MCr" :
+#endif
+        US"-MCs";
+      argv[i++] = tls_out.sni;
+      }
     }
   else
     argv[i++] = US"-MCT";
+#endif
+
+#ifndef DISABLE_ESMTP_LIMITS
+if (continue_limit_rcpt || continue_limit_rcptdom)
+  {
+  argv[i++] = US"-MCL";
+  argv[i++] = string_sprintf("%u", continue_limit_mail);
+  argv[i++] = string_sprintf("%u", continue_limit_rcpt);
+  argv[i++] = string_sprintf("%u", continue_limit_rcptdom);
+  }
 #endif
 
 if (queue_run_pid != (pid_t)0)
@@ -1896,6 +1999,17 @@ if (queue_run_pid != (pid_t)0)
   argv[i++] = string_sprintf("%d", queue_run_pid);
   argv[i++] = string_sprintf("%d", queue_run_pipe);
   }
+
+#ifdef SUPPORT_SOCKS
+if (proxy_session)
+  {
+  argv[i++] = US"-MCp";
+  argv[i++] = proxy_local_address;
+  argv[i++] = string_sprintf("%d", proxy_local_port);
+  argv[i++] = proxy_external_address;
+  argv[i++] = string_sprintf("%d", proxy_external_port);
+  }
+#endif
 
 argv[i++] = US"-MC";
 argv[i++] = US transport_name;
@@ -1915,6 +2029,7 @@ if (socket_fd != 0)
 
 DEBUG(D_exec) debug_print_argv(argv);
 exim_nullstd();                          /* Ensure std{out,err} exist */
+/* argv[0] should be untainted, from child_exec_exim() */
 execv(CS argv[0], (char *const *)argv);
 
 DEBUG(D_any) debug_printf("execv failed: %s\n", strerror(errno));
@@ -1939,26 +2054,33 @@ Returns:          FALSE if fork fails; TRUE otherwise
 
 BOOL
 transport_pass_socket(const uschar *transport_name, const uschar *hostname,
-  const uschar *hostaddress, uschar *id, int socket_fd)
+  const uschar *hostaddress, uschar *id, int socket_fd
+#ifndef DISABLE_ESMTP_LIMITS
+  , unsigned peer_limit_mail, unsigned peer_limit_rcpt, unsigned peer_limit_rcptdom
+#endif
+  )
 {
 pid_t pid;
 int status;
 
 DEBUG(D_transport) debug_printf("transport_pass_socket entered\n");
 
-if ((pid = fork()) == 0)
+#ifndef DISABLE_ESMTP_LIMITS
+continue_limit_mail = peer_limit_mail;
+continue_limit_rcpt = peer_limit_rcpt;
+continue_limit_rcptdom = peer_limit_rcptdom;
+#endif
+
+if ((pid = exim_fork(US"continued-transport-interproc")) == 0)
   {
   /* Disconnect entirely from the parent process. If we are running in the
   test harness, wait for a bit to allow the previous process time to finish,
   write the log, etc., so that the output is always in the same order for
   automatic comparison. */
 
-  if ((pid = fork()) != 0)
-    {
-    DEBUG(D_transport) debug_printf("transport_pass_socket succeeded (final-pid %d)\n", pid);
+  if ((pid = exim_fork(US"continued-transport")) != 0)
     _exit(EXIT_SUCCESS);
-    }
-  if (f.running_in_test_harness) sleep(1);
+  testharness_pause_ms(1000);
 
   transport_do_pass_socket(transport_name, hostname, hostaddress,
     id, socket_fd);
@@ -1972,7 +2094,6 @@ if (pid > 0)
   {
   int rc;
   while ((rc = wait(&status)) != pid && (rc >= 0 || errno != ECHILD));
-  DEBUG(D_transport) debug_printf("transport_pass_socket succeeded (inter-pid %d)\n", pid);
   return TRUE;
   }
 else
@@ -1985,20 +2106,46 @@ else
 
 
 
+/* Enforce all args untainted, for consistency with a router-sourced pipe
+command, where (because the whole line is passed as one to the tpt) a
+tainted arg taints the executable name.  It's unclear also that letting an
+attacker supply command arguments is wise. */
+
+static BOOL
+arg_is_tainted(const uschar * s, int argn, address_item * addr,
+  const uschar * etext, uschar ** errptr)
+{
+if (is_tainted(s))
+  {
+  uschar * msg = string_sprintf("Tainted arg %d for %s command: '%s'",
+				argn, etext, s);
+  if (addr)
+    {
+    addr->transport_return = FAIL;
+    addr->message = msg;
+    }
+  else *errptr = msg;
+  return TRUE;
+  }
+return FALSE;
+}
+
+
 /*************************************************
 *          Set up direct (non-shell) command     *
 *************************************************/
 
 /* This function is called when a command line is to be parsed and executed
 directly, without the use of /bin/sh. It is called by the pipe transport,
-the queryprogram router, and also from the main delivery code when setting up a
+the queryprogram router, for any ${run } expansion,
+and also from the main delivery code when setting up a
 transport filter process. The code for ETRN also makes use of this; in that
 case, no addresses are passed.
 
 Arguments:
   argvptr            pointer to anchor for argv vector
   cmd                points to the command string (modified IN PLACE)
-  expand_arguments   true if expansion is to occur
+  flags		     bits for expand-args, allow taint, allow $recipients
   expand_failed      error value to set if expansion fails; not relevant if
                      addr == NULL
   addr               chain of addresses, or NULL
@@ -2011,25 +2158,21 @@ Returns:             TRUE if all went well; otherwise an error will be
 */
 
 BOOL
-transport_set_up_command(const uschar ***argvptr, uschar *cmd,
-  BOOL expand_arguments, int expand_failed, address_item *addr,
-  uschar *etext, uschar **errptr)
+transport_set_up_command(const uschar *** argvptr, const uschar * cmd,
+  unsigned flags, int expand_failed, address_item * addr,
+  const uschar * etext, uschar ** errptr)
 {
-address_item *ad;
-const uschar **argv;
-uschar *s, *ss;
-int address_count = 0;
-int argcount = 0;
-int i, max_args;
+const uschar ** argv, * s;
+int address_count = 0, argcount = 0, max_args;
 
 /* Get store in which to build an argument list. Count the number of addresses
 supplied, and allow for that many arguments, plus an additional 60, which
 should be enough for anybody. Multiple addresses happen only when the local
 delivery batch option is set. */
 
-for (ad = addr; ad != NULL; ad = ad->next) address_count++;
+for (address_item * ad = addr; ad; ad = ad->next) address_count++;
 max_args = address_count + 60;
-*argvptr = argv = store_get((max_args+1)*sizeof(uschar *));
+*argvptr = argv = store_get((max_args+1)*sizeof(uschar *), GET_UNTAINTED);
 
 /* Split the command up into arguments terminated by white space. Lose
 trailing space at the start and end. Double-quoted arguments can contain \\ and
@@ -2037,32 +2180,30 @@ trailing space at the start and end. Double-quoted arguments can contain \\ and
 arguments are verbatim. Copy each argument into a new string. */
 
 s = cmd;
-while (isspace(*s)) s++;
+Uskip_whitespace(&s);
 
-while (*s != 0 && argcount < max_args)
+for (; *s && argcount < max_args; argcount++)
   {
   if (*s == '\'')
     {
-    ss = s + 1;
-    while (*ss != 0 && *ss != '\'') ss++;
-    argv[argcount++] = ss = store_get(ss - s++);
-    while (*s != 0 && *s != '\'') *ss++ = *s++;
-    if (*s != 0) s++;
-    *ss++ = 0;
+    int n = Ustrcspn(++s, "'");
+    argv[argcount] = string_copyn(s, n);
+    if (*(s += n) == '\'') s++;
     }
-  else argv[argcount++] = string_copy(string_dequote(CUSS &s));
-  while (isspace(*s)) s++;
+  else
+    argv[argcount] = string_dequote(CUSS &s);
+  Uskip_whitespace(&s);
   }
 
-argv[argcount] = US 0;
+argv[argcount] = NULL;
 
 /* If *s != 0 we have run out of argument slots. */
 
-if (*s != 0)
+if (*s)
   {
   uschar *msg = string_sprintf("Too many arguments in command \"%s\" in "
     "%s", cmd, etext);
-  if (addr != NULL)
+  if (addr)
     {
     addr->transport_return = FAIL;
     addr->message = msg;
@@ -2090,22 +2231,22 @@ $recipients. */
 DEBUG(D_transport)
   {
   debug_printf("direct command:\n");
-  for (i = 0; argv[i] != US 0; i++)
-    debug_printf("  argv[%d] = %s\n", i, string_printing(argv[i]));
+  for (int i = 0; argv[i]; i++)
+    debug_printf("  argv[%d] = '%s'\n", i, string_printing(argv[i]));
   }
 
-if (expand_arguments)
+if (flags & TSUC_EXPAND_ARGS)
   {
-  BOOL allow_dollar_recipients = addr != NULL &&
-    addr->parent != NULL &&
-    Ustrcmp(addr->parent->address, "system-filter") == 0;
+  BOOL allow_dollar_recipients = (flags & TSUC_ALLOW_RECIPIENTS)
+    || (addr && addr->parent && Ustrcmp(addr->parent->address, "system-filter") == 0);	/*XXX could we check this at caller? */
 
-  for (i = 0; argv[i] != US 0; i++)
+  for (int i = 0; argv[i]; i++)
     {
+    DEBUG(D_expand) debug_printf_indent("arg %d\n", i);
 
     /* Handle special fudge for passing an address list */
 
-    if (addr != NULL &&
+    if (addr &&
         (Ustrcmp(argv[i], "$pipe_addresses") == 0 ||
          Ustrcmp(argv[i], "${pipe_addresses}") == 0))
       {
@@ -2124,10 +2265,21 @@ if (expand_arguments)
         memmove(argv + i + 1 + additional, argv + i + 1,
           (argcount - i)*sizeof(uschar *));
 
-      for (ad = addr; ad != NULL; ad = ad->next) {
-          argv[i++] = ad->address;
-          argcount++;
-      }
+      for (address_item * ad = addr; ad; ad = ad->next)
+        {
+	/* $pipe_addresses is spefically not checked for taint, because there is
+	a testcase (321) depending on it.  It's unclear if the exact thing being
+	done really needs to be legitimate, though I suspect it reflects an
+	actual use-case that showed up a bug.
+	This is a hole in the taint-pretection, mitigated only in that
+	shell-syntax metachars cannot be injected via this route. */
+
+	DEBUG(D_transport) if (is_tainted(ad->address))
+	  debug_printf("tainted element '%s' from $pipe_addresses\n", ad->address);
+
+	argv[i++] = ad->address;
+	argcount++;
+	}
 
       /* Subtract one since we replace $pipe_addresses */
       argcount--;
@@ -2136,11 +2288,10 @@ if (expand_arguments)
 
       /* Handle special case of $address_pipe when af_force_command is set */
 
-    else if (addr != NULL && testflag(addr,af_force_command) &&
+    else if (addr && testflag(addr,af_force_command) &&
         (Ustrcmp(argv[i], "$address_pipe") == 0 ||
          Ustrcmp(argv[i], "${address_pipe}") == 0))
       {
-      int address_pipe_i;
       int address_pipe_argcount = 0;
       int address_pipe_max_args;
       uschar **address_pipe_argv;
@@ -2152,12 +2303,12 @@ if (expand_arguments)
         debug_printf("address_pipe_max_args=%d\n", address_pipe_max_args);
 
       /* We allocate an additional for (uschar *)0 */
-      address_pipe_argv = store_get((address_pipe_max_args+1)*sizeof(uschar *));
+      address_pipe_argv = store_get((address_pipe_max_args+1)*sizeof(uschar *), GET_UNTAINTED);
 
       /* +1 because addr->local_part[0] == '|' since af_force_command is set */
-      s = expand_string(addr->local_part + 1);
+      s = expand_cstring(addr->local_part + 1);
 
-      if (s == NULL || *s == '\0')
+      if (!s || !*s)
         {
         addr->transport_return = FAIL;
         addr->message = string_sprintf("Expansion of \"%s\" "
@@ -2166,32 +2317,29 @@ if (expand_arguments)
         return FALSE;
         }
 
-      while (isspace(*s)) s++; /* strip leading space */
+      Uskip_whitespace(&s);			/* strip leading space */
 
-      while (*s != 0 && address_pipe_argcount < address_pipe_max_args)
+      while (*s && address_pipe_argcount < address_pipe_max_args)
         {
         if (*s == '\'')
-          {
-          ss = s + 1;
-          while (*ss != 0 && *ss != '\'') ss++;
-          address_pipe_argv[address_pipe_argcount++] = ss = store_get(ss - s++);
-          while (*s != 0 && *s != '\'') *ss++ = *s++;
-          if (*s != 0) s++;
-          *ss++ = 0;
-          }
-        else address_pipe_argv[address_pipe_argcount++] =
-	      string_copy(string_dequote(CUSS &s));
-        while (isspace(*s)) s++; /* strip space after arg */
+	  {
+	  int n = Ustrcspn(++s, "'");
+	  argv[argcount] = string_copyn(s, n);
+	  if (*(s += n) == '\'') s++;
+	  }
+        else
+	  address_pipe_argv[address_pipe_argcount++] = string_dequote(CUSS &s);
+	Uskip_whitespace(&s);			/* strip space after arg */
         }
 
-      address_pipe_argv[address_pipe_argcount] = US 0;
+      address_pipe_argv[address_pipe_argcount] = NULL;
 
       /* If *s != 0 we have run out of argument slots. */
-      if (*s != 0)
+      if (*s)
         {
         uschar *msg = string_sprintf("Too many arguments in $address_pipe "
           "\"%s\" in %s", addr->local_part + 1, etext);
-        if (addr != NULL)
+        if (addr)
           {
           addr->transport_return = FAIL;
           addr->message = msg;
@@ -2201,8 +2349,9 @@ if (expand_arguments)
         }
 
       /* address_pipe_argcount - 1
-       * because we are replacing $address_pipe in the argument list
-       * with the first thing it expands to */
+      because we are replacing $address_pipe in the argument list
+      with the first thing it expands to */
+
       if (argcount + address_pipe_argcount - 1 > max_args)
         {
         addr->transport_return = FAIL;
@@ -2212,12 +2361,12 @@ if (expand_arguments)
         }
 
       /* If we are not just able to replace the slot that contained
-       * $address_pipe (address_pipe_argcount == 1)
-       * We have to move the existing argv by address_pipe_argcount - 1
-       * Visually if address_pipe_argcount == 2:
-       * [argv 0][argv 1][argv 2($address_pipe)][argv 3][0]
-       * [argv 0][argv 1][ap_arg0][ap_arg1][old argv 3][0]
-       */
+      $address_pipe (address_pipe_argcount == 1)
+      We have to move the existing argv by address_pipe_argcount - 1
+      Visually if address_pipe_argcount == 2:
+      [argv 0][argv 1][argv 2($address_pipe)][argv 3][0]
+      [argv 0][argv 1][ap_arg0][ap_arg1][old argv 3][0] */
+
       if (address_pipe_argcount > 1)
         memmove(
           /* current position + additional args */
@@ -2229,15 +2378,16 @@ if (expand_arguments)
         );
 
       /* Now we fill in the slots we just moved argv out of
-       * [argv 0][argv 1][argv 2=pipeargv[0]][argv 3=pipeargv[1]][old argv 3][0]
-       */
-      for (address_pipe_i = 0;
-           address_pipe_argv[address_pipe_i] != US 0;
-           address_pipe_i++)
-        {
-        argv[i++] = address_pipe_argv[address_pipe_i];
-        argcount++;
-        }
+      [argv 0][argv 1][argv 2=pipeargv[0]][argv 3=pipeargv[1]][old argv 3][0] */
+
+      for (int address_pipe_i = 0;
+           address_pipe_argv[address_pipe_i];
+           address_pipe_i++, argcount++)
+	{
+        uschar * s = address_pipe_argv[address_pipe_i];
+	if (arg_is_tainted(s, i, addr, etext, errptr)) return FALSE;
+        argv[i++] = s;
+	}
 
       /* Subtract one since we replace $address_pipe */
       argcount--;
@@ -2249,16 +2399,17 @@ if (expand_arguments)
     else
       {
       const uschar *expanded_arg;
+      BOOL enable_dollar_recipients_g = f.enable_dollar_recipients;
       f.enable_dollar_recipients = allow_dollar_recipients;
       expanded_arg = expand_cstring(argv[i]);
-      f.enable_dollar_recipients = FALSE;
+      f.enable_dollar_recipients = enable_dollar_recipients_g;
 
-      if (expanded_arg == NULL)
+      if (!expanded_arg)
         {
         uschar *msg = string_sprintf("Expansion of \"%s\" "
           "from command \"%s\" in %s failed: %s",
           argv[i], cmd, etext, expand_string_message);
-        if (addr != NULL)
+        if (addr)
           {
           addr->transport_return = expand_failed;
           addr->message = msg;
@@ -2266,6 +2417,17 @@ if (expand_arguments)
         else *errptr = msg;
         return FALSE;
         }
+
+      if (  f.running_in_test_harness && is_tainted(expanded_arg)
+	 && Ustrcmp(etext, "queryprogram router") == 0)
+	{			/* hack, would be good to not need it */
+	DEBUG(D_transport)
+	  debug_printf("SPECIFIC TESTSUITE EXEMPTION: tainted arg '%s'\n",
+		      expanded_arg);
+	}
+      else if (  !(flags & TSUC_ALLOW_TAINTED_ARGS)
+	      && arg_is_tainted(expanded_arg, i, addr, etext, errptr))
+	return FALSE;
       argv[i] = expanded_arg;
       }
     }
@@ -2273,12 +2435,28 @@ if (expand_arguments)
   DEBUG(D_transport)
     {
     debug_printf("direct command after expansion:\n");
-    for (i = 0; argv[i] != US 0; i++)
-      debug_printf("  argv[%d] = %s\n", i, string_printing(argv[i]));
+    for (int i = 0; argv[i]; i++)
+      {
+      debug_printf("  argv[%d] = '%s'\n", i, string_printing(argv[i]));
+      debug_print_taint(argv[i]);
+      }
     }
   }
 
 return TRUE;
+}
+
+
+
+/* For error messages, a string describing the config location associated
+with current processing.  NULL if we are not in a transport. */
+/* Name only, for now */
+
+uschar *
+transport_current_name(void)
+{
+if (!transport_name) return NULL;
+return string_sprintf(" (transport %s, %s %d)", transport_name, driver_srcfile, driver_srcline);
 }
 
 #endif	/*!MACRO_PREDEF*/

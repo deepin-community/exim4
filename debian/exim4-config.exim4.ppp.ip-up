@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# disabled by default, remove following line to enable.
+exit 0
+
 if [ -n "$EX4DEBUG" ]; then
   echo "now debugging $0 $@"
   set -x
@@ -9,7 +12,5 @@ fi
 
 [ -f /etc/default/exim4 ] && . /etc/default/exim4
 
-if [ "${QUEUERUNNER}" != "no" ] ; then
 # Flush exim queue
-	/usr/sbin/exim4 -qqf ${QUEUERUNNEROPTIONS} ${COMMONOPTIONS}
-fi
+/usr/sbin/exim4 -qqf

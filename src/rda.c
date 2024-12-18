@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* This module contains code for extracting addresses from a forwarding list
 (from an alias or forward file) or by running the filter interpreter. It may do
@@ -41,15 +43,15 @@ Returns:   FILTER_EXIM    if it starts with "# Exim filter"
 static BOOL
 match_tag(const uschar *s, const uschar *tag)
 {
-for (; *tag != 0; s++, tag++)
-  {
+for (; *tag; s++, tag++)
   if (*tag == ' ')
     {
     while (*s == ' ' || *s == '\t') s++;
     s--;
     }
-  else if (tolower(*s) != tolower(*tag)) break;
-  }
+  else
+   if (tolower(*s) != tolower(*tag)) break;
+
 return (*tag == 0);
 }
 
@@ -59,10 +61,10 @@ tags for other types of filter. */
 int
 rda_is_filter(const uschar *s)
 {
-while (isspace(*s)) s++;     /* Skips initial blank lines */
-if (match_tag(s, CUS"# exim filter")) return FILTER_EXIM;
-  else if (match_tag(s, CUS"# sieve filter")) return FILTER_SIEVE;
-    else return FILTER_FORWARD;
+Uskip_whitespace(&s);			/* Skips initial blank lines */
+if (match_tag(s, CUS"# exim filter"))		return FILTER_EXIM;
+else if (match_tag(s, CUS"# sieve filter"))	return FILTER_SIEVE;
+else						return FILTER_FORWARD;
 }
 
 
@@ -96,37 +98,37 @@ static int
 rda_exists(uschar *filename, uschar **error)
 {
 int rc, saved_errno;
-uschar *slash;
 struct stat statbuf;
+uschar * s;
 
 if ((rc = Ustat(filename, &statbuf)) >= 0) return FILE_EXIST;
 saved_errno = errno;
 
-Ustrncpy(big_buffer, filename, big_buffer_size - 3);
+s = string_copy(filename);
 sigalrm_seen = FALSE;
 
 if (saved_errno == ENOENT)
   {
-  slash = Ustrrchr(big_buffer, '/');
-  Ustrcpy(slash+1, ".");
+  uschar * slash = Ustrrchr(s, '/');
+  Ustrcpy(slash+1, US".");
 
   ALARM(30);
-  rc = Ustat(big_buffer, &statbuf);
+  rc = Ustat(s, &statbuf);
   if (rc != 0 && errno == EACCES && !sigalrm_seen)
     {
     *slash = 0;
-    rc = Ustat(big_buffer, &statbuf);
+    rc = Ustat(s, &statbuf);
     }
   saved_errno = errno;
   ALARM_CLR(0);
 
-  DEBUG(D_route) debug_printf("stat(%s)=%d\n", big_buffer, rc);
+  DEBUG(D_route) debug_printf("stat(%s)=%d\n", s, rc);
   }
 
 if (sigalrm_seen || rc != 0)
   {
-  *error = string_sprintf("failed to stat %s (%s)", big_buffer,
-    sigalrm_seen? "timeout" : strerror(saved_errno));
+  *error = string_sprintf("failed to stat %s (%s)", s,
+    sigalrm_seen?  "timeout" : strerror(saved_errno));
   return FILE_EXIST_UNCLEAR;
   }
 
@@ -165,7 +167,7 @@ Returns:      pointer to string in store; NULL on error
 */
 
 static uschar *
-rda_get_file_contents(redirect_block *rdata, int options, uschar **error,
+rda_get_file_contents(const redirect_block *rdata, int options, uschar **error,
   int *yield)
 {
 FILE *fwd;
@@ -174,6 +176,17 @@ uschar *filename = rdata->string;
 BOOL uid_ok = !rdata->check_owner;
 BOOL gid_ok = !rdata->check_group;
 struct stat statbuf;
+
+/* Reading a file is a form of expansion; we wish to deny attackers the
+capability to specify the file name. */
+
+if (is_tainted(filename))
+  {
+  *error = string_sprintf("Tainted name '%s' for file read not permitted\n",
+			filename);
+  *yield = FF_ERROR;
+  return NULL;
+  }
 
 /* Attempt to open the file. If it appears not to exist, check up on the
 containing directory by statting it. If the directory does not exist, we treat
@@ -184,40 +197,35 @@ However, if the ignore_enotdir option is set (to ignore "something on the
 path is not a directory" errors), the right behaviour seems to be not to do the
 directory test. */
 
-fwd = Ufopen(filename, "rb");
-if (fwd == NULL)
+if (!(fwd = Ufopen(filename, "rb"))) switch(errno)
   {
-  switch(errno)
-    {
-    case ENOENT:          /* File does not exist */
+  case ENOENT:          /* File does not exist */
     DEBUG(D_route) debug_printf("%s does not exist\n%schecking parent directory\n",
-      filename,
-      ((options & RDO_ENOTDIR) != 0)? "ignore_enotdir set => skip " : "");
-    *yield = (((options & RDO_ENOTDIR) != 0) ||
-              rda_exists(filename, error) == FILE_NOT_EXIST)?
-      FF_NONEXIST : FF_ERROR;
+      filename, options & RDO_ENOTDIR ? "ignore_enotdir set => skip " : "");
+    *yield =
+	options & RDO_ENOTDIR || rda_exists(filename, error) == FILE_NOT_EXIST
+	? FF_NONEXIST : FF_ERROR;
     return NULL;
 
-    case ENOTDIR:         /* Something on the path isn't a directory */
-    if ((options & RDO_ENOTDIR) == 0) goto DEFAULT_ERROR;
+  case ENOTDIR:         /* Something on the path isn't a directory */
+    if (!(options & RDO_ENOTDIR)) goto DEFAULT_ERROR;
     DEBUG(D_route) debug_printf("non-directory on path %s: file assumed not to "
       "exist\n", filename);
     *yield = FF_NONEXIST;
     return NULL;
 
-    case EACCES:           /* Permission denied */
-    if ((options & RDO_EACCES) == 0) goto DEFAULT_ERROR;
+  case EACCES:           /* Permission denied */
+    if (!(options & RDO_EACCES)) goto DEFAULT_ERROR;
     DEBUG(D_route) debug_printf("permission denied for %s: file assumed not to "
       "exist\n", filename);
     *yield = FF_NONEXIST;
     return NULL;
 
-    DEFAULT_ERROR:
-    default:
-    *error = string_open_failed(errno, "%s", filename);
+DEFAULT_ERROR:
+  default:
+    *error = string_open_failed("%s", filename);
     *yield = FF_ERROR;
     return NULL;
-    }
   }
 
 /* Check that we have a regular file. */
@@ -246,28 +254,18 @@ if ((statbuf.st_mode & rdata->modemask) != 0)
 /* Check the file owner and file group if required to do so. */
 
 if (!uid_ok)
-  {
-  if (rdata->pw != NULL && statbuf.st_uid == rdata->pw->pw_uid)
+  if (rdata->pw && statbuf.st_uid == rdata->pw->pw_uid)
     uid_ok = TRUE;
-  else if (rdata->owners != NULL)
-    {
-    int i;
-    for (i = 1; i <= (int)(rdata->owners[0]); i++)
+  else if (rdata->owners)
+    for (int i = 1; i <= (int)(rdata->owners[0]); i++)
       if (rdata->owners[i] == statbuf.st_uid) { uid_ok = TRUE; break; }
-    }
-  }
 
 if (!gid_ok)
-  {
-  if (rdata->pw != NULL && statbuf.st_gid == rdata->pw->pw_gid)
+  if (rdata->pw && statbuf.st_gid == rdata->pw->pw_gid)
     gid_ok = TRUE;
-  else if (rdata->owngroups != NULL)
-    {
-    int i;
-    for (i = 1; i <= (int)(rdata->owngroups[0]); i++)
+  else if (rdata->owngroups)
+    for (int i = 1; i <= (int)(rdata->owngroups[0]); i++)
       if (rdata->owngroups[i] == statbuf.st_gid) { gid_ok = TRUE; break; }
-    }
-  }
 
 if (!uid_ok || !gid_ok)
   {
@@ -287,7 +285,7 @@ if (statbuf.st_size > MAX_FILTER_SIZE)
 
 /* Read the file in one go in order to minimize the time we have it open. */
 
-filebuf = store_get(statbuf.st_size + 1);
+filebuf = store_get(statbuf.st_size + 1, filename);
 
 if (fread(filebuf, 1, statbuf.st_size, fwd) != statbuf.st_size)
   {
@@ -297,8 +295,8 @@ if (fread(filebuf, 1, statbuf.st_size, fwd) != statbuf.st_size)
   }
 filebuf[statbuf.st_size] = 0;
 
-DEBUG(D_route)
-  debug_printf(OFF_T_FMT " bytes read from %s\n", statbuf.st_size, filename);
+DEBUG(D_route) debug_printf(OFF_T_FMT " %sbytes read from %s\n",
+  statbuf.st_size, is_tainted(filename) ? "(tainted) " : "", filename);
 
 (void)fclose(fwd);
 return filebuf;
@@ -342,19 +340,19 @@ Returns:                    a suitable return for rda_interpret()
 */
 
 static int
-rda_extract(redirect_block *rdata, int options, uschar *include_directory,
-  uschar *sieve_vacation_directory, uschar *sieve_enotify_mailto_owner,
-  uschar *sieve_useraddress, uschar *sieve_subaddress,
-  address_item **generated, uschar **error, error_block **eblockp,
-  int *filtertype)
+rda_extract(const redirect_block * rdata, int options,
+  const uschar * include_directory, const uschar * sieve_vacation_directory,
+  const uschar * sieve_enotify_mailto_owner, const uschar * sieve_useraddress,
+  const uschar * sieve_subaddress, address_item ** generated, uschar ** error,
+  error_block ** eblockp, int * filtertype)
 {
-uschar *data;
+const uschar * data;
 
 if (rdata->isfile)
   {
   int yield = 0;
-  data = rda_get_file_contents(rdata, options, error, &yield);
-  if (data == NULL) return yield;
+  if (!(data = rda_get_file_contents(rdata, options, error, &yield)))
+    return yield;
   }
 else data = rdata->string;
 
@@ -372,19 +370,18 @@ if (*filtertype != FILTER_FORWARD)
   int old_expand_forbid = expand_forbid;
 
   DEBUG(D_route) debug_printf("data is %s filter program\n",
-    (*filtertype == FILTER_EXIM)? "an Exim" : "a Sieve");
+    *filtertype == FILTER_EXIM ? "an Exim" : "a Sieve");
 
   /* RDO_FILTER is an "allow" bit */
 
-  if ((options & RDO_FILTER) == 0)
+  if (!(options & RDO_FILTER))
     {
     *error = US"filtering not enabled";
     return FF_ERROR;
     }
 
   expand_forbid =
-    (expand_forbid & ~RDO_FILTER_EXPANSIONS) |
-    (options & RDO_FILTER_EXPANSIONS);
+    expand_forbid & ~RDO_FILTER_EXPANSIONS  |  options & RDO_FILTER_EXPANSIONS;
 
   /* RDO_{EXIM,SIEVE}_FILTER are forbid bits */
 
@@ -399,7 +396,7 @@ if (*filtertype != FILTER_FORWARD)
     }
   else
     {
-    if ((options & RDO_SIEVE_FILTER) != 0)
+    if (options & RDO_SIEVE_FILTER)
       {
       *error = US"Sieve filtering not enabled";
       return FF_ERROR;
@@ -446,9 +443,9 @@ Returns:     -1 on error, else 0
 static int
 rda_write_string(int fd, const uschar *s)
 {
-int len = (s == NULL)? 0 : Ustrlen(s) + 1;
+int len = s ? Ustrlen(s) + 1 : 0;
 return (  write(fd, &len, sizeof(int)) != sizeof(int)
-       || (s != NULL  &&  write(fd, s, len) != len)
+       || (s   &&  write(fd, s, len) != len)
        )
        ? -1 : 0;
 }
@@ -469,7 +466,7 @@ Returns:     FALSE if data missing
 */
 
 static BOOL
-rda_read_string(int fd, uschar **sp)
+rda_read_string(int fd, uschar ** sp)
 {
 int len;
 
@@ -479,7 +476,8 @@ if (len == 0)
 else
   /* We know we have enough memory so disable the error on "len" */
   /* coverity[tainted_data] */
-  if (read(fd, *sp = store_get(len), len) != len) return FALSE;
+  /* We trust the data source, so untainted */
+  if (read(fd, *sp = store_get(len, GET_UNTAINTED), len) != len) return FALSE;
 return TRUE;
 }
 
@@ -544,11 +542,11 @@ Returns:        values from extraction function, or FF_NONEXIST:
 */
 
 int
-rda_interpret(redirect_block *rdata, int options, uschar *include_directory,
-  uschar *sieve_vacation_directory, uschar *sieve_enotify_mailto_owner,
-  uschar *sieve_useraddress, uschar *sieve_subaddress, ugid_block *ugid,
-  address_item **generated, uschar **error, error_block **eblockp,
-  int *filtertype, uschar *rname)
+rda_interpret(redirect_block * rdata, int options,
+  const uschar * include_directory, const uschar * sieve_vacation_directory,
+  const uschar * sieve_enotify_mailto_owner, const uschar * sieve_useraddress,
+  const uschar * sieve_subaddress, const ugid_block * ugid, address_item ** generated,
+  uschar ** error, error_block ** eblockp, int * filtertype, const uschar * rname)
 {
 int fd, rc, pfd[2];
 int yield, status;
@@ -558,13 +556,12 @@ uschar *data;
 uschar *readerror = US"";
 void (*oldsignal)(int);
 
-DEBUG(D_route) debug_printf("rda_interpret (%s): %s\n",
-  (rdata->isfile)? "file" : "string", rdata->string);
+DEBUG(D_route) debug_printf("rda_interpret (%s): '%s'\n",
+  rdata->isfile ? "file" : "string", string_printing(rdata->string));
 
 /* Do the expansions of the file name or data first, while still privileged. */
 
-data = expand_string(rdata->string);
-if (data == NULL)
+if (!(data = expand_string(rdata->string)))
   {
   if (f.expand_string_forcedfail) return FF_NOTDELIVERED;
   *error = string_sprintf("failed to expand \"%s\": %s", rdata->string,
@@ -573,7 +570,8 @@ if (data == NULL)
   }
 rdata->string = data;
 
-DEBUG(D_route) debug_printf("expanded: %s\n", data);
+DEBUG(D_route)
+  debug_printf("expanded: '%s'%s\n", data, is_tainted(data) ? " (tainted)":"");
 
 if (rdata->isfile && data[0] != '/')
   {
@@ -590,11 +588,9 @@ if (!ugid->uid_set ||                         /* Either there's no uid, or */
     (!rdata->isfile &&                        /* We've got the data, and */
      rda_is_filter(data) == FILTER_FORWARD && /* It's not a filter script, */
      Ustrstr(data, ":include:") == NULL))     /* and there's no :include: */
-  {
   return rda_extract(rdata, options, include_directory,
     sieve_vacation_directory, sieve_enotify_mailto_owner, sieve_useraddress,
     sieve_subaddress, generated, error, eblockp, filtertype);
-  }
 
 /* We need to run the processing code in a sub-process. However, if we can
 determine the non-existence of a file first, we can decline without having to
@@ -620,7 +616,7 @@ with the parent process. */
 oldsignal = signal(SIGCHLD, SIG_DFL);
 search_tidyup();
 
-if ((pid = fork()) == 0)
+if ((pid = exim_fork(US"router-interpret")) == 0)
   {
   header_line *waslast = header_last;   /* Save last header */
   int fd_flags = -1;
@@ -630,6 +626,7 @@ if ((pid = fork()) == 0)
 
   if ((fd_flags = fcntl(fd, F_GETFD)) == -1) goto bad;
   if (fcntl(fd, F_SETFD, fd_flags | FD_CLOEXEC) == -1) goto bad;
+
   exim_setugid(ugid->uid, ugid->gid, FALSE, rname);
 
   /* Addresses can get rewritten in filters; if we are not root or the exim
@@ -660,10 +657,9 @@ if ((pid = fork()) == 0)
 
   /* Pass back the contents of any syntax error blocks if we have a pointer */
 
-  if (eblockp != NULL)
+  if (eblockp)
     {
-    error_block *ep;
-    for (ep = *eblockp; ep != NULL; ep = ep->next)
+    for (error_block * ep = *eblockp; ep; ep = ep->next)
       if (  rda_write_string(fd, ep->text1) != 0
          || rda_write_string(fd, ep->text2) != 0
 	 )
@@ -679,8 +675,7 @@ if ((pid = fork()) == 0)
   if (f.system_filtering)
     {
     int i = 0;
-    header_line *h;
-    for (h = header_list; h != waslast->next; i++, h = h->next)
+    for (header_line * h = header_list; h != waslast->next; i++, h = h->next)
       if (  h->type == htype_old
          && write(fd, &i, sizeof(i)) != sizeof(i)
 	 )
@@ -718,8 +713,7 @@ if ((pid = fork()) == 0)
   if (yield == FF_DELIVERED || yield == FF_NOTDELIVERED ||
       yield == FF_FAIL || yield == FF_FREEZE)
     {
-    address_item *addr;
-    for (addr = *generated; addr; addr = addr->next)
+    for (address_item * addr = *generated; addr; addr = addr->next)
       {
       int reply_options = 0;
       int ig_err = addr->prop.ignore_error ? 1 : 0;
@@ -733,12 +727,9 @@ if ((pid = fork()) == 0)
 	goto bad;
 
       if (addr->pipe_expandn)
-        {
-        uschar **pp;
-        for (pp = addr->pipe_expandn; *pp; pp++)
+        for (uschar ** pp = addr->pipe_expandn; *pp; pp++)
           if (rda_write_string(fd, *pp) != 0)
 	    goto bad;
-        }
       if (rda_write_string(fd, NULL) != 0)
         goto bad;
 
@@ -783,7 +774,7 @@ if ((pid = fork()) == 0)
 out:
   (void)close(fd);
   search_tidyup();
-  _exit(0);
+  exim_underbar_exit(EXIT_SUCCESS);
 
 bad:
   DEBUG(D_rewrite) debug_printf("rda_interpret: failed write to pipe\n");
@@ -813,13 +804,12 @@ if (read(fd, filtertype, sizeof(int)) != sizeof(int) ||
 if (eblockp)
   {
   error_block *e;
-  error_block **p;
-  for (p = eblockp; ; p = &e->next)
+  for (error_block ** p = eblockp; ; p = &e->next)
     {
     uschar *s;
     if (!rda_read_string(fd, &s)) goto DISASTER;
     if (!s) break;
-    e = store_get(sizeof(error_block));
+    e = store_get(sizeof(error_block), GET_UNTAINTED);
     e->next = NULL;
     e->text1 = s;
     if (!rda_read_string(fd, &s)) goto DISASTER;
@@ -876,14 +866,14 @@ if (yield == FF_DELIVERED || yield == FF_NOTDELIVERED ||
   for (;;)
     {
     int i, reply_options;
-    address_item *addr;
-    uschar *recipient;
-    uschar *expandn[EXPAND_MAXN + 2];
+    address_item * addr;
+    uschar * recipient, * s;
+    uschar * expandn[EXPAND_MAXN + 2];
 
     /* First string is the address; NULL => end of addresses */
 
     if (!rda_read_string(fd, &recipient)) goto DISASTER;
-    if (recipient == NULL) break;
+    if (!recipient) break;
 
     /* Hang on the end of the chain */
 
@@ -895,10 +885,11 @@ if (yield == FF_DELIVERED || yield == FF_NOTDELIVERED ||
 
     if (  read(fd, &addr->mode, sizeof(addr->mode)) != sizeof(addr->mode)
        || read(fd, &addr->flags, sizeof(addr->flags)) != sizeof(addr->flags)
-       || !rda_read_string(fd, &addr->prop.errors_address)
+       || !rda_read_string(fd, &s)
        || read(fd, &i, sizeof(i)) != sizeof(i)
        )
       goto DISASTER;
+    addr->prop.errors_address = s;
     addr->prop.ignore_error = (i != 0);
 
     /* Next comes a possible setting for $thisaddress and any numerical
@@ -918,7 +909,7 @@ if (yield == FF_DELIVERED || yield == FF_NOTDELIVERED ||
 
     if (i > 0)
       {
-      addr->pipe_expandn = store_get((i+1) * sizeof(uschar *));
+      addr->pipe_expandn = store_get((i+1) * sizeof(uschar *), GET_UNTAINTED);
       addr->pipe_expandn[i] = NULL;
       while (--i >= 0) addr->pipe_expandn[i] = expandn[i];
       }
@@ -928,7 +919,7 @@ if (yield == FF_DELIVERED || yield == FF_NOTDELIVERED ||
     if (read(fd, &reply_options, sizeof(int)) != sizeof(int)) goto DISASTER;
     if ((reply_options & REPLY_EXISTS) != 0)
       {
-      addr->reply = store_get(sizeof(reply_item));
+      addr->reply = store_get(sizeof(reply_item), GET_UNTAINTED);
 
       addr->reply->file_expand = (reply_options & REPLY_EXPAND) != 0;
       addr->reply->return_message = (reply_options & REPLY_RETURN) != 0;
@@ -937,17 +928,17 @@ if (yield == FF_DELIVERED || yield == FF_NOTDELIVERED ||
             sizeof(int) ||
           read(fd,&(addr->reply->once_repeat),sizeof(time_t)) !=
             sizeof(time_t) ||
-          !rda_read_string(fd, &(addr->reply->to)) ||
-          !rda_read_string(fd, &(addr->reply->cc)) ||
-          !rda_read_string(fd, &(addr->reply->bcc)) ||
-          !rda_read_string(fd, &(addr->reply->from)) ||
-          !rda_read_string(fd, &(addr->reply->reply_to)) ||
-          !rda_read_string(fd, &(addr->reply->subject)) ||
-          !rda_read_string(fd, &(addr->reply->headers)) ||
-          !rda_read_string(fd, &(addr->reply->text)) ||
-          !rda_read_string(fd, &(addr->reply->file)) ||
-          !rda_read_string(fd, &(addr->reply->logfile)) ||
-          !rda_read_string(fd, &(addr->reply->oncelog)))
+          !rda_read_string(fd, &addr->reply->to) ||
+          !rda_read_string(fd, &addr->reply->cc) ||
+          !rda_read_string(fd, &addr->reply->bcc) ||
+          !rda_read_string(fd, &addr->reply->from) ||
+          !rda_read_string(fd, &addr->reply->reply_to) ||
+          !rda_read_string(fd, &addr->reply->subject) ||
+          !rda_read_string(fd, &addr->reply->headers) ||
+          !rda_read_string(fd, &addr->reply->text) ||
+          !rda_read_string(fd, &addr->reply->file) ||
+          !rda_read_string(fd, &addr->reply->logfile) ||
+          !rda_read_string(fd, &addr->reply->oncelog))
         goto DISASTER;
       }
     }
@@ -958,13 +949,11 @@ reading end of the pipe, and we are done. */
 
 WAIT_EXIT:
 while ((rc = wait(&status)) != pid)
-  {
   if (rc < 0 && errno == ECHILD)      /* Process has vanished */
     {
     log_write(0, LOG_MAIN, "redirection process %d vanished unexpectedly", pid);
     goto FINAL_EXIT;
     }
-  }
 
 DEBUG(D_route)
   debug_printf("rda_interpret: subprocess yield=%d error=%s\n", yield, *error);
@@ -974,16 +963,14 @@ if (had_disaster)
   *error = string_sprintf("internal problem in %s: failure to transfer "
     "data from subprocess: status=%04x%s%s%s", rname,
     status, readerror,
-    (*error == NULL)? US"" : US": error=",
-    (*error == NULL)? US"" : *error);
+    *error ? US": error=" : US"",
+    *error ? *error : US"");
   log_write(0, LOG_MAIN|LOG_PANIC, "%s", *error);
   }
 else if (status != 0)
-  {
   log_write(0, LOG_MAIN|LOG_PANIC, "internal problem in %s: unexpected status "
     "%04x from redirect subprocess (but data correctly received)", rname,
     status);
-  }
 
 FINAL_EXIT:
 (void)close(fd);

@@ -2,10 +2,12 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2023 */
+/* Copyright (c) University of Cambridge 1995 - 2018 */
 /* Copyright (c) Tom Kistner <tom@duncanthrax.net> 2004, 2015 */
 /* License: GPL */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
-/* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
 
 
@@ -38,7 +40,7 @@ ssize_t
 mime_decode_base64(FILE * in, FILE * out, uschar * boundary)
 {
 uschar ibuf[MIME_MAX_LINE_LENGTH], obuf[MIME_MAX_LINE_LENGTH];
-uschar *ipos, *opos;
+uschar *opos;
 ssize_t len, size = 0;
 int bytestate = 0;
 
@@ -52,7 +54,7 @@ while (Ufgets(ibuf, MIME_MAX_LINE_LENGTH, in) != NULL)
      )
     break;
 
-  for (ipos = ibuf ; *ipos != '\r' && *ipos != '\n' && *ipos != 0; ++ipos)
+  for (uschar * ipos = ibuf ; *ipos != '\r' && *ipos != '\n' && *ipos; ++ipos)
     if (*ipos == '=')			/* skip padding */
       ++bytestate;
 
@@ -150,16 +152,16 @@ static uschar dec64table[] = {
 };
 
 int
-b64decode(const uschar *code, uschar **ptr)
+b64decode(const uschar * code, uschar ** ptr, const void * proto_mem)
 {
 
 int x, y;
 uschar *result;
 
-{
+ {
   int l = Ustrlen(code);
-  *ptr = result = store_get(1 + l/4 * 3 + l%4);
-}
+  *ptr = result = store_get(1 + l/4 * 3 + l%4, proto_mem);
+ }
 
 /* Each cycle of the loop handles a quantum of 4 input bytes. For the last
 quantum this may decode to 1, 2, or 3 output bytes. */
@@ -233,6 +235,7 @@ would probably run more slowly.
 Arguments:
   clear       points to the clear text bytes
   len         the number of bytes to encode
+  proto_mem   taint indicator
 
 Returns:      a pointer to the zero-terminated base 64 string, which
               is in working store
@@ -242,10 +245,10 @@ static uschar *enc64table =
   US"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 uschar *
-b64encode(uschar *clear, int len)
+b64encode_taint(const uschar * clear, int len, const void * proto_mem)
 {
-uschar *code = store_get(4*((len+2)/3) + 1);
-uschar *p = code;
+uschar * code = store_get(4*((len+2)/3) + 1, proto_mem);
+uschar * p = code;
 
 while (len-- >0)
   {
@@ -281,6 +284,12 @@ while (len-- >0)
 *p = 0;
 
 return code;
+}
+
+uschar *
+b64encode(const uschar * clear, int len)
+{
+return b64encode_taint(clear, len, clear);
 }
 
 

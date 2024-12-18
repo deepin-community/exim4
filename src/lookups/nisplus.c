@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2022 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 #include "lf_functions.h"
@@ -18,7 +20,7 @@
 /* See local README for interface description. */
 
 static void *
-nisplus_open(uschar *filename, uschar **errmsg)
+nisplus_open(const uschar * filename, uschar ** errmsg)
 {
 return (void *)(1);    /* Just return something non-null */
 }
@@ -42,10 +44,10 @@ yield is the concatenation of all the fields, preceded by their names and an
 equals sign. */
 
 static int
-nisplus_find(void *handle, uschar *filename, const uschar *query, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+nisplus_find(void * handle, const uschar * filename, const uschar * query,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
-int i;
 int error_error = FAIL;
 const uschar * field_name = NULL;
 nis_result *nrt = NULL;
@@ -138,7 +140,7 @@ was given, look for that field; otherwise concatenate all the fields
 with their names. */
 
 eo = &(eno->zo_data.objdata_u.en_data);
-for (i = 0; i < eo->en_cols.en_cols_len; i++)
+for (int i = 0; i < eo->en_cols.en_cols_len; i++)
   {
   table_col *tc = ta->ta_cols.ta_cols_val + i;
   entry_col *ec = eo->en_cols.en_cols_val + i;
@@ -149,7 +151,8 @@ for (i = 0; i < eo->en_cols.en_cols_len; i++)
   empty string for consistency. Remove trailing whitespace and zero
   bytes. */
 
-  if (value == NULL) value = US""; else
+  if (!value) value = US"";
+  else
     while (len > 0 && (value[len-1] == 0 || isspace(value[len-1])))
       len--;
 
@@ -157,16 +160,15 @@ for (i = 0; i < eo->en_cols.en_cols_len; i++)
 
   if (!field_name)
     {
-    yield = string_cat (yield, tc->tc_name);
+    yield = string_cat (yield, US tc->tc_name);
     yield = string_catn(yield, US"=", 1);
 
     /* Quote the value if it contains spaces or is empty */
 
     if (value[0] == 0 || Ustrchr(value, ' ') != NULL)
       {
-      int j;
       yield = string_catn(yield, US"\"", 1);
-      for (j = 0; j < len; j++)
+      for (int j = 0; j < len; j++)
         {
         if (value[j] == '\"' || value[j] == '\\')
           yield = string_catn(yield, US"\\", 1);
@@ -196,7 +198,7 @@ if (field_name)
   *errmsg = string_sprintf("NIS+ field %s not found for %s", field_name,
     query);
 else
-  store_reset(yield->s + yield->ptr + 1);
+  gstring_release_unused(yield);
 
 /* Free result store before finishing. */
 
@@ -225,25 +227,24 @@ characters. No options are recognized.
 Arguments:
   s          the string to be quoted
   opt        additional option text or NULL if none
+  idx	     lookup type index
 
 Returns:     the processed string or NULL for a bad option
 */
 
 static uschar *
-nisplus_quote(uschar *s, uschar *opt)
+nisplus_quote(uschar * s, uschar * opt, unsigned idx)
 {
 int count = 0;
-uschar *quoted;
-uschar *t = s;
+uschar * quoted, * t = s;
 
-if (opt != NULL) return NULL;    /* No options recognized */
+if (opt) return NULL;    /* No options recognized */
 
-while (*t != 0) if (*t++ == '\"') count++;
-if (count == 0) return s;
+while (*t) if (*t++ == '\"') count++;
 
-t = quoted = store_get(Ustrlen(s) + count + 1);
+t = quoted = store_get_quoted(Ustrlen(s) + count + 1, s, idx);
 
-while (*s != 0)
+while (*s)
   {
   *t++ = *s;
   if (*s++ == '\"') *t++ = '\"';
@@ -262,25 +263,26 @@ return quoted;
 
 #include "../version.h"
 
-void
-nisplus_version_report(FILE *f)
+gstring *
+nisplus_version_report(gstring * g)
 {
 #ifdef DYNLOOKUP
-fprintf(f, "Library version: NIS+: Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g, "Library version: NIS+: Exim version %s\n", EXIM_VERSION_STR);
 #endif
+return g;
 }
 
 
 static lookup_info _lookup_info = {
-  US"nisplus",                   /* lookup name */
-  lookup_querystyle,             /* query-style lookup */
-  nisplus_open,                  /* open function */
-  NULL,                          /* check function */
-  nisplus_find,                  /* find function */
-  NULL,                          /* no close function */
-  NULL,                          /* no tidy function */
-  nisplus_quote,                 /* quoting function */
-  nisplus_version_report         /* version reporting */
+  .name = US"nisplus",			/* lookup name */
+  .type = lookup_querystyle,		/* query-style lookup */
+  .open = nisplus_open,			/* open function */
+  .check = NULL,			/* check function */
+  .find = nisplus_find,			/* find function */
+  .close = NULL,			/* no close function */
+  .tidy = NULL,				/* no tidy function */
+  .quote = nisplus_quote,		/* quoting function */
+  .version_report = nisplus_version_report         /* version reporting */
 };
 
 #ifdef DYNLOOKUP

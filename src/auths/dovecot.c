@@ -1,6 +1,7 @@
 /*
+ * Copyright (c) The Exim Maintainers 2006 - 2024
  * Copyright (c) 2004 Andrey Panin <pazke@donpac.ru>
- * Copyright (c) 2006-2017 The Exim Maintainers
+ * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published
@@ -22,6 +23,8 @@ because using C buffered I/O gives problems on some operating systems. PH */
  */
 
 #include "../exim.h"
+
+#ifdef AUTH_DOVECOT	/* Remainder of file */
 #include "dovecot.h"
 
 #define VERSION_MAJOR  1
@@ -51,23 +54,20 @@ The cost is the length of an array of pointers on the stack.
 
 /* Options specific to the authentication mechanism. */
 optionlist auth_dovecot_options[] = {
-       {
-       "server_socket",
-       opt_stringptr,
-       (void *)(offsetof(auth_dovecot_options_block, server_socket))
-       },
+  { "server_socket", opt_stringptr, OPT_OFF(auth_dovecot_options_block, server_socket) },
+/*{ "server_tls", opt_bool, OPT_OFF(auth_dovecot_options_block, server_tls) },*/
 };
 
 /* Size of the options list. An extern variable has to be used so that its
 address can appear in the tables drtables.c. */
 
-int auth_dovecot_options_count =
-       sizeof(auth_dovecot_options) / sizeof(optionlist);
+int auth_dovecot_options_count = nelem(auth_dovecot_options);
 
 /* Default private options block for the authentication method. */
 
 auth_dovecot_options_block auth_dovecot_option_defaults = {
-       NULL,                           /* server_socket */
+	.server_socket = NULL,
+/*	.server_tls =	FALSE,*/
 };
 
 
@@ -99,16 +99,16 @@ static int socket_buffer_left;
 enable consistency checks to be done, or anything else that needs
 to be set up. */
 
-void auth_dovecot_init(auth_instance *ablock)
+void
+auth_dovecot_init(auth_instance * ablock)
 {
-       auth_dovecot_options_block *ob =
-               (auth_dovecot_options_block *)(ablock->options_block);
+auth_dovecot_options_block * ob =
+       (auth_dovecot_options_block *)(ablock->options_block);
 
-       if (ablock->public_name == NULL)
-               ablock->public_name = ablock->name;
-       if (ob->server_socket != NULL)
-               ablock->server = TRUE;
-       ablock->client = FALSE;
+if (!ablock->public_name) ablock->public_name = ablock->name;
+if (ob->server_socket) ablock->server = TRUE;
+else DEBUG(D_auth) debug_printf("Dovecot auth driver: no server_socket for %s\n", ablock->public_name);
+ablock->client = FALSE;
 }
 
 /*************************************************
@@ -131,52 +131,51 @@ actual fields (so last valid offset into ptrs is one less).
 static int
 strcut(uschar *str, uschar **ptrs, int nptrs)
 {
-       uschar *last_sub_start = str;
-       int n;
+uschar *last_sub_start = str;
+int n;
 
-       for (n = 0; n < nptrs; n++)
-               ptrs[n] = NULL;
-       n = 1;
+for (n = 0; n < nptrs; n++)
+  ptrs[n] = NULL;
+n = 1;
 
-       while (*str) {
-               if (*str == '\t') {
-                       if (n <= nptrs) {
-                               *ptrs++ = last_sub_start;
-                               last_sub_start = str + 1;
-                               *str = '\0';
-                       }
-                       n++;
-               }
-               str++;
-       }
+while (*str)
+  if (*str++ == '\t')
+    if (n++ <= nptrs)
+      {
+      *ptrs++ = last_sub_start;
+      last_sub_start = str;
+      str[-1] = '\0';
+      }
 
-       /* It's acceptable for the string to end with a tab character.  We see
-       this in AUTH PLAIN without an initial response from the client, which
-       causing us to send "334 " and get the data from the client. */
-       if (n <= nptrs) {
-               *ptrs = last_sub_start;
-       } else {
-               HDEBUG(D_auth) debug_printf("dovecot: warning: too many results from tab-splitting; saw %d fields, room for %d\n", n, nptrs);
-               n = nptrs;
-       }
+/* It's acceptable for the string to end with a tab character.  We see
+this in AUTH PLAIN without an initial response from the client, which
+causing us to send "334 " and get the data from the client. */
+if (n <= nptrs)
+  *ptrs = last_sub_start;
+else
+  {
+  HDEBUG(D_auth)
+    debug_printf("dovecot: warning: too many results from tab-splitting;"
+		  " saw %d fields, room for %d\n", n, nptrs);
+  n = nptrs;
+  }
 
-       return n <= nptrs ? n : nptrs;
+return n <= nptrs ? n : nptrs;
 }
 
 static void debug_strcut(uschar **ptrs, int nlen, int alen) ARG_UNUSED;
 static void
 debug_strcut(uschar **ptrs, int nlen, int alen)
 {
-        int i;
-        debug_printf("%d read but unreturned bytes; strcut() gave %d results: ",
-                        socket_buffer_left, nlen);
-        for (i = 0; i < nlen; i++) {
-                debug_printf(" {%s}", ptrs[i]);
-        }
-        if (nlen < alen)
-                debug_printf(" last is %s\n", ptrs[i] ? ptrs[i] : US"<null>");
-        else
-                debug_printf(" (max for capacity)\n");
+int i;
+debug_printf("%d read but unreturned bytes; strcut() gave %d results: ",
+		socket_buffer_left, nlen);
+for (i = 0; i < nlen; i++)
+  debug_printf(" {%s}", ptrs[i]);
+if (nlen < alen)
+  debug_printf(" last is %s\n", ptrs[i] ? ptrs[i] : US"<null>");
+else
+  debug_printf(" (max for capacity)\n");
 }
 
 #define CHECK_COMMAND(str, arg_min, arg_max) do { \
@@ -203,7 +202,7 @@ debug_strcut(uschar **ptrs, int nlen, int alen)
 C-style buffered I/O gave trouble. */
 
 static uschar *
-dc_gets(uschar *s, int n, int fd)
+dc_gets(uschar *s, int n, client_conn_ctx * cctx)
 {
 int p = 0;
 int count = 0;
@@ -212,8 +211,15 @@ for (;;)
   {
   if (socket_buffer_left == 0)
     {
-    socket_buffer_left = read(fd, sbuffer, sizeof(sbuffer));
-    if (socket_buffer_left == 0) { if (count == 0) return NULL; else break; }
+    if ((socket_buffer_left =
+#ifndef DISABLE_TLS
+	cctx->tls_ctx ? tls_read(cctx->tls_ctx, sbuffer, sizeof(sbuffer)) :
+#endif
+	read(cctx->sock, sbuffer, sizeof(sbuffer))) <= 0)
+      if (count == 0)
+	return NULL;
+      else
+	break;
     p = 0;
     }
 
@@ -246,14 +252,15 @@ auth_dovecot_server(auth_instance * ablock, uschar * data)
 {
 auth_dovecot_options_block *ob =
        (auth_dovecot_options_block *) ablock->options_block;
-struct sockaddr_un sa;
 uschar buffer[DOVECOT_AUTH_MAXLINELEN];
 uschar *args[DOVECOT_AUTH_MAXFIELDCOUNT];
 uschar *auth_command;
 uschar *auth_extra_data = US"";
 uschar *p;
 int nargs, tmp;
-int crequid = 1, cont = 1, fd = -1, ret = DEFER;
+int crequid = 1, ret = DEFER;
+host_item host;
+client_conn_ctx cctx = {.sock = -1, .tls_ctx = NULL};
 BOOL found = FALSE, have_mech_line = FALSE;
 
 HDEBUG(D_auth) debug_printf("dovecot authentication\n");
@@ -264,50 +271,55 @@ if (!data)
   goto out;
   }
 
-memset(&sa, 0, sizeof(sa));
-sa.sun_family = AF_UNIX;
+/*XXX timeout? */
+cctx.sock = ip_streamsocket(ob->server_socket, &auth_defer_msg, 5, &host);
+if (cctx.sock < 0)
+ goto out;
 
-/* This was the original code here: it is nonsense because strncpy()
-does not return an integer. I have converted this to use the function
-that formats and checks length. PH */
-
-/*
-if (strncpy(sa.sun_path, ob->server_socket, sizeof(sa.sun_path)) < 0) {
-}
-*/
-
-if (!string_format(US sa.sun_path, sizeof(sa.sun_path), "%s",
-		  ob->server_socket))
+#ifdef notdef
+# ifndef DISABLE_TLS
+if (ob->server_tls)
   {
-  auth_defer_msg = US"authentication socket path too long";
-  return DEFER;
+  union sockaddr_46 interface_sock;
+  EXIM_SOCKLEN_T size = sizeof(interface_sock);
+  smtp_connect_args conn_args = { .host = &host };
+  tls_support tls_dummy = { .sni = NULL };
+  uschar * errstr;
+
+  if (getsockname(cctx->sock, (struct sockaddr *) &interface_sock, &size) == 0)
+    conn_args.sending_ip_address = host_ntoa(-1, &interface_sock, NULL, NULL);
+  else
+    {
+    *errmsg = string_sprintf("getsockname failed: %s", strerror(errno));
+    goto bad;
+    }
+
+  if (!tls_client_start(&cctx, &conn_args, NULL, &tls_dummy, &errstr))
+    {
+    auth_defer_msg = string_sprintf("TLS connect failed: %s", errstr);
+    goto out;
+    }
   }
-
-auth_defer_msg = US"authentication socket connection error";
-
-if ((fd = socket(PF_UNIX, SOCK_STREAM, 0)) < 0)
-  return DEFER;
-
-if (connect(fd, (struct sockaddr *) &sa, sizeof(sa)) < 0)
-  goto out;
+# endif
+#endif
 
 auth_defer_msg = US"authentication socket protocol error";
 
 socket_buffer_left = 0;  /* Global, used to read more than a line but return by line */
-while (cont)
+for (;;)
   {
-  if (dc_gets(buffer, sizeof(buffer), fd) == NULL)
+  if (!dc_gets(buffer, sizeof(buffer), &cctx))
     OUT("authentication socket read error or premature eof");
   p = buffer + Ustrlen(buffer) - 1;
   if (*p != '\n')
     OUT("authentication socket protocol line too long");
 
   *p = '\0';
-  HDEBUG(D_auth) debug_printf("received: %s\n", buffer);
+  HDEBUG(D_auth) debug_printf("  DOVECOT<< '%s'\n", buffer);
 
-  nargs = strcut(buffer, args, sizeof(args) / sizeof(args[0]));
+  nargs = strcut(buffer, args, nelem(args));
 
-  /* HDEBUG(D_auth) debug_strcut(args, nargs, sizeof(args) / sizeof(args[0])); */
+  HDEBUG(D_auth) debug_strcut(args, nargs, nelem(args));
 
   /* Code below rewritten by Kirill Miazine (km@krot.org). Only check commands that
     Exim will need. Original code also failed if Dovecot server sent unknown
@@ -350,7 +362,7 @@ while (cont)
   else if (Ustrcmp(args[0], US"DONE") == 0)
     {
     CHECK_COMMAND("DONE", 0, 0);
-    cont = 0;
+    break;
     }
   }
 
@@ -373,12 +385,12 @@ if (Ustrchr(data, '\t') != NULL)
 /* Added by PH: extra fields when TLS is in use or if the TCP/IP
 connection is local. */
 
-if (tls_in.cipher != NULL)
+if (tls_in.cipher)
   auth_extra_data = string_sprintf("secured\t%s%s",
-     tls_in.certificate_verified? "valid-client-cert" : "",
-     tls_in.certificate_verified? "\t" : "");
+     tls_in.certificate_verified ? "valid-client-cert" : "",
+     tls_in.certificate_verified ? "\t" : "");
 
-else if (  interface_address != NULL
+else if (  interface_address
         && Ustrcmp(sender_host_address, interface_address) == 0)
   auth_extra_data = US"secured\t";
 
@@ -405,27 +417,31 @@ auth_command = string_sprintf("VERSION\t%d\t%d\nCPID\t%d\n"
        ablock->public_name, auth_extra_data, sender_host_address,
        interface_address, data);
 
-if (write(fd, auth_command, Ustrlen(auth_command)) < 0)
+if ((
+#ifndef DISABLE_TLS
+    cctx.tls_ctx ? tls_write(cctx.tls_ctx, auth_command, Ustrlen(auth_command), FALSE) :
+#endif
+    write(cctx.sock, auth_command, Ustrlen(auth_command))) < 0)
   HDEBUG(D_auth) debug_printf("error sending auth_command: %s\n",
     strerror(errno));
 
-HDEBUG(D_auth) debug_printf("sent: %s", auth_command);
+HDEBUG(D_auth) debug_printf("  DOVECOT>> '%s'\n", auth_command);
 
 while (1)
   {
-  uschar *temp;
-  uschar *auth_id_pre = NULL;
-  int i;
+  uschar * temp;
+  uschar * auth_id_pre = NULL;
 
-  if (dc_gets(buffer, sizeof(buffer), fd) == NULL)
+  if (!dc_gets(buffer, sizeof(buffer), &cctx))
     {
     auth_defer_msg = US"authentication socket read error or premature eof";
     goto out;
     }
 
   buffer[Ustrlen(buffer) - 1] = 0;
-  HDEBUG(D_auth) debug_printf("received: %s\n", buffer);
-  nargs = strcut(buffer, args, sizeof(args) / sizeof(args[0]));
+  HDEBUG(D_auth) debug_printf("  DOVECOT<< '%s'\n", buffer);
+  nargs = strcut(buffer, args, nelem(args));
+  HDEBUG(D_auth) debug_strcut(args, nargs, nelem(args));
 
   if (Uatoi(args[1]) != crequid)
     OUT("authentication socket connection id mismatch");
@@ -451,24 +467,27 @@ while (1)
 	}
 
       temp = string_sprintf("CONT\t%d\t%s\n", crequid, data);
-      if (write(fd, temp, Ustrlen(temp)) < 0)
+      if ((
+#ifndef DISABLE_TLS
+	  cctx.tls_ctx ? tls_write(cctx.tls_ctx, temp, Ustrlen(temp), FALSE) :
+#endif
+	  write(cctx.sock, temp, Ustrlen(temp))) < 0)
 	OUT("authentication socket write error");
+
+      HDEBUG(D_auth) debug_printf("  DOVECOT>> '%s'\n", temp);
       break;
 
     case 'F':
       CHECK_COMMAND("FAIL", 1, -1);
 
-      for (i=2; (i<nargs) && (auth_id_pre == NULL); i++)
-	{
-	if ( Ustrncmp(args[i], US"user=", 5) == 0 )
+      for (int i = 2; i < nargs && !auth_id_pre; i++)
+	if (Ustrncmp(args[i], US"user=", 5) == 0)
 	  {
-	  auth_id_pre = args[i]+5;
+	  auth_id_pre = args[i] + 5;
 	  expand_nstring[1] = auth_vars[0] = string_copy(auth_id_pre); /* PH */
 	  expand_nlength[1] = Ustrlen(auth_id_pre);
 	  expand_nmax = 1;
 	  }
-	}
-
       ret = FAIL;
       goto out;
 
@@ -478,20 +497,19 @@ while (1)
       /* Search for the "user=$USER" string in the args array
       and return the proper value.  */
 
-      for (i=2; (i<nargs) && (auth_id_pre == NULL); i++)
-	{
-	if ( Ustrncmp(args[i], US"user=", 5) == 0 )
+      for (int i = 2; i < nargs && !auth_id_pre; i++)
+	if (Ustrncmp(args[i], US"user=", 5) == 0)
 	  {
-	  auth_id_pre = args[i]+5;
+	  auth_id_pre = args[i] + 5;
 	  expand_nstring[1] = auth_vars[0] = string_copy(auth_id_pre); /* PH */
 	  expand_nlength[1] = Ustrlen(auth_id_pre);
 	  expand_nmax = 1;
 	  }
-	}
 
-      if (auth_id_pre == NULL)
+      if (!auth_id_pre)
         OUT("authentication socket protocol error, username missing");
 
+      auth_defer_msg = NULL;
       ret = OK;
       /* fallthrough */
 
@@ -502,12 +520,21 @@ while (1)
 
 out:
 /* close the socket used by dovecot */
-if (fd >= 0)
-  close(fd);
+#ifndef DISABLE_TLS
+if (cctx.tls_ctx)
+  tls_close(cctx.tls_ctx, TRUE);
+#endif
+if (cctx.sock >= 0)
+  close(cctx.sock);
 
 /* Expand server_condition as an authorization check */
-return ret == OK ? auth_check_serv_cond(ablock) : ret;
+if (ret == OK) ret = auth_check_serv_cond(ablock);
+
+HDEBUG(D_auth) debug_printf("dovecot auth ret: %s\n", rc_names[ret]);
+return ret;
 }
 
 
-#endif   /*!MACRO_PREDEF*/
+#endif	/*!MACRO_PREDEF*/
+#endif	/*AUTH_DOVECOT*/
+/* end of auths/dovecot.c */

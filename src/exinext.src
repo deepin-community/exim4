@@ -1,5 +1,6 @@
 #! /bin/sh
 
+# Copyright (c) The Exim Maintainers 2023 - 2024
 # Copyright (c) University of Cambridge, 1995 - 2007
 # See the file NOTICE for conditions of use and distribution.
 
@@ -25,7 +26,7 @@ config=
 eximmacdef=
 exim_path=
 
-if test "x$1" = x--version
+if [ "x$1" = x--version -o "x$1" = x-v ]
 then
     echo "`basename $0`: $0"
     echo "build: EXIM_RELEASE_VERSIONEXIM_VARIANT_VERSION"
@@ -97,9 +98,9 @@ if [ "$exim_path" = "" ]; then
   exim_path=`grep "^[$st]*exim_path" $config | sed "s/.*=[$st]*//"`
 fi
 
-if test "$exim_path" = ""; then exim_path=BIN_DIRECTORY/exim4; fi
-spool_directory=`$exim_path $eximmacdef -bP spool_directory | sed 's/.*=[  ]*//'`
-qualify_domain=`$exim_path $eximmacdef -bP qualify_domain | sed 's/.*=[  ]*//'`
+if test "$exim_path" = ""; then exim_path=BIN_DIRECTORY/exim; fi
+spool_directory=`$exim_path $eximmacdef -C $config -bP spool_directory | sed 's/.*=[  ]*//'`
+qualify_domain=`$exim_path $eximmacdef -C $config -bP qualify_domain | sed 's/.*=[  ]*//'`
 
 # Now do the job. Perl uses $ so frequently that we don't want to have to
 # escape them all from the shell, so pass in shell variable values as
@@ -144,7 +145,7 @@ perl - $exim_path "$eximmacdef" $argone $spool_directory $qualify_domain $config
   # Run Exim to get a list of hosts for the given domain; for
   # each one construct the appropriate retry key.
 
-  open(LIST, "$exim -v -bt $address |") ||
+  open(LIST, "$exim -C $config -v -bt $address |") ||
     die "can't run exim to route $address";
 
   while (<LIST>)
@@ -162,6 +163,7 @@ perl - $exim_path "$eximmacdef" $argone $spool_directory $qualify_domain $config
 
   if (scalar(@list) == 0)
     {
+    push(@list, $subject) if $subject =~ /^\w{6}-\w{11}-\w{4}$/;
     push(@list, $subject) if $subject =~ /^\w{6}-\w{6}-\w{2}$/;
 
     if ($subject !~ /\@/ && $subject !~ /\./)
@@ -181,7 +183,7 @@ perl - $exim_path "$eximmacdef" $argone $spool_directory $qualify_domain $config
 
   # Run exim_dumpdb to get out the retry data and pick off what we want
 
-  open(DATA, "/usr/sbin/exim_dumpdb $spool retry |") ||
+  open(DATA, "${exim}_dumpdb $spool retry |") ||
     die "can't run exim_dumpdb";
 
   while (<DATA>)
@@ -193,45 +195,18 @@ perl - $exim_path "$eximmacdef" $argone $spool_directory $qualify_domain $config
         $printed = 1;
         if (/^\s*T:[^:\s]*:/)
           {
+	  # We rely on non-space-containing strings, for parsing
+
           ($key,$error,$error2,$text) = /^\s*T:(\S+)\s+(\S+)\s+(\S+)\s*(.*)$/;
 
-          # Parsing the keys is a nightmare because of IPv6. The design of the
-          # format for the keys is a complete shambles. All my fault (PH). But
-          # I don't want to change it just for this purpose. If they key
-          # contains more than 3 colons, we have an IPv6 address, because
-          # an IPv6 address must contain at least two colons.
+	  ($host,$ip,$port,$msgid) = $key =~
+	    /^([^:[]*|\[[^]]*\])	# host (could be an ip)
+	      :([^:[]*|\[[^]]*\])	# ip
+	      (?::(\d{1,5}))?		# maybe port
+	      (?::(\S{23}))?		# maybe msgid
+	      $/x;
 
-          # Deal with IPv4 addresses (3 colons or fewer)
-
-          if ($key !~ /:([^:]*?:){3}/)
-            {
-            ($host,$ip,$port,$msgid) = $key =~
-              /^([^:]*):([^:]*)(?::([^:]*)(?::(\S*)|)|)/;
-            }
-
-          # Deal with IPv6 addresses; sorting out the colons is a complete
-          # mess. We should be able to find the host name and IP address from
-          # further in the message. That seems the easiest escape plan here. We
-          # can use those to match the rest of the key.
-
-          else
-            {
-            ($host,$ip) = $text =~ /host\s(\S+)\s\[([^]]+)\]/;
-            if (defined $host)
-              {
-              ($port,$msgid) = $key =~
-                /^$host:$ip(?::([^:]*)(?::(\S*)|)|)/;
-              }
-
-           # This will probably be wrong...
-
-           else
-             {
-             ($host,$ip) = $key =~ /([^:]*):(.*)/;
-             }
-            }
-
-          printf("Transport: %s [%s]", $host, $ip);
+          printf("Transport: %s %s", $host, $ip);
           print ":$port" if defined $port;
           print " $msgid" if defined $msgid;
           print " error $error: $text\n";

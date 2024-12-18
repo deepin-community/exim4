@@ -2,11 +2,15 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "../exim.h"
+
+#ifdef TRANSPORT_PIPE	/* Remainder of file */
 #include "pipe.h"
 
 #ifdef HAVE_SETCLASSRESOURCES
@@ -21,72 +25,50 @@ with "*" are not settable by the user but are used by the option-reading
 software for alternative value types. Some options are stored in the transport
 instance block so as to be publicly visible; these are flagged with opt_public.
 */
+#define LOFF(field) OPT_OFF(pipe_transport_options_block, field)
 
 optionlist pipe_transport_options[] = {
-  { "allow_commands",    opt_stringptr,
-      (void *)offsetof(pipe_transport_options_block, allow_commands) },
+  { "allow_commands",    opt_stringptr,	LOFF(allow_commands) },
   { "batch_id",          opt_stringptr | opt_public,
-      (void *)offsetof(transport_instance, batch_id) },
+      OPT_OFF(transport_instance, batch_id) },
   { "batch_max",         opt_int | opt_public,
-      (void *)offsetof(transport_instance, batch_max) },
-  { "check_string",      opt_stringptr,
-      (void *)offsetof(pipe_transport_options_block, check_string) },
-  { "command",           opt_stringptr,
-      (void *)offsetof(pipe_transport_options_block, cmd) },
-  { "environment",       opt_stringptr,
-      (void *)offsetof(pipe_transport_options_block, environment) },
-  { "escape_string",     opt_stringptr,
-      (void *)offsetof(pipe_transport_options_block, escape_string) },
-  { "force_command",         opt_bool,
-      (void *)offsetof(pipe_transport_options_block, force_command) },
-  { "freeze_exec_fail",  opt_bool,
-      (void *)offsetof(pipe_transport_options_block, freeze_exec_fail) },
-  { "freeze_signal",     opt_bool,
-      (void *)offsetof(pipe_transport_options_block, freeze_signal) },
-  { "ignore_status",     opt_bool,
-      (void *)offsetof(pipe_transport_options_block, ignore_status) },
+      OPT_OFF(transport_instance, batch_max) },
+  { "check_string",      opt_stringptr,	LOFF(check_string) },
+  { "command",           opt_stringptr,	LOFF(cmd) },
+  { "environment",       opt_stringptr,	LOFF(environment) },
+  { "escape_string",     opt_stringptr,	LOFF(escape_string) },
+  { "force_command",         opt_bool,	LOFF(force_command) },
+  { "freeze_exec_fail",  opt_bool,	LOFF(freeze_exec_fail) },
+  { "freeze_signal",     opt_bool,	LOFF(freeze_signal) },
+  { "ignore_status",     opt_bool,	LOFF(ignore_status) },
   { "log_defer_output",  opt_bool | opt_public,
-      (void *)offsetof(transport_instance, log_defer_output) },
+      OPT_OFF(transport_instance, log_defer_output) },
   { "log_fail_output",   opt_bool | opt_public,
-      (void *)offsetof(transport_instance, log_fail_output) },
+      OPT_OFF(transport_instance, log_fail_output) },
   { "log_output",        opt_bool | opt_public,
-      (void *)offsetof(transport_instance, log_output) },
-  { "max_output",        opt_mkint,
-      (void *)offsetof(pipe_transport_options_block, max_output) },
-  { "message_prefix",    opt_stringptr,
-      (void *)offsetof(pipe_transport_options_block, message_prefix) },
-  { "message_suffix",    opt_stringptr,
-      (void *)offsetof(pipe_transport_options_block, message_suffix) },
-  { "path",              opt_stringptr,
-      (void *)offsetof(pipe_transport_options_block, path) },
-  { "permit_coredump",   opt_bool,
-      (void *)offsetof(pipe_transport_options_block, permit_coredump) },
+      OPT_OFF(transport_instance, log_output) },
+  { "max_output",        opt_mkint,	LOFF(max_output) },
+  { "message_prefix",    opt_stringptr,	LOFF(message_prefix) },
+  { "message_suffix",    opt_stringptr,	LOFF(message_suffix) },
+  { "path",              opt_stringptr,	LOFF(path) },
+  { "permit_coredump",   opt_bool,	LOFF(permit_coredump) },
   { "pipe_as_creator",   opt_bool | opt_public,
-      (void *)offsetof(transport_instance, deliver_as_creator) },
-  { "restrict_to_path",  opt_bool,
-      (void *)offsetof(pipe_transport_options_block, restrict_to_path) },
+      OPT_OFF(transport_instance, deliver_as_creator) },
+  { "restrict_to_path",  opt_bool,	LOFF(restrict_to_path) },
   { "return_fail_output",opt_bool | opt_public,
-      (void *)offsetof(transport_instance, return_fail_output) },
+      OPT_OFF(transport_instance, return_fail_output) },
   { "return_output",     opt_bool | opt_public,
-      (void *)offsetof(transport_instance, return_output) },
-  { "temp_errors",       opt_stringptr,
-      (void *)offsetof(pipe_transport_options_block, temp_errors) },
-  { "timeout",           opt_time,
-      (void *)offsetof(pipe_transport_options_block, timeout) },
-  { "timeout_defer",     opt_bool,
-      (void *)offsetof(pipe_transport_options_block, timeout_defer) },
-  { "umask",             opt_octint,
-      (void *)offsetof(pipe_transport_options_block, umask) },
-  { "use_bsmtp",         opt_bool,
-      (void *)offsetof(pipe_transport_options_block, use_bsmtp) },
+      OPT_OFF(transport_instance, return_output) },
+  { "temp_errors",       opt_stringptr,	LOFF(temp_errors) },
+  { "timeout",           opt_time,	LOFF(timeout) },
+  { "timeout_defer",     opt_bool,	LOFF(timeout_defer) },
+  { "umask",             opt_octint,	LOFF(umask) },
+  { "use_bsmtp",         opt_bool,	LOFF(use_bsmtp) },
   #ifdef HAVE_SETCLASSRESOURCES
-  { "use_classresources", opt_bool,
-      (void *)offsetof(pipe_transport_options_block, use_classresources) },
+  { "use_classresources", opt_bool,	LOFF(use_classresources) },
   #endif
-  { "use_crlf",          opt_bool,
-      (void *)offsetof(pipe_transport_options_block, use_crlf) },
-  { "use_shell",         opt_bool,
-      (void *)offsetof(pipe_transport_options_block, use_shell) },
+  { "use_crlf",          opt_bool,	LOFF(use_crlf) },
+  { "use_shell",         opt_bool,	LOFF(use_shell) },
 };
 
 /* Size of the options list. An extern variable has to be used so that its
@@ -109,31 +91,13 @@ BOOL pipe_transport_entry(transport_instance *tblock, address_item *addr) {retur
 /* Default private options block for the pipe transport. */
 
 pipe_transport_options_block pipe_transport_option_defaults = {
-  NULL,           /* cmd */
-  NULL,           /* allow_commands */
-  NULL,           /* environment */
-  US"/bin:/usr/bin",  /* path */
-  NULL,           /* message_prefix (reset in init if not bsmtp) */
-  NULL,           /* message_suffix (ditto) */
-  US mac_expanded_string(EX_TEMPFAIL) ":"    /* temp_errors */
-     mac_expanded_string(EX_CANTCREAT),
-  NULL,           /* check_string */
-  NULL,           /* escape_string */
-  022,            /* umask */
-  20480,          /* max_output */
-  60*60,          /* timeout */
-  0,              /* options */
-  FALSE,          /* force_command */
-  FALSE,          /* freeze_exec_fail */
-  FALSE,          /* freeze_signal */
-  FALSE,          /* ignore_status */
-  FALSE,          /* permit_coredump */
-  FALSE,          /* restrict_to_path */
-  FALSE,          /* timeout_defer */
-  FALSE,          /* use_shell */
-  FALSE,          /* use_bsmtp */
-  FALSE,          /* use_classresources */
-  FALSE           /* use_crlf */
+  .path =	US"/bin:/usr/bin",
+  .temp_errors = US mac_expanded_string(EX_TEMPFAIL) ":"
+		   mac_expanded_string(EX_CANTCREAT),
+  .umask =	022,
+  .max_output = 20480,
+  .timeout =	60*60,
+  /* all others null/zero/false */
 };
 
 
@@ -164,13 +128,6 @@ pipe_transport_setup(transport_instance *tblock, address_item *addrlist,
 {
 pipe_transport_options_block *ob =
   (pipe_transport_options_block *)(tblock->options_block);
-
-addrlist = addrlist;  /* Keep compiler happy */
-dummy = dummy;
-uid = uid;
-gid = gid;
-errmsg = errmsg;
-ob = ob;
 
 #ifdef HAVE_SETCLASSRESOURCES
 if (ob->use_classresources)
@@ -306,12 +263,12 @@ if (ob->allow_commands && ob->use_shell)
 driver options. Only one of body_only and headers_only can be set. */
 
 ob->options |=
-  (tblock->body_only? topt_no_headers : 0) |
-  (tblock->headers_only? topt_no_body : 0) |
-  (tblock->return_path_add? topt_add_return_path : 0) |
-  (tblock->delivery_date_add? topt_add_delivery_date : 0) |
-  (tblock->envelope_to_add? topt_add_envelope_to : 0) |
-  (ob->use_crlf? topt_use_crlf : 0);
+    (tblock->body_only ? topt_no_headers : 0)
+  | (tblock->headers_only ? topt_no_body : 0)
+  | (tblock->return_path_add ? topt_add_return_path : 0)
+  | (tblock->delivery_date_add ? topt_add_delivery_date : 0)
+  | (tblock->envelope_to_add ? topt_add_envelope_to : 0)
+  | (ob->use_crlf ? topt_use_crlf : 0);
 }
 
 
@@ -337,9 +294,9 @@ Returns:             TRUE if all went well; otherwise an error will be
 */
 
 static BOOL
-set_up_direct_command(const uschar ***argvptr, uschar *cmd,
-  BOOL expand_arguments, int expand_fail, address_item *addr, uschar *tname,
-  pipe_transport_options_block *ob)
+set_up_direct_command(const uschar *** argvptr, const uschar * cmd,
+  BOOL expand_arguments, int expand_fail, address_item * addr, uschar * tname,
+  pipe_transport_options_block * ob)
 {
 BOOL permitted = FALSE;
 const uschar **argv;
@@ -349,8 +306,9 @@ call the common function for creating an argument list and expanding
 the items if necessary. If it fails, this function fails (error information
 is in the addresses). */
 
-if (!transport_set_up_command(argvptr, cmd, expand_arguments, expand_fail,
-      addr, string_sprintf("%.50s transport", tname), NULL))
+if (!transport_set_up_command(argvptr, cmd,
+      expand_arguments ? TSUC_EXPAND_ARGS : 0,
+      expand_fail, addr, string_sprintf("%.50s transport", tname), NULL))
   return FALSE;
 
 /* Point to the set-up arguments. */
@@ -359,6 +317,7 @@ argv = *argvptr;
 
 /* If allow_commands is set, see if the command is in the permitted list. */
 
+GET_OPTION("allow_commands");
 if (ob->allow_commands)
   {
   int sep = 0;
@@ -412,10 +371,11 @@ for it. */
 if (argv[0][0] != '/')
   {
   int sep = 0;
-  uschar *p;
-  const uschar *listptr = expand_string(ob->path);
+  uschar * p;
 
-  while ((p = string_nextinlist(&listptr, &sep, NULL, 0)))
+  GET_OPTION("path");
+  for (const uschar * listptr = expand_string(ob->path);
+      p = string_nextinlist(&listptr, &sep, NULL, 0); )
     {
     struct stat statbuf;
     sprintf(CS big_buffer, "%.256s/%.256s", p, argv[0]);
@@ -458,12 +418,12 @@ Returns:             TRUE if all went well; otherwise an error will be
 */
 
 static BOOL
-set_up_shell_command(const uschar ***argvptr, uschar *cmd,
-  BOOL expand_arguments, int expand_fail, address_item *addr, uschar *tname)
+set_up_shell_command(const uschar *** argvptr, const uschar * cmd,
+  BOOL expand_arguments, int expand_fail, address_item * addr, uschar * tname)
 {
 const uschar **argv;
 
-*argvptr = argv = store_get((4)*sizeof(uschar *));
+*argvptr = argv = store_get((4)*sizeof(uschar *), GET_UNTAINTED);
 
 argv[0] = US"/bin/sh";
 argv[1] = US"-c";
@@ -488,7 +448,6 @@ if (expand_arguments)
          (p > cmd && p[-1] == '$') ||
          (p > cmd + 1 && p[-2] == '$' && p[-1] == '{' && p[14] == '}')))
     {
-    address_item *ad;
     uschar *q = p + 14;
 
     if (p[-1] == '{') { q++; p--; }
@@ -496,18 +455,21 @@ if (expand_arguments)
     g = string_get(Ustrlen(cmd) + 64);
     g = string_catn(g, cmd, p - cmd - 1);
 
-    for (ad = addr; ad; ad = ad->next)
+    for (address_item * ad = addr; ad; ad = ad->next)
       {
+      DEBUG(D_transport) if (is_tainted(ad->address))
+	debug_printf("tainted element '%s' from $pipe_addresses\n", ad->address);
+
       /*XXX string_append_listele() ? */
       if (ad != addr) g = string_catn(g, US" ", 1);
       g = string_cat(g, ad->address);
       }
 
     g = string_cat(g, q);
-    argv[2] = (cmd = string_from_gstring(g)) ? expand_string(cmd) : NULL;
+    argv[2] = (cmd = string_from_gstring(g)) ? expand_cstring(cmd) : NULL;
     }
   else
-    argv[2] = expand_string(cmd);
+    argv[2] = expand_cstring(cmd);
 
   f.enable_dollar_recipients = FALSE;
 
@@ -560,11 +522,12 @@ pipe_transport_options_block *ob =
 int timeout = ob->timeout;
 BOOL written_ok = FALSE;
 BOOL expand_arguments;
-const uschar **argv;
-uschar *envp[50];
-const uschar *envlist = ob->environment;
-uschar *cmd, *ss;
-uschar *eol = ob->use_crlf ? US"\r\n" : US"\n";
+const uschar ** argv;
+uschar * envp[50];
+const uschar * envlist = ob->environment;
+const uschar * cmd;
+uschar * ss;
+uschar * eol = ob->use_crlf ? US"\r\n" : US"\n";
 transport_ctx tctx = {
   .tblock = tblock,
   .addr = addr,
@@ -587,11 +550,11 @@ symbol. In other cases, the command is supplied as one of the pipe transport's
 options. */
 
 if (testflag(addr, af_pfr) && addr->local_part[0] == '|')
-  {
   if (ob->force_command)
     {
     /* Enables expansion of $address_pipe into separate arguments */
     setflag(addr, af_force_command);
+    GET_OPTION("commsnd");
     cmd = ob->cmd;
     expand_arguments = TRUE;
     expand_fail = PANIC;
@@ -599,28 +562,35 @@ if (testflag(addr, af_pfr) && addr->local_part[0] == '|')
   else
     {
     cmd = addr->local_part + 1;
-    while (isspace(*cmd)) cmd++;
+    Uskip_whitespace(&cmd);
     expand_arguments = testflag(addr, af_expand_pipe);
     expand_fail = FAIL;
     }
-  }
 else
   {
+  GET_OPTION("commsnd");
   cmd = ob->cmd;
   expand_arguments = TRUE;
   expand_fail = PANIC;
   }
 
 /* If no command has been supplied, we are in trouble.
- * We also check for an empty string since it may be
- * coming from addr->local_part[0] == '|'
- */
+We also check for an empty string since it may be
+coming from addr->local_part[0] == '|' */
 
-if (cmd == NULL || *cmd == '\0')
+if (!cmd || !*cmd)
   {
   addr->transport_return = DEFER;
   addr->message = string_sprintf("no command specified for %s transport",
     tblock->name);
+  return FALSE;
+  }
+if (is_tainted(cmd))
+  {
+  DEBUG(D_transport) debug_printf("cmd '%s' is tainted\n", cmd);
+  addr->message = string_sprintf("Tainted '%s' (command "
+    "for %s transport) not permitted", cmd, tblock->name);
+  addr->transport_return = PANIC;
   return FALSE;
   }
 
@@ -632,8 +602,8 @@ if (expand_arguments && addr->pipe_expandn)
   {
   uschar **ss = addr->pipe_expandn;
   expand_nmax = -1;
-  if (*ss != NULL) filter_thisaddress = *ss++;
-  while (*ss != NULL)
+  if (*ss) filter_thisaddress = *ss++;
+  while (*ss)
     {
     expand_nstring[++expand_nmax] = *ss;
     expand_nlength[expand_nmax] = Ustrlen(*ss++);
@@ -676,19 +646,19 @@ envp[envcount++] = string_sprintf("QUALIFY_DOMAIN=%s", qualify_domain_sender);
 envp[envcount++] = string_sprintf("SENDER=%s", sender_address);
 envp[envcount++] = US"SHELL=/bin/sh";
 
-if (addr->host_list != NULL)
+if (addr->host_list)
   envp[envcount++] = string_sprintf("HOST=%s", addr->host_list->name);
 
-if (f.timestamps_utc) envp[envcount++] = US"TZ=UTC";
-else if (timezone_string != NULL && timezone_string[0] != 0)
+if (f.timestamps_utc)
+  envp[envcount++] = US"TZ=UTC";
+else if (timezone_string && timezone_string[0])
   envp[envcount++] = string_sprintf("TZ=%s", timezone_string);
 
 /* Add any requested items */
 
+GET_OPTION("environment");
 if (envlist)
-  {
-  envlist = expand_cstring(envlist);
-  if (envlist == NULL)
+  if (!(envlist = expand_cstring(envlist)))
     {
     addr->transport_return = DEFER;
     addr->message = string_sprintf("failed to expand string \"%s\" "
@@ -696,13 +666,13 @@ if (envlist)
       expand_string_message);
     return FALSE;
     }
-  }
 
-while ((ss = string_nextinlist(&envlist, &envsep, big_buffer, big_buffer_size)))
+while ((ss = string_nextinlist(&envlist, &envsep, NULL, 0)))
    {
    if (envcount > nelem(envp) - 2)
      {
      addr->transport_return = DEFER;
+     addr->basic_errno = E2BIG;
      addr->message = string_sprintf("too many environment settings for "
        "%s transport", tblock->name);
      return FALSE;
@@ -744,7 +714,8 @@ reading of the output pipe. */
 uid/gid and current directory. Request that the new process be a process group
 leader, so we can kill it and all its children on a timeout. */
 
-if ((pid = child_open(USS argv, envp, ob->umask, &fd_in, &fd_out, TRUE)) < 0)
+if ((pid = child_open(USS argv, envp, ob->umask, &fd_in, &fd_out, TRUE,
+			US"pipe-tpt-cmd")) < 0)
   {
   addr->transport_return = DEFER;
   addr->message = string_sprintf(
@@ -756,7 +727,7 @@ tctx.u.fd = fd_in;
 
 /* Now fork a process to handle the output that comes down the pipe. */
 
-if ((outpid = fork()) < 0)
+if ((outpid = exim_fork(US"pipe-tpt-output")) < 0)
   {
   addr->basic_errno = errno;
   addr->transport_return = DEFER;
@@ -814,7 +785,7 @@ bit here to let the sub-process get going, but it may still not complete. So we
 ignore all writing errors. (When in the test harness, we do do a short sleep so
 any debugging output is likely to be in the same order.) */
 
-if (f.running_in_test_harness) millisleep(500);
+testharness_pause_ms(500);
 
 DEBUG(D_transport) debug_printf("Writing message to pipe\n");
 
@@ -832,10 +803,11 @@ transport_count = 0;
 
 /* First write any configured prefix information */
 
-if (ob->message_prefix != NULL)
+GET_OPTION("message_prefix");
+if (ob->message_prefix)
   {
-  uschar *prefix = expand_string(ob->message_prefix);
-  if (prefix == NULL)
+  uschar * prefix = expand_string(ob->message_prefix);
+  if (!prefix)
     {
     addr->transport_return = f.search_find_defer? DEFER : PANIC;
     addr->message = string_sprintf("Expansion of \"%s\" (prefix for %s "
@@ -854,12 +826,10 @@ than one address available here, all must be included. Force SMTP dot-handling.
 
 if (ob->use_bsmtp)
   {
-  address_item *a;
-
   if (!transport_write_string(fd_in, "MAIL FROM:<%s>%s", return_path, eol))
     goto END_WRITE;
 
-  for (a = addr; a; a = a->next)
+  for (address_item * a = addr; a; a = a->next)
     if (!transport_write_string(fd_in,
         "RCPT TO:<%s>%s",
         transport_rcpt_address(a, tblock->rcpt_include_affixes),
@@ -876,9 +846,10 @@ if (!transport_write_message(&tctx, 0))
 
 /* Now any configured suffix */
 
+GET_OPTION("message_suffix");
 if (ob->message_suffix)
   {
-  uschar *suffix = expand_string(ob->message_suffix);
+  uschar * suffix = expand_string(ob->message_suffix);
   if (!suffix)
     {
     addr->transport_return = f.search_find_defer? DEFER : PANIC;
@@ -941,7 +912,7 @@ if (!written_ok)
       addr->more_errno,
       (addr->more_errno == EX_EXECFAILED)? ": unable to execute command" : "");
     else if (errno == ERRNO_WRITEINCOMPLETE)
-      addr->message = string_sprintf("Failed repeatedly to write data");
+      addr->message = US"Failed repeatedly to write data";
     else
       addr->message = string_sprintf("Error %d", errno);
     return FALSE;
@@ -954,8 +925,8 @@ above timed out. */
 
 if ((rc = child_close(pid, timeout)) != 0)
   {
-  uschar *tmsg = (addr->message == NULL)? US"" :
-    string_sprintf(" (preceded by %s)", addr->message);
+  uschar * tmsg = addr->message
+    ? string_sprintf(" (preceded by %s)", addr->message) : US"";
 
   /* The process did not complete in time; kill its process group and fail
   the delivery. It appears to be necessary to kill the output process too, as
@@ -1061,7 +1032,7 @@ if ((rc = child_close(pid, timeout)) != 0)
     {
     /* Always handle execve() failure specially if requested to */
 
-    if (ob->freeze_exec_fail && (rc == EX_EXECFAILED))
+    if (ob->freeze_exec_fail  &&  rc == EX_EXECFAILED)
       {
       addr->transport_return = DEFER;
       addr->special_action = SPECIAL_FREEZE;
@@ -1075,7 +1046,6 @@ if ((rc = child_close(pid, timeout)) != 0)
       {
       uschar *ss;
       gstring * g;
-      int i;
 
       /* If temp_errors is "*" all codes are temporary. Initialization checks
       that it's either "*" or a list of numbers. If not "*", scan the list of
@@ -1110,7 +1080,7 @@ if ((rc = child_close(pid, timeout)) != 0)
           rc-128, os_strsignal(rc-128)) :
         US os_strexit(rc);
 
-      if (*ss != 0)
+      if (*ss)
         {
         g = string_catn(g, US" ", 1);
         g = string_cat (g, ss);
@@ -1120,7 +1090,7 @@ if ((rc = child_close(pid, timeout)) != 0)
 
       g = string_catn(g, US" from command:", 14);
 
-      for (i = 0; i < sizeof(argv)/sizeof(int *) && argv[i] != NULL; i++)
+      for (int i = 0; i < sizeof(argv)/sizeof(int *) && argv[i] != NULL; i++)
         {
         BOOL quote = FALSE;
         g = string_catn(g, US" ", 1);
@@ -1163,4 +1133,5 @@ return FALSE;
 }
 
 #endif	/*!MACRO_PREDEF*/
+#endif	/*TRASPORT_PIPE*/
 /* End of transport/pipe.c */

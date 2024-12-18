@@ -1,5 +1,7 @@
 /* Exim: OS-specific C header file for FreeBSD */
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* See the file NOTICE for conditions of use and distribution. */
 
 
@@ -10,9 +12,12 @@
 #define HAVE_SETCLASSRESOURCES
 #define HAVE_MMAP
 #define HAVE_SYS_MOUNT_H
+#define HAVE_GETIFADDRS
 #define SIOCGIFCONF_GIVES_ADDR
 #define HAVE_SRANDOMDEV
 #define HAVE_ARC4RANDOM
+#define EXIM_HAVE_OPENAT
+#define EXIM_HAVE_FUTIMENS
 
 /* Applications should not call arc4random_stir() explicitly after
  * FreeBSD r227520 (approximately 1000002).
@@ -54,23 +59,26 @@ performance on outgoing mail a bit. */
 #define OS_SENDFILE
 extern ssize_t os_sendfile(int, int, off_t *, size_t);
 
+#ifdef PID_T_FMT
+# undef PID_T_FMT
+#endif
+#define PID_T_FMT "%d"
+
 
 /*******************/
 
-/* TCP_FASTOPEN support.  There does not seems to be a
-MSG_FASTOPEN defined yet... */
 #define EXIM_TFO_PROBE
+#define EXIM_TFO_FREEBSD
 
-#include <netinet/tcp.h>        /* for TCP_FASTOPEN */
-#include <sys/socket.h>         /* for MSG_FASTOPEN */
-#if defined(TCP_FASTOPEN) && !defined(MSG_FASTOPEN)
-# define MSG_FASTOPEN 0x20000000
-#endif
 
 /* for TCP state-variable values, for TFO logging */
 #include <netinet/tcp_fsm.h>
 #define TCP_SYN_RECV TCPS_SYN_RECEIVED
 
 /*******************/
+
+#define EXIM_HAVE_KEVENT
+#define EXIM_HAVE_STRCHRNUL
+
 
 /* End */

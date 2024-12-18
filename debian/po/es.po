@@ -33,7 +33,7 @@
 # - FQDN: Nombre completo del equipo (NO: nombre totalmente cualificado)
 # Ver: Message-ID: <20060830223128.GO26167@javifsp.no-ip.org>
 #
-# - «smarthost»: no se traduce
+# - Â«smarthostÂ»: no se traduce
 #
 msgid ""
 msgstr ""
@@ -58,7 +58,7 @@ msgstr ""
 #: ../exim4-base.templates:1001
 msgid "Remove undelivered messages in spool directory?"
 msgstr ""
-"¿Eliminar los mensajes no entregados del directorio de la cola de correo?"
+"Â¿Eliminar los mensajes no entregados del directorio de la cola de correo?"
 
 #. Type: boolean
 #. Description
@@ -68,8 +68,8 @@ msgid ""
 "input/ which have not yet been delivered. Removing Exim will cause them to "
 "remain undelivered until Exim is re-installed."
 msgstr ""
-"Hay mensajes en el directorio de la cola de correo de exim «/var/spool/exim4/"
-"input/» que no se han entregado todavía. Si desinstala Exim estos no podrán "
+"Hay mensajes en el directorio de la cola de correo de exim Â«/var/spool/exim4/"
+"input/Â» que no se han entregado todavÃ­a. Si desinstala Exim estos no podrÃ¡n "
 "enviarse hasta que lo reinstale."
 
 #. Type: boolean
@@ -80,8 +80,8 @@ msgid ""
 "messages in the queue to be delivered at a later date after Exim is re-"
 "installed."
 msgstr ""
-"Se mantendrá el directorio de colas si no elige esta opción, lo que "
-"permitirá gestionar los mensajes encolados más adelante después de "
+"Se mantendrÃ¡ el directorio de colas si no elige esta opciÃ³n, lo que "
+"permitirÃ¡ gestionar los mensajes encolados mÃ¡s adelante despuÃ©s de "
 "reinstalar Exim."
 
 #. Type: error
@@ -99,9 +99,9 @@ msgid ""
 "Exim4 has its configuration factored out into a dedicated package, exim4-"
 "config. To reconfigure Exim4, use 'dpkg-reconfigure exim4-config'."
 msgstr ""
-"Se ha movido la configuración de exim4 a un paquete dedicado: «exim4-"
-"config». Si quiere reconfigurar Exim4 debería ejecutar «dpkg-reconfigure "
-"exim4-config»."
+"Se ha movido la configuraciÃ³n de exim4 a un paquete dedicado: Â«exim4-"
+"configÂ». Si quiere reconfigurar Exim4 deberÃ­a ejecutar Â«dpkg-reconfigure "
+"exim4-configÂ»."
 
 #. Type: select
 #. Choices
@@ -113,7 +113,7 @@ msgstr ""
 #. this will break the choices shown to users
 #: ../exim4-config.templates:1001
 msgid "internet site; mail is sent and received directly using SMTP"
-msgstr "Internet site; el correo se envía y recibe directamente usando SMTP"
+msgstr "Internet site; el correo se envÃ­a y recibe directamente usando SMTP"
 
 #. Type: select
 #. Choices
@@ -126,7 +126,7 @@ msgstr "Internet site; el correo se envía y recibe directamente usando SMTP"
 #: ../exim4-config.templates:1001
 msgid "mail sent by smarthost; received via SMTP or fetchmail"
 msgstr ""
-"el correo se envía mediante un «smarthost»; se recibe a través de SMTP o "
+"el correo se envÃ­a mediante un Â«smarthostÂ»; se recibe a travÃ©s de SMTP o "
 "fetchmail"
 
 #. Type: select
@@ -139,7 +139,7 @@ msgstr ""
 #. this will break the choices shown to users
 #: ../exim4-config.templates:1001
 msgid "mail sent by smarthost; no local mail"
-msgstr "el correo se envía mediante un «smarthost»; sin correo local"
+msgstr "el correo se envÃ­a mediante un Â«smarthostÂ»; sin correo local"
 
 #. Type: select
 #. Choices
@@ -163,13 +163,13 @@ msgstr "solamente entrega local; sin red"
 #. this will break the choices shown to users
 #: ../exim4-config.templates:1001
 msgid "no configuration at this time"
-msgstr "sin configuración de momento"
+msgstr "sin configuraciÃ³n de momento"
 
 #. Type: select
 #. Description
 #: ../exim4-config.templates:1002
 msgid "General type of mail configuration:"
-msgstr "Tipo de configuración general del correo:"
+msgstr "Tipo de configuraciÃ³n general del correo:"
 
 #. Type: select
 #. Description
@@ -177,7 +177,7 @@ msgstr "Tipo de configuración general del correo:"
 msgid ""
 "Please select the mail server configuration type that best meets your needs."
 msgstr ""
-"Seleccione el tipo de configuración de servidor de correo que se ajuste "
+"Seleccione el tipo de configuraciÃ³n de servidor de correo que se ajuste "
 "mejor a sus necesidades."
 
 #. Type: select
@@ -189,12 +189,12 @@ msgid ""
 "'smarthost' for delivery because many receiving systems on the Internet "
 "block incoming mail from dynamic IP addresses as spam protection."
 msgstr ""
-"Los sistemas con direcciones IP dinámicas, incluyendo los que utilicen "
-"acceso telefónico, deberían configurarse por regla general para enviar el "
-"correo a otro servidor llamado «smarthost» para que realice el reparto. Esto "
+"Los sistemas con direcciones IP dinÃ¡micas, incluyendo los que utilicen "
+"acceso telefÃ³nico, deberÃ­an configurarse por regla general para enviar el "
+"correo a otro servidor llamado Â«smarthostÂ» para que realice el reparto. Esto "
 "es necesario porque muchos sistemas receptores de correo en Internet "
-"bloquean el correo entrante que provenga de direcciones IP dinámicas como "
-"medida de protección contra el correo basura."
+"bloquean el correo entrante que provenga de direcciones IP dinÃ¡micas como "
+"medida de protecciÃ³n contra el correo basura."
 
 #. Type: select
 #. Description
@@ -203,15 +203,15 @@ msgid ""
 "A system with a dynamic IP address can receive its own mail, or local "
 "delivery can be disabled entirely (except mail for root and postmaster)."
 msgstr ""
-"Un sistema que utilice una dirección IP dinámica puede recibir su propio "
-"correo, o puede deshabilitarse el envío local por completo (salvo para el "
-"correo para «root» y «postmaster»)."
+"Un sistema que utilice una direcciÃ³n IP dinÃ¡mica puede recibir su propio "
+"correo, o puede deshabilitarse el envÃ­o local por completo (salvo para el "
+"correo para Â«rootÂ» y Â«postmasterÂ»)."
 
 #. Type: boolean
 #. Description
 #: ../exim4-config.templates:2001
 msgid "Really leave the mail system unconfigured?"
-msgstr "¿Realmente quiere dejar el sistema de correo sin configurar?"
+msgstr "Â¿Realmente quiere dejar el sistema de correo sin configurar?"
 
 #. Type: boolean
 #. Description
@@ -221,9 +221,9 @@ msgid ""
 "Configuration at a later time can be done either by hand or by running 'dpkg-"
 "reconfigure exim4-config' as root."
 msgstr ""
-"Su sistema de correo estará inutilizado y no podrá utilizarse hasta que lo "
-"configure. Puede configurarlo más tarde, ya sea manualmente o ejecutando "
-"«dpkg-reconfigure exim4-config» como administrador."
+"Su sistema de correo estarÃ¡ inutilizado y no podrÃ¡ utilizarse hasta que lo "
+"configure. Puede configurarlo mÃ¡s tarde, ya sea manualmente o ejecutando "
+"Â«dpkg-reconfigure exim4-configÂ» como administrador."
 
 #. Type: string
 #. Description
@@ -239,7 +239,7 @@ msgid ""
 "a domain name."
 msgstr ""
 "El nombre de correo local es el nombre del dominio utilizado para "
-"«cualificar» las direcciones de correo que no tienen un nombre de dominio."
+"Â«cualificarÂ» las direcciones de correo que no tienen un nombre de dominio."
 
 #. Type: string
 #. Description
@@ -248,7 +248,7 @@ msgid ""
 "This name will also be used by other programs. It should be the single, "
 "fully qualified domain name (FQDN)."
 msgstr ""
-"Este nombre se usará por otros programas. Debería ser el nombre completo del "
+"Este nombre se usarÃ¡ por otros programas. DeberÃ­a ser el nombre completo del "
 "equipo (FQDN)."
 
 #. Type: string
@@ -258,8 +258,8 @@ msgid ""
 "Thus, if a mail address on the local host is foo@example.org, the correct "
 "value for this option would be example.org."
 msgstr ""
-"Por ejemplo, si la dirección de correo en el sistema local es «blah@ejemplo."
-"org», el valor correcto para esta opción es «ejemplo.org»."
+"Por ejemplo, si la direcciÃ³n de correo en el sistema local es Â«blah@ejemplo."
+"orgÂ», el valor correcto para esta opciÃ³n es Â«ejemplo.orgÂ»."
 
 #. Type: string
 #. Description
@@ -268,8 +268,8 @@ msgid ""
 "This name won't appear on From: lines of outgoing messages if rewriting is "
 "enabled."
 msgstr ""
-"Este nombre no aparecerá en la línea «From:» de los correos salientes si "
-"está activa la reescritura."
+"Este nombre no aparecerÃ¡ en la lÃ­nea Â«From:Â» de los correos salientes si "
+"estÃ¡ activa la reescritura."
 
 #. Type: string
 #. Description
@@ -286,11 +286,11 @@ msgid ""
 "commonly called 'local domains'. The local hostname (${fqdn}) and "
 "'localhost' are always added to the list given here."
 msgstr ""
-"Introduzca la lista de dominios de destinatarios para los que esta máquina "
-"debería considerarse a sí misma como destino final. Separe los dominios de "
-"la lista con punto y coma. Estos dominios se llaman habitualmente «dominios "
-"locales». Siempre se añade el nombre del equipo (${fqdn}) y «localhost» a la "
-"lista dada aquí."
+"Introduzca la lista de dominios de destinatarios para los que esta mÃ¡quina "
+"deberÃ­a considerarse a sÃ­ misma como destino final. Separe los dominios de "
+"la lista con punto y coma. Estos dominios se llaman habitualmente Â«dominios "
+"localesÂ». Siempre se aÃ±ade el nombre del equipo (${fqdn}) y Â«localhostÂ» a la "
+"lista dada aquÃ­."
 
 #. Type: string
 #. Description
@@ -301,17 +301,17 @@ msgid ""
 "delivered to the same final destination. If different domain names should be "
 "treated differently, it is necessary to edit the config files afterwards."
 msgstr ""
-"Por omisión todos los dominios se tratarán igual. Si tanto «a.ejemplo» como "
-"«b.ejemplo» son dominios locales se enviará al mismo destinatario correos a "
-"«acc@a.ejemplo» y «acc@b.ejemplo». Si quiere diferenciar entre distintos "
-"nombres de dominio necesitará editar los archivos de configuración "
+"Por omisiÃ³n todos los dominios se tratarÃ¡n igual. Si tanto Â«a.ejemploÂ» como "
+"Â«b.ejemploÂ» son dominios locales se enviarÃ¡ al mismo destinatario correos a "
+"Â«acc@a.ejemploÂ» y Â«acc@b.ejemploÂ». Si quiere diferenciar entre distintos "
+"nombres de dominio necesitarÃ¡ editar los archivos de configuraciÃ³n "
 "posteriormente."
 
 #. Type: string
 #. Description
 #: ../exim4-config.templates:5001
 msgid "Domains to relay mail for:"
-msgstr "Dominios para los que se reenvía correo:"
+msgstr "Dominios para los que se reenvÃ­a correo:"
 
 #. Type: string
 #. Description
@@ -322,23 +322,23 @@ msgid ""
 "means that this system will accept mail for these domains from anywhere on "
 "the Internet and deliver them according to local delivery rules."
 msgstr ""
-"Introduzca la lista de dominios destino para los que el sistema encaminará "
+"Introduzca la lista de dominios destino para los que el sistema encaminarÃ¡ "
 "correo, actuando, por ejemplo, como pasarela de correo o respaldo MX. Separe "
 "los elementos de la lista por punto y coma. Esto significa que el sistema "
-"aceptará correo para este dominios desde cualquier destino en Internet y los "
-"gestionará de acuerdo a las reglas locales de entrega."
+"aceptarÃ¡ correo para este dominios desde cualquier destino en Internet y los "
+"gestionarÃ¡ de acuerdo a las reglas locales de entrega."
 
 #. Type: string
 #. Description
 #: ../exim4-config.templates:5001
 msgid "Do not mention local domains here. Wildcards may be used."
-msgstr "No mencione los dominios locales aquí. Puede utilizar comodines."
+msgstr "No mencione los dominios locales aquÃ­. Puede utilizar comodines."
 
 #. Type: string
 #. Description
 #: ../exim4-config.templates:6001
 msgid "Machines to relay mail for:"
-msgstr "Máquinas para las cuales reenviar correo:"
+msgstr "MÃ¡quinas para las cuales reenviar correo:"
 
 #. Type: string
 #. Description
@@ -348,8 +348,8 @@ msgid ""
 "system will unconditionally relay mail, functioning as a smarthost."
 msgstr ""
 "Introduzca una lista de rangos de direcciones IP para los que el sistema "
-"encaminará correo de forma incondicional, actuando para ellos como un "
-"«smarthost». Separe las direcciones con punto y coma."
+"encaminarÃ¡ correo de forma incondicional, actuando para ellos como un "
+"Â«smarthostÂ». Separe las direcciones con punto y coma."
 
 #. Type: string
 #. Description
@@ -358,7 +358,7 @@ msgid ""
 "You should use the standard address/prefix format (e.g. 194.222.242.0/24 or "
 "5f03:1200:836f::/48)."
 msgstr ""
-"Use el formato estándar dirección/longitud (por ejemplo 194.222.242.0/24 o "
+"Use el formato estÃ¡ndar direcciÃ³n/longitud (por ejemplo 194.222.242.0/24 o "
 "5f03:1200:836f::/48)."
 
 #. Type: string
@@ -369,7 +369,7 @@ msgid ""
 "blank."
 msgstr ""
 "Deje este valor en blanco si el sistema no debe comportarse como un "
-"«smarthost» para ningún otro sistema."
+"Â«smarthostÂ» para ningÃºn otro sistema."
 
 #. Type: string
 #. Description
@@ -385,16 +385,16 @@ msgid ""
 "therefore necessary to specify the domain name this system should use for "
 "the domain part of local users' sender addresses."
 msgstr ""
-"Se ha activado la opción para ocultar el nombre de correo local en el correo "
+"Se ha activado la opciÃ³n para ocultar el nombre de correo local en el correo "
 "saliente. Es necesario que especifique el nombre de dominio que el sistema "
-"debería utilizar para la parte de dominio de las direcciones de correo "
+"deberÃ­a utilizar para la parte de dominio de las direcciones de correo "
 "origen utilizadas para los usuarios locales."
 
 #. Type: string
 #. Description
 #: ../exim4-config.templates:8001
 msgid "IP address or host name of the outgoing smarthost:"
-msgstr "Dirección IP o nombre de equipo para el «smarthost» saliente:"
+msgstr "DirecciÃ³n IP o nombre de equipo para el Â«smarthostÂ» saliente:"
 
 #. Type: string
 #. Description
@@ -406,12 +406,12 @@ msgid ""
 "(for example smarthost.example::587 or 192.168.254.254::2525). Colons in "
 "IPv6 addresses need to be doubled."
 msgstr ""
-"Introduzca la dirección IP o el nombre de equipo del servidor de correo que "
-"debería utilizarse como servidor saliente («smarthost»). Si el servidor sólo "
-"acepta su correo en un puerto distinto al puerto TCP/25 deberá incluir el "
-"número de puerto separándolo con dos signos de dos puntos (por ejemplo, "
-"«smarthost.ejemplo::587 ó 192.168.254.254::2525). Los dos puntos en "
-"direcciones IPv6 deberán escribirse dos veces."
+"Introduzca la direcciÃ³n IP o el nombre de equipo del servidor de correo que "
+"deberÃ­a utilizarse como servidor saliente (Â«smarthostÂ»). Si el servidor sÃ³lo "
+"acepta su correo en un puerto distinto al puerto TCP/25 deberÃ¡ incluir el "
+"nÃºmero de puerto separÃ¡ndolo con dos signos de dos puntos (por ejemplo, "
+"Â«smarthost.ejemplo::587 Ã³ 192.168.254.254::2525). Los dos puntos en "
+"direcciones IPv6 deberÃ¡n escribirse dos veces."
 
 #. Type: string
 #. Description
@@ -421,15 +421,15 @@ msgid ""
 "specific README files in /usr/share/doc/exim4-base for notes about setting "
 "up SMTP authentication."
 msgstr ""
-"Si el «smarthost» requiere que el sistema se autentique deberá consultar "
-"cómo definir la configuración de la autenticación SMTP en los archivos "
-"README específicos de Debian en «/usr/share/doc/exim4-base/»."
+"Si el Â«smarthostÂ» requiere que el sistema se autentique deberÃ¡ consultar "
+"cÃ³mo definir la configuraciÃ³n de la autenticaciÃ³n SMTP en los archivos "
+"README especÃ­ficos de Debian en Â«/usr/share/doc/exim4-base/Â»."
 
 #. Type: string
 #. Description
 #: ../exim4-config.templates:9001
 msgid "Root and postmaster mail recipient:"
-msgstr "Destinatario del correo de «root» y «postmaster»:"
+msgstr "Destinatario del correo de Â«rootÂ» y Â«postmasterÂ»:"
 
 #. Type: string
 #. Description
@@ -438,7 +438,7 @@ msgid ""
 "Mail for the 'postmaster', 'root', and other system accounts needs to be "
 "redirected to the user account of the actual system administrator."
 msgstr ""
-"Debe redirigir los correos a «postmaster», «root» y otras cuentas del "
+"Debe redirigir los correos a Â«postmasterÂ», Â«rootÂ» y otras cuentas del "
 "sistema a una cuenta del usuario que corresponda a la del administrador del "
 "sistema real."
 
@@ -449,8 +449,8 @@ msgid ""
 "If this value is left empty, such mail will be saved in /var/mail/mail, "
 "which is not recommended."
 msgstr ""
-"Todo el correo de este tipo se almacenará en /var/mail/mail si deja vacío "
-"este valor, lo que no está recomendado."
+"Todo el correo de este tipo se almacenarÃ¡ en /var/mail/mail si deja vacÃ­o "
+"este valor, lo que no estÃ¡ recomendado."
 
 #. Type: string
 #. Description
@@ -462,16 +462,16 @@ msgid ""
 "prefix can be used to force local delivery."
 msgstr ""
 "Tenga en cuenta que los mensajes dirigidos al administrador de correo "
-"(«postmaster») normalmente deberían leerse en el sistema al que va dirigido, "
-"en lugar de enviarse a otra parte. Así (al menos uno de) los usuarios que "
-"escoja no deberían reenviar su correo fuera de ésta máquina. Puede utilizar "
-"el prefijo «real-» para obligar a utilizar la entrega local."
+"(Â«postmasterÂ») normalmente deberÃ­an leerse en el sistema al que va dirigido, "
+"en lugar de enviarse a otra parte. AsÃ­ (al menos uno de) los usuarios que "
+"escoja no deberÃ­an reenviar su correo fuera de Ã©sta mÃ¡quina. Puede utilizar "
+"el prefijo Â«real-Â» para obligar a utilizar la entrega local."
 
 #. Type: string
 #. Description
 #: ../exim4-config.templates:9001
 msgid "Multiple user names need to be separated by spaces."
-msgstr "Si introduce más de un nombre de usuario debe separarlos con espacios."
+msgstr "Si introduce mÃ¡s de un nombre de usuario debe separarlos con espacios."
 
 #. Type: string
 #. Description
@@ -487,8 +487,8 @@ msgid ""
 "listener daemon will listen on all IP addresses listed here."
 msgstr ""
 "Introduzca una lista de direcciones IP separadas por punto y coma. El "
-"demonio que acepta las conexiones entrantes SMTP de Exim escuchará en todas "
-"las direcciones IP aquí listadas."
+"demonio que acepta las conexiones entrantes SMTP de Exim escucharÃ¡ en todas "
+"las direcciones IP aquÃ­ listadas."
 
 #. Type: string
 #. Description
@@ -497,7 +497,7 @@ msgid ""
 "An empty value will cause Exim to listen for connections on all available "
 "network interfaces."
 msgstr ""
-"Si deja este valor en blanco, Exim podrá recibir conexiones desde cualquier "
+"Si deja este valor en blanco, Exim podrÃ¡ recibir conexiones desde cualquier "
 "interfaz de red disponible."
 
 #. Type: string
@@ -511,18 +511,18 @@ msgid ""
 "when 127.0.0.1 is entered here, as this will disable listening on public "
 "network interfaces."
 msgstr ""
-"Es recomendable prohibir conexiones externas a Exim si este equipo sólo "
+"Es recomendable prohibir conexiones externas a Exim si este equipo sÃ³lo "
 "recibe correo directamente de servicios locales (y no de otros equipos). "
-"Estos servicios incluyendo los programas cliente de correo (MUA) que sólo "
-"envían correo a «localhost» así como fetchmail. No podrán realizarse "
-"conexiones de forma externa si introduce aquí el valor '127.0.0.1', de esta "
-"forma desactivará la escucha en las interfaces conectadas a redes públicas."
+"Estos servicios incluyendo los programas cliente de correo (MUA) que sÃ³lo "
+"envÃ­an correo a Â«localhostÂ» asÃ­ como fetchmail. No podrÃ¡n realizarse "
+"conexiones de forma externa si introduce aquÃ­ el valor '127.0.0.1', de esta "
+"forma desactivarÃ¡ la escucha en las interfaces conectadas a redes pÃºblicas."
 
 #. Type: boolean
 #. Description
 #: ../exim4-config.templates:11001
 msgid "Keep number of DNS-queries minimal (Dial-on-Demand)?"
-msgstr "¿Limitar el número de consultas de DNS (marcación bajo demanda)?"
+msgstr "Â¿Limitar el nÃºmero de consultas de DNS (marcaciÃ³n bajo demanda)?"
 
 #. Type: boolean
 #. Description
@@ -532,10 +532,10 @@ msgid ""
 "receiving or delivering messages. This is for logging purposes and allows "
 "keeping down the number of hard-coded values in the configuration."
 msgstr ""
-"En el modo normal de operación, Exim hace consultas de DNS al iniciar y "
+"En el modo normal de operaciÃ³n, Exim hace consultas de DNS al iniciar y "
 "cuando recibe o entrega mensajes. Estas consultas se hacen para poder "
-"mantener registros y para mantener pequeño el número de valores fijos "
-"grabados en el archivo de configuración."
+"mantener registros y para mantener pequeÃ±o el nÃºmero de valores fijos "
+"grabados en el archivo de configuraciÃ³n."
 
 #. Type: boolean
 #. Description
@@ -548,9 +548,9 @@ msgid ""
 "costly dial-up-event."
 msgstr ""
 "Si este sistema no tiene acceso permanente a servidores de nombres DNS (es "
-"el caso cuando se usa marcación bajo demanda o una línea de acceso "
-"telefónico) esto podría tener consecuencia no deseadas. Por ejemplo, se "
-"podría llegar a intentar realizar una evento de conexión (que genere una "
+"el caso cuando se usa marcaciÃ³n bajo demanda o una lÃ­nea de acceso "
+"telefÃ³nico) esto podrÃ­a tener consecuencia no deseadas. Por ejemplo, se "
+"podrÃ­a llegar a intentar realizar una evento de conexiÃ³n (que genere una "
 "llamada costosa) al iniciar exim o procesar la cola del correo (incluso "
 "aunque no haya mensajes en espera)."
 
@@ -561,21 +561,21 @@ msgid ""
 "This option should be selected if this system is using Dial-on-Demand. If it "
 "has always-on Internet access, this option should be disabled."
 msgstr ""
-"Debería seleccionar esta opción si su sistema utiliza marcación bajo "
-"demanda. No la habilite si su sistema está permanentemente conectado a "
+"DeberÃ­a seleccionar esta opciÃ³n si su sistema utiliza marcaciÃ³n bajo "
+"demanda. No la habilite si su sistema estÃ¡ permanentemente conectado a "
 "Internet."
 
 #. Type: title
 #. Description
 #: ../exim4-config.templates:12001
 msgid "Mail Server configuration"
-msgstr "Configuración del servidor de correo:"
+msgstr "ConfiguraciÃ³n del servidor de correo:"
 
 #. Type: boolean
 #. Description
 #: ../exim4-config.templates:13001
 msgid "Split configuration into small files?"
-msgstr "¿Dividir la configuración en pequeños ficheros?"
+msgstr "Â¿Dividir la configuraciÃ³n en pequeÃ±os ficheros?"
 
 #. Type: boolean
 #. Description
@@ -586,10 +586,10 @@ msgid ""
 "where the actual Exim configuration files are built from about 50 smaller "
 "files in /etc/exim4/conf.d/."
 msgstr ""
-"Los paquetes Debian de exim4 pueden usar una «configuración concentrada», es "
-"decir, un único fichero monolítico («/etc/exim4.conf.template»), o bien una "
-"«configuración segmentada» donde la configuración de Exim se construye "
-"utilizando cerca de 50 ficheros pequeños en «/etc/exim4/conf.d/»."
+"Los paquetes Debian de exim4 pueden usar una Â«configuraciÃ³n concentradaÂ», es "
+"decir, un Ãºnico fichero monolÃ­tico (Â«/etc/exim4.conf.templateÂ»), o bien una "
+"Â«configuraciÃ³n segmentadaÂ» donde la configuraciÃ³n de Exim se construye "
+"utilizando cerca de 50 ficheros pequeÃ±os en Â«/etc/exim4/conf.d/Â»."
 
 #. Type: boolean
 #. Description
@@ -600,10 +600,10 @@ msgid ""
 "to make smaller modifications but is more fragile and might break if "
 "modified carelessly."
 msgstr ""
-"La configuración concentrada se adapta mejor a grandes modificaciones y es "
-"generalmente más estable, mientras que la configuración segmentada ofrece "
-"una manera cómoda de hacer pequeñas modificaciones pero es más frágil y "
-"podría romperse si se modifica sin las debidas precauciones."
+"La configuraciÃ³n concentrada se adapta mejor a grandes modificaciones y es "
+"generalmente mÃ¡s estable, mientras que la configuraciÃ³n segmentada ofrece "
+"una manera cÃ³moda de hacer pequeÃ±as modificaciones pero es mÃ¡s frÃ¡gil y "
+"podrÃ­a romperse si se modifica sin las debidas precauciones."
 
 #. Type: boolean
 #. Description
@@ -612,15 +612,15 @@ msgid ""
 "A more detailed discussion of split and unsplit configuration can be found "
 "in the Debian-specific README files in /usr/share/doc/exim4-base."
 msgstr ""
-"Encontrará una discusión pormenorizada sobre la configuración segmentada y "
-"concentrada en los ficheros específicos de Debian en «/usr/share/doc/exim4-"
-"base/»."
+"EncontrarÃ¡ una discusiÃ³n pormenorizada sobre la configuraciÃ³n segmentada y "
+"concentrada en los ficheros especÃ­ficos de Debian en Â«/usr/share/doc/exim4-"
+"base/Â»."
 
 #. Type: boolean
 #. Description
 #: ../exim4-config.templates:14001
 msgid "Hide local mail name in outgoing mail?"
-msgstr "¿Desea ocultar el nombre de correo local en los mensajes salientes?"
+msgstr "Â¿Desea ocultar el nombre de correo local en los mensajes salientes?"
 
 #. Type: boolean
 #. Description
@@ -632,21 +632,21 @@ msgid ""
 "Path are rewritten."
 msgstr ""
 "Las cabeceras de los mensajes salientes pueden reescribirse para que parezca "
-"que se han generado en un sistema distinto. Si elige esta opción se "
-"reescibirán «${mailname}», «localhost» y «${dc_other_hostnames}» en el "
-"«From», «Reply-To», «Sender» y «Return-Path»."
+"que se han generado en un sistema distinto. Si elige esta opciÃ³n se "
+"reescibirÃ¡n Â«${mailname}Â», Â«localhostÂ» y Â«${dc_other_hostnames}Â» en el "
+"Â«FromÂ», Â«Reply-ToÂ», Â«SenderÂ» y Â«Return-PathÂ»."
 
 #. Type: select
 #. Choices
 #: ../exim4-config.templates:15001
 msgid "mbox format in /var/mail/"
-msgstr "formato mbox en «/var/mail»"
+msgstr "formato mbox en Â«/var/mailÂ»"
 
 #. Type: select
 #. Choices
 #: ../exim4-config.templates:15001
 msgid "Maildir format in home directory"
-msgstr "formato «Maildir» en el directorio personal"
+msgstr "formato Â«MaildirÂ» en el directorio personal"
 
 #. Type: select
 #. Description
@@ -664,10 +664,10 @@ msgid ""
 "message is stored in a separate file in ~/Maildir/."
 msgstr ""
 "Exim puede almacenar el correo entregado localmente en distintos formatos. "
-"Los formatos más comunes son mbox y Maildir. El formato mbox utiliza un "
-"único fichero para todo el buzón de correo que se almacenan en «/var/mail». "
+"Los formatos mÃ¡s comunes son mbox y Maildir. El formato mbox utiliza un "
+"Ãºnico fichero para todo el buzÃ³n de correo que se almacenan en Â«/var/mailÂ». "
 "Con el formato Maildir cada uno de los mensajes se almacena en un fichero "
-"distinto en «~/Maildir/»."
+"distinto en Â«~/Maildir/Â»."
 
 #. Type: select
 #. Description
@@ -676,27 +676,27 @@ msgid ""
 "Please note that most mail tools in Debian expect the local delivery method "
 "to be mbox in their default."
 msgstr ""
-"Tenga en cuenta que la mayoría de las herramientas de correo en Debian "
+"Tenga en cuenta que la mayorÃ­a de las herramientas de correo en Debian "
 "esperan que el mecanismo de entrega local sea a ficheros mbox en su "
-"configuración por omisión."
+"configuraciÃ³n por omisiÃ³n."
 
 #~ msgid "Move undelivered mails from exim 3 to exim4 spool?"
 #~ msgstr ""
-#~ "¿Mover el correo aún no entregado de exim 3 a la cola de correo de exim4?"
+#~ "Â¿Mover el correo aÃºn no entregado de exim 3 a la cola de correo de exim4?"
 
 #~ msgid ""
 #~ "There are some undelivered mails in exim 3 (or exim-tls 3) spool "
 #~ "directory /var/spool/exim/input/."
 #~ msgstr ""
 #~ "Hay algunos mensajes de correo no entregados de exim 3 (o de exim-tls 3) "
-#~ "en en el directorio de la cola de correo: «/var/spool/exim/input/»."
+#~ "en en el directorio de la cola de correo: Â«/var/spool/exim/input/Â»."
 
 #~ msgid ""
 #~ "Choosing this option will move these messages to exim4's spool (/var/"
 #~ "spool/exim4/input/) where they will be handled by exim4."
 #~ msgstr ""
-#~ "Si elige esta opción se moverán ahora a la cola de exim4 («/var/spool/"
-#~ "exim4/input/») donde serán gestionados por exim4."
+#~ "Si elige esta opciÃ³n se moverÃ¡n ahora a la cola de exim4 (Â«/var/spool/"
+#~ "exim4/input/Â») donde serÃ¡n gestionados por exim4."
 
 #~ msgid ""
 #~ "This works only one-way: Exim4 can handle Exim 3 spool but not vice-"
@@ -704,11 +704,11 @@ msgstr ""
 #~ "or they will never be delivered."
 #~ msgstr ""
 #~ "Esto funciona solamente en un sentido, es decir, Exim4 puede gestionar la "
-#~ "cola de Exim 3 pero no al contrario. Si rechaza esta opción, deberá mover "
-#~ "los mensajes manualmente o nunca se enviarán."
+#~ "cola de Exim 3 pero no al contrario. Si rechaza esta opciÃ³n, deberÃ¡ mover "
+#~ "los mensajes manualmente o nunca se enviarÃ¡n."
 
 #~ msgid "Leaving this list blank will have Exim do no local deliveries."
-#~ msgstr "Si deja esta lista en blanco entonces Exim no hará entrega local."
+#~ msgstr "Si deja esta lista en blanco entonces Exim no harÃ¡ entrega local."
 
 #~ msgid ""
 #~ "This works only one-way: exim4 can handle exim(v3)'s spool but not vice-"
@@ -723,15 +723,15 @@ msgstr ""
 #~ "idea to refrain from moving the messages now but moving them manually at "
 #~ "a later time."
 #~ msgstr ""
-#~ "Sólo es recomendable mover los mensajes si no piensa volver a utilizar "
-#~ "Exim(v3). Si puede necesitar hacer una marcha atrás será mejor que no "
-#~ "mueva los mensajes de momento y lo haga manualmente más adelante."
+#~ "SÃ³lo es recomendable mover los mensajes si no piensa volver a utilizar "
+#~ "Exim(v3). Si puede necesitar hacer una marcha atrÃ¡s serÃ¡ mejor que no "
+#~ "mueva los mensajes de momento y lo haga manualmente mÃ¡s adelante."
 
 #~ msgid ""
 #~ "Domains listed here need to be separated by semicolons. Wildcards may be "
 #~ "used."
 #~ msgstr ""
-#~ "Separe los dominios introducidos aquí con dos puntos. Puede usar "
+#~ "Separe los dominios introducidos aquÃ­ con dos puntos. Puede usar "
 #~ "comodines."
 
 #~ msgid ""
@@ -740,29 +740,29 @@ msgstr ""
 #~ "setup."
 #~ msgstr ""
 #~ "Mueva los mensajes de correo solamente si no tiene pensado volver a usar "
-#~ "exim(v3). Si esto no es así, no debería mover el correo ahora, sino "
-#~ "manualmente una vez que haya adaptado su configuración."
+#~ "exim(v3). Si esto no es asÃ­, no deberÃ­a mover el correo ahora, sino "
+#~ "manualmente una vez que haya adaptado su configuraciÃ³n."
 
 #~ msgid ""
 #~ "If there are any more, enter them here, separated by semicolons. You may "
 #~ "leave this blank if there are none."
 #~ msgstr ""
-#~ "Si hay algunos más, introdúzcalos aquí, separados por dos puntos. Puede "
+#~ "Si hay algunos mÃ¡s, introdÃºzcalos aquÃ­, separados por dos puntos. Puede "
 #~ "dejarlo en blanco si no hay ninguno."
 
 #~ msgid ""
 #~ "Please enter here the domains for which this system will relay mail, for "
 #~ "example as a fallback MX or mail gateway."
 #~ msgstr ""
-#~ "Por favor introduzca aquí los dominios a los que permite que reenvíen "
+#~ "Por favor introduzca aquÃ­ los dominios a los que permite que reenvÃ­en "
 #~ "correo, por ejemplo como pasarela de correo o respaldo MX."
 
 #~ msgid ""
 #~ "Such domains are domains for which you are prepared to accept mail from "
 #~ "anywhere on the Internet. Do not mention local domains here."
 #~ msgstr ""
-#~ "Estos dominios son aquellos para los que usted está dispuesto a admitir "
-#~ "correo desde cualquier parte de Internet. No indique aquí dominios "
+#~ "Estos dominios son aquellos para los que usted estÃ¡ dispuesto a admitir "
+#~ "correo desde cualquier parte de Internet. No indique aquÃ­ dominios "
 #~ "locales."
 
 #~ msgid ""
@@ -770,21 +770,21 @@ msgstr ""
 #~ "specify the domain name to use for mail from local users; typically this "
 #~ "is the machine on which you normally receive your mail."
 #~ msgstr ""
-#~ "Dado que ha activo la ocultación del nombre de correo local en el correo "
+#~ "Dado que ha activo la ocultaciÃ³n del nombre de correo local en el correo "
 #~ "saliente, debe especificar el nombre de dominio a usar para el correo de "
-#~ "los usuarios locales. Habitualmente es el nombre de la máquina en la que "
+#~ "los usuarios locales. Habitualmente es el nombre de la mÃ¡quina en la que "
 #~ "normalmente recibe su correo."
 
 #~ msgid "Where will your users read their mail?"
-#~ msgstr "¿Dónde leerán el correo sus usuarios?"
+#~ msgstr "Â¿DÃ³nde leerÃ¡n el correo sus usuarios?"
 
 #~ msgid "Machine handling outgoing mail for this host (smarthost):"
 #~ msgstr ""
-#~ "Máquina que gestiona el correo saliente en este servidor («smarthost»):"
+#~ "MÃ¡quina que gestiona el correo saliente en este servidor (Â«smarthostÂ»):"
 
 #~ msgid "Enter the hostname of the machine to which outgoing mail is sent."
 #~ msgstr ""
-#~ "Introduzca el nombre del servidor al que se envía el correo saliente."
+#~ "Introduzca el nombre del servidor al que se envÃ­a el correo saliente."
 
 #~ msgid ""
 #~ "Mail for the \"postmaster\", \"root\", and other system accounts is "
@@ -796,38 +796,38 @@ msgstr ""
 #~ "redirect their mail off this machine. Use a \"real-\" prefix to force "
 #~ "local delivery."
 #~ msgstr ""
-#~ "El correo para las cuentas del sistema «postmaster», «root», y algunas "
-#~ "otras habitualmente se reenvía a la cuenta de usuario del administrador "
-#~ "real del sistema. Si deja este valor vacío, este correo se almacenará en "
-#~ "«/var/mail/mail», lo cual no es recomendable. Tenga en cuenta que el "
-#~ "correo a «postmaster» debería leerse en el sistema al que se dirige, en "
+#~ "El correo para las cuentas del sistema Â«postmasterÂ», Â«rootÂ», y algunas "
+#~ "otras habitualmente se reenvÃ­a a la cuenta de usuario del administrador "
+#~ "real del sistema. Si deja este valor vacÃ­o, este correo se almacenarÃ¡ en "
+#~ "Â«/var/mail/mailÂ», lo cual no es recomendable. Tenga en cuenta que el "
+#~ "correo a Â«postmasterÂ» deberÃ­a leerse en el sistema al que se dirige, en "
 #~ "lugar de reenviarse a otro lugar, de forma que (al menos uno de) estos "
-#~ "usuarios no deberían redirigirse fuera de este equipo. Utilice el prefijo "
-#~ "«real-» para forzar el envío local."
+#~ "usuarios no deberÃ­an redirigirse fuera de este equipo. Utilice el prefijo "
+#~ "Â«real-Â» para forzar el envÃ­o local."
 
 #~ msgid ""
 #~ "Enable this feature if you are using Dial-on-Demand; otherwise, disable "
 #~ "it."
 #~ msgstr ""
-#~ "Active esta función si esta usando marcación bajo demanda; en caso "
-#~ "contrario, desactívela."
+#~ "Active esta funciÃ³n si esta usando marcaciÃ³n bajo demanda; en caso "
+#~ "contrario, desactÃ­vela."
 
 #~ msgid "Select the mail server configuration type that best fits your needs."
 #~ msgstr ""
-#~ "Seleccione la configuración de servidor de correo que se ajuste mejor a "
+#~ "Seleccione la configuraciÃ³n de servidor de correo que se ajuste mejor a "
 #~ "sus necesidades."
 
 #~ msgid "If you are unsure then you should not use split configuration."
 #~ msgstr ""
-#~ "Si no está seguro no debería usar la configuración dividida en pequeños "
+#~ "Si no estÃ¡ seguro no deberÃ­a usar la configuraciÃ³n dividida en pequeÃ±os "
 #~ "ficheros."
 
 #~ msgid "manually convert from handcrafted Exim v3 configuration"
 #~ msgstr ""
-#~ "convierte manualmente a partir de la configuración manual de exim v3"
+#~ "convierte manualmente a partir de la configuraciÃ³n manual de exim v3"
 
 #~ msgid "Configure Exim4 manually?"
-#~ msgstr "¿Configurar Exim4 manualmente?"
+#~ msgstr "Â¿Configurar Exim4 manualmente?"
 
 #~ msgid ""
 #~ "You indicated that you have a handcrafted Exim 3 configuration. To "
@@ -835,41 +835,41 @@ msgstr ""
 #~ "installation. Consult /usr/share/doc/exim4-base/examples/example.conf.gz "
 #~ "and /usr/share/doc/exim4-base/README.Debian.gz!"
 #~ msgstr ""
-#~ "Usted indicó que tiene una configuración manual de Exim 3. Para "
-#~ "convertirla a Exim4, puede usar la herramienta exim_convert4r4(8) después "
-#~ "de la instalación. ¡Consulte «/usr/share/doc/exim4-base/examples/example."
-#~ "conf.gz» y «/usr/share/doc/exim4-base/README.Debian.gz»!"
+#~ "Usted indicÃ³ que tiene una configuraciÃ³n manual de Exim 3. Para "
+#~ "convertirla a Exim4, puede usar la herramienta exim_convert4r4(8) despuÃ©s "
+#~ "de la instalaciÃ³n. Â¡Consulte Â«/usr/share/doc/exim4-base/examples/example."
+#~ "conf.gzÂ» y Â«/usr/share/doc/exim4-base/README.Debian.gzÂ»!"
 
 #~ msgid ""
 #~ "Until your mail system is configured, it will be broken and cannot be "
 #~ "used."
 #~ msgstr ""
-#~ "Hasta que su sistema de correo no esté configurado, estará inutilizado y "
-#~ "no podrá usarse."
+#~ "Hasta que su sistema de correo no estÃ© configurado, estarÃ¡ inutilizado y "
+#~ "no podrÃ¡ usarse."
 
 #~ msgid ""
 #~ "Your \"mail name\" is the hostname portion of the address to be shown on "
 #~ "outgoing news and mail messages (following the username and @ sign) "
 #~ "unless hidden with rewriting."
 #~ msgstr ""
-#~ "Su «mail name» es el nombre de dominio en la dirección de correo que se "
-#~ "mostrará en los mensajes de noticias y de correo salientes (la que sigue "
-#~ "al nombre de usuario tras el signo @), a no ser que esté oculta mediante "
+#~ "Su Â«mail nameÂ» es el nombre de dominio en la direcciÃ³n de correo que se "
+#~ "mostrarÃ¡ en los mensajes de noticias y de correo salientes (la que sigue "
+#~ "al nombre de usuario tras el signo @), a no ser que estÃ© oculta mediante "
 #~ "reescritura."
 
 #~ msgid ""
 #~ "Please enter here the networks of local machines for which you accept to "
 #~ "relay the mail."
 #~ msgstr ""
-#~ "Por favor introduzca aquí las redes de máquinas locales que permite que "
-#~ "reenvíen correo."
+#~ "Por favor introduzca aquÃ­ las redes de mÃ¡quinas locales que permite que "
+#~ "reenvÃ­en correo."
 
 #~ msgid ""
 #~ "This should include a list of all machines that will use us as a "
 #~ "smarthost."
 #~ msgstr ""
-#~ "Esto debería incluir la lista de todas las máquinas que utilizarán este "
-#~ "sistema como «smarthost»."
+#~ "Esto deberÃ­a incluir la lista de todas las mÃ¡quinas que utilizarÃ¡n este "
+#~ "sistema como Â«smarthostÂ»."
 
 #~ msgid ""
 #~ "You need to double the colons in IPv6 addresses (e.g. "
@@ -887,14 +887,14 @@ msgstr ""
 #~ "ejemplo 5f03::1200::836f::::)."
 
 #~ msgid "Configuring Exim v4 (exim4-config)"
-#~ msgstr "Configuración de Exim versión 4 (exim4-config)"
+#~ msgstr "ConfiguraciÃ³n de Exim versiÃ³n 4 (exim4-config)"
 
 #~ msgid ""
 #~ "If you are configuring this system without local mail delivery this name "
 #~ "won't appear on From: lines of mail, as rewriting is used."
 #~ msgstr ""
-#~ "Debido al uso de la reescritura de campos, este nombre no aparecerá en el "
-#~ "campo «From:» de la cabecera del correo si no ha configurando envío local "
+#~ "Debido al uso de la reescritura de campos, este nombre no aparecerÃ¡ en el "
+#~ "campo Â«From:Â» de la cabecera del correo si no ha configurando envÃ­o local "
 #~ "de correo para este sistema."
 
 #~ msgid ""
@@ -902,9 +902,9 @@ msgstr ""
 #~ "from the relaying controls, as using us to relay mail for them is the "
 #~ "whole point."
 #~ msgstr ""
-#~ "Obviamente, cualquier servidor que nos utilice como «smarthost» ha de ser "
-#~ "excluído de los controles de reenvío, ya que la función primaria de "
-#~ "esteservidor de correo es permitirles que estos lo reenvien desde aquí."
+#~ "Obviamente, cualquier servidor que nos utilice como Â«smarthostÂ» ha de ser "
+#~ "excluÃ­do de los controles de reenvÃ­o, ya que la funciÃ³n primaria de "
+#~ "esteservidor de correo es permitirles que estos lo reenvien desde aquÃ­."
 
 #~ msgid ""
 #~ "Mail for the \"postmaster\" and \"root\" accounts is usually redirected "
@@ -914,12 +914,12 @@ msgstr ""
 #~ "is redirected to a real user.  This can be changed by editing /etc/"
 #~ "aliases."
 #~ msgstr ""
-#~ "El correo de las cuentas de «postmaster» (administrador de correo) y "
-#~ "«root» (administrador) habitualmente se redirige a una o más cuentas de "
+#~ "El correo de las cuentas de Â«postmasterÂ» (administrador de correo) y "
+#~ "Â«rootÂ» (administrador) habitualmente se redirige a una o mÃ¡s cuentas de "
 #~ "usuario de los usuarios que son realmente administradores del sistema. El "
-#~ "valor por omisión es que el correo para «postmaster» y el de varias "
-#~ "cuentas del sistema se reenvía a «root», y el correo de «root» se reenvía "
-#~ "a un usuario real. Esto se puede cambiar editando «/etc/aliases»."
+#~ "valor por omisiÃ³n es que el correo para Â«postmasterÂ» y el de varias "
+#~ "cuentas del sistema se reenvÃ­a a Â«rootÂ», y el correo de Â«rootÂ» se reenvÃ­a "
+#~ "a un usuario real. Esto se puede cambiar editando Â«/etc/aliasesÂ»."
 
 #~ msgid ""
 #~ "System administrator mail goes to which user accounts? Enter one or more "
@@ -928,9 +928,9 @@ msgstr ""
 #~ "run deliveries as root and will save the mail to /var/mail/mail  Also, "
 #~ "note that usernames should be lowercase!"
 #~ msgstr ""
-#~ "¿A qué cuentas de usuario irá el correo del administrador del sistema? "
-#~ "Introduzca uno o más nombres de usuario separados por espacios o comas. "
-#~ "Escriba «none» si no desea redirigir el correo. No se recomienda jamás "
-#~ "hacer ésto. Exim no puede efectuar entregas de correo como root y "
-#~ "guardará el correo en «/var/mail/mail». Asimismo, ¡tenga en cuenta que "
-#~ "los nombres de usuario estén en minúscula!"
+#~ "Â¿A quÃ© cuentas de usuario irÃ¡ el correo del administrador del sistema? "
+#~ "Introduzca uno o mÃ¡s nombres de usuario separados por espacios o comas. "
+#~ "Escriba Â«noneÂ» si no desea redirigir el correo. No se recomienda jamÃ¡s "
+#~ "hacer Ã©sto. Exim no puede efectuar entregas de correo como root y "
+#~ "guardarÃ¡ el correo en Â«/var/mail/mailÂ». Asimismo, Â¡tenga en cuenta que "
+#~ "los nombres de usuario estÃ©n en minÃºscula!"

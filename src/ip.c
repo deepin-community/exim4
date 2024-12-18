@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2023 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Functions for doing things with sockets. With the advent of IPv6 this has
 got messier, so that it's worth pulling out the code into separate functions
@@ -13,6 +15,12 @@ different places in the code where sockets are used. */
 
 #include "exim.h"
 
+
+#if defined(TCP_FASTOPEN)
+# if defined(MSG_FASTOPEN) || defined(EXIM_TFO_CONNECTX) || defined(EXIM_TFO_FREEBSD)
+#  define EXIM_SUPPORT_TFO
+# endif
+#endif
 
 /*************************************************
 *             Create a socket                    *
@@ -120,8 +128,6 @@ if (af == AF_INET6)
   return sizeof(sin->v6);
   }
 else
-#else     /* HAVE_IPv6 */
-af = af;  /* Avoid compiler warning */
 #endif    /* HAVE_IPV6 */
 
 /* Setup code when using IPv4 socket. The wildcard address is "". */
@@ -155,29 +161,12 @@ ip_bind(int sock, int af, uschar *address, int port)
 {
 union sockaddr_46 sin;
 int s_len = ip_addr(&sin, af, address, port);
-return bind(sock, (struct sockaddr *)&sin, s_len);
+int rc = bind(sock, (struct sockaddr *)&sin, s_len);
+if (rc < 0)
+  log_write(0, LOG_MAIN, "bind of [%s]:%d failed", address, port);
+return rc;
 }
 
-
-
-/*************************************************
-*************************************************/
-
-#ifdef EXIM_TFO_PROBE
-void
-tfo_probe(void)
-{
-# ifdef TCP_FASTOPEN
-int sock, backlog = 5;
-
-if (  (sock = socket(SOCK_STREAM, AF_INET, 0)) < 0
-   && setsockopt(sock, IPPROTO_TCP, TCP_FASTOPEN, &backlog, sizeof(backlog))
-   )
-  f.tcp_fastopen_ok = TRUE;
-close(sock);
-# endif
-}
-#endif
 
 
 /*************************************************
@@ -222,8 +211,6 @@ if (af == AF_INET6)
   s_len = sizeof(s_in6);
   }
 else
-#else     /* HAVE_IPV6 */
-af = af;  /* Avoid compiler warning */
 #endif    /* HAVE_IPV6 */
 
 /* For an IPv4 address, use an IPv4 sockaddr structure, even on a system with
@@ -245,7 +232,7 @@ callout_address = string_sprintf("[%s]:%d", address, port);
 sigalrm_seen = FALSE;
 if (timeout > 0) ALARM(timeout);
 
-#ifdef TCP_FASTOPEN
+#ifdef EXIM_SUPPORT_TFO
 /* TCP Fast Open, if the system has a cookie from a previous call to
 this peer, can send data in the SYN packet.  The peer can send data
 before it gets our ACK of its SYN,ACK - the latter is useful for
@@ -255,8 +242,7 @@ possibly use the data-on-syn, so support that too. */
 if (fastopen_blob && f.tcp_fastopen_ok)
   {
 # ifdef MSG_FASTOPEN
-  /* This is a Linux implementation.  It might be useable on FreeBSD; I have
-  not checked. */
+  /* This is a Linux implementation. */
 
   if ((rc = sendto(sock, fastopen_blob->data, fastopen_blob->len,
 		    MSG_FASTOPEN | MSG_DONTWAIT, s_ptr, s_len)) >= 0)
@@ -264,36 +250,60 @@ if (fastopen_blob && f.tcp_fastopen_ok)
 	/* seen for with-data, proper TFO opt, with-cookie case */
     {
     DEBUG(D_transport|D_v)
-      debug_printf("TFO mode connection attempt to %s, %lu data\n",
+      debug_printf(" TFO mode connection attempt to %s, %lu data\n",
 	address, (unsigned long)fastopen_blob->len);
     /*XXX also seen on successful TFO, sigh */
     tcp_out_fastopen = fastopen_blob->len > 0 ?  TFO_ATTEMPTED_DATA : TFO_ATTEMPTED_NODATA;
     }
-  else if (errno == EINPROGRESS)	/* expected if we had no cookie for peer */
+  else switch (errno)
+    {
+    case EINPROGRESS:	/* expected if we had no cookie for peer */
 	/* seen for no-data, proper TFO option, both cookie-request and with-cookie cases */
 	/*  apparently no visibility of the diffference at this point */
 	/* seen for with-data, proper TFO opt, cookie-req */
 	/*   with netwk delay, post-conn tcp_info sees unacked 1 for R, 2 for C; code in smtp_out.c */
 	/* ? older Experimental TFO option behaviour ? */
-    {					/* queue unsent data */
-    DEBUG(D_transport|D_v) debug_printf("TFO mode sendto, %s data: EINPROGRESS\n",
-      fastopen_blob->len > 0 ? "with"  : "no");
-    if (!fastopen_blob->data)
-      {
-      tcp_out_fastopen = TFO_ATTEMPTED_NODATA;		/* we tried; unknown if useful yet */
-      rc = 0;
-      }
-    else
-      rc = send(sock, fastopen_blob->data, fastopen_blob->len, 0);
+      DEBUG(D_transport|D_v) debug_printf(" TFO mode sendto, %s data: EINPROGRESS\n",
+	fastopen_blob->len > 0 ? "with"  : "no");
+      if (!fastopen_blob->data)
+	{
+	tcp_out_fastopen = TFO_ATTEMPTED_NODATA;		/* we tried; unknown if useful yet */
+	rc = 0;
+	}
+      else					/* queue unsent data */
+	rc = send(sock, fastopen_blob->data, fastopen_blob->len, 0);
+      break;
+
+    case EOPNOTSUPP:
+      DEBUG(D_transport)
+	debug_printf("Tried TCP Fast Open but apparently not enabled by sysctl\n");
+      goto legacy_connect;
+
+    case EPIPE:
+      DEBUG(D_transport)
+	debug_printf("Tried TCP Fast Open but kernel too old to support it\n");
+      goto legacy_connect;
     }
-  else if(errno == EOPNOTSUPP)
+
+# elif defined(EXIM_TFO_FREEBSD)
+  /* Re: https://people.freebsd.org/~pkelsey/tfo-tools/tfo-client.c */
+
+  if (setsockopt(sock, IPPROTO_TCP, TCP_FASTOPEN, &on, sizeof(on)) < 0)
     {
     DEBUG(D_transport)
       debug_printf("Tried TCP Fast Open but apparently not enabled by sysctl\n");
     goto legacy_connect;
     }
-# endif
-# ifdef EXIM_TFO_CONNECTX
+  if ((rc = sendto(sock, fastopen_blob->data, fastopen_blob->len, 0,
+		    s_ptr, s_len)) >= 0)
+    {
+    DEBUG(D_transport|D_v)
+      debug_printf(" TFO mode connection attempt to %s, %lu data\n",
+	address, (unsigned long)fastopen_blob->len);
+    tcp_out_fastopen = fastopen_blob->len > 0 ?  TFO_ATTEMPTED_DATA : TFO_ATTEMPTED_NODATA;
+    }
+
+# elif defined(EXIM_TFO_CONNECTX)
   /* MacOS */
   sa_endpoints_t ends = {
     .sae_srcif = 0, .sae_srcaddr = NULL, .sae_srcaddrlen = 0,
@@ -306,7 +316,7 @@ if (fastopen_blob && f.tcp_fastopen_ok)
 	     CONNECT_DATA_IDEMPOTENT, &iov, 1, &len, NULL)) == 0)
     {
     DEBUG(D_transport|D_v)
-      debug_printf("TFO mode connection attempt to %s, %lu data\n",
+      debug_printf(" TFO mode connection attempt to %s, %lu data\n",
 	address, (unsigned long)fastopen_blob->len);
     tcp_out_fastopen = fastopen_blob->len > 0 ?  TFO_ATTEMPTED_DATA : TFO_ATTEMPTED_NODATA;
 
@@ -316,7 +326,7 @@ if (fastopen_blob && f.tcp_fastopen_ok)
     }
   else if (errno == EINPROGRESS)
     {
-    DEBUG(D_transport|D_v) debug_printf("TFO mode sendto, %s data: EINPROGRESS\n",
+    DEBUG(D_transport|D_v) debug_printf(" TFO mode connectx, %s data: EINPROGRESS\n",
       fastopen_blob->len > 0 ? "with"  : "no");
     if (!fastopen_blob->data)
       {
@@ -329,11 +339,14 @@ if (fastopen_blob && f.tcp_fastopen_ok)
 # endif
   }
 else
-#endif	/*TCP_FASTOPEN*/
+#endif	/*EXIM_SUPPORT_TFO*/
   {
+#if defined(EXIM_SUPPORT_TFO) && !defined(EXIM_TFO_CONNECTX)
 legacy_connect:
+#endif
+
   DEBUG(D_transport|D_v) if (fastopen_blob)
-    debug_printf("non-TFO mode connection attempt to %s, %lu data\n",
+    debug_printf(" non-TFO mode connection attempt to %s, %lu data\n",
       address, (unsigned long)fastopen_blob->len);
   if ((rc = connect(sock, s_ptr, s_len)) >= 0)
     if (  fastopen_blob && fastopen_blob->data && fastopen_blob->len
@@ -394,9 +407,8 @@ int
 ip_connectedsocket(int type, const uschar * hostname, int portlo, int porthi,
       int timeout, host_item * connhost, uschar ** errstr, const blob * fastopen_blob)
 {
-int namelen, port;
+int namelen;
 host_item shost;
-host_item *h;
 int af = 0, fd, fd4 = -1, fd6 = -1;
 
 shost.next = NULL;
@@ -440,7 +452,7 @@ else
 
 /* Try to connect to the server - test each IP till one works */
 
-for (h = &shost; h; h = h->next)
+for (host_item * h = &shost; h; h = h->next)
   {
   fd = Ustrchr(h->address, ':') != 0
     ? fd6 < 0 ? (fd6 = ip_socket(type, af = AF_INET6)) : fd6
@@ -452,11 +464,11 @@ for (h = &shost; h; h = h->next)
     goto bad;
     }
 
-  for(port = portlo; port <= porthi; port++)
+  for (int port = portlo; port <= porthi; port++)
     if (ip_connect(fd, af, h->address, port, timeout, fastopen_blob) == 0)
       {
-      if (fd != fd6) close(fd6);
-      if (fd != fd4) close(fd4);
+      if (fd6 >= 0 && fd != fd6) close(fd6);
+      if (fd4 >= 0 && fd != fd4) close(fd4);
       if (connhost)
 	{
 	h->port = port;
@@ -477,7 +489,8 @@ bad:
 
 /*XXX TFO? */
 int
-ip_tcpsocket(const uschar * hostport, uschar ** errstr, int tmo)
+ip_tcpsocket(const uschar * hostport, uschar ** errstr, int tmo,
+  host_item * connhost)
 {
 int scan;
 uschar hostname[256];
@@ -496,7 +509,7 @@ if (scan != 3)
   }
 
 return ip_connectedsocket(SOCK_STREAM, hostname, portlow, porthigh,
-			  tmo, NULL, errstr, NULL);
+			  tmo, connhost, errstr, NULL);
 }
 
 int
@@ -513,7 +526,7 @@ if ((sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
 
 callout_address = string_copy(path);
 server.sun_family = AF_UNIX;
-Ustrncpy(server.sun_path, path, sizeof(server.sun_path)-1);
+Ustrncpy(US server.sun_path, path, sizeof(server.sun_path)-1);
 server.sun_path[sizeof(server.sun_path)-1] = '\0';
 if (connect(sock, (struct sockaddr *) &server, sizeof(server)) < 0)
   {
@@ -526,11 +539,18 @@ if (connect(sock, (struct sockaddr *) &server, sizeof(server)) < 0)
 return sock;
 }
 
+/* spec is either an absolute path (with a leading /), or
+a host (name or IP) and port (whitespace-separated).
+The port can be a range, dash-separated, or a single number.
+
+For a TCP socket, optionally fill in a  host_item.
+*/
 int
-ip_streamsocket(const uschar * spec, uschar ** errstr, int tmo)
+ip_streamsocket(const uschar * spec, uschar ** errstr, int tmo,
+  host_item * connhost)
 {
 return *spec == '/'
-  ? ip_unixsocket(spec, errstr) : ip_tcpsocket(spec, errstr, tmo);
+  ? ip_unixsocket(spec, errstr) : ip_tcpsocket(spec, errstr, tmo, connhost);
 }
 
 /*************************************************
@@ -573,9 +593,7 @@ Returns:      TRUE => ready for i/o
 BOOL
 fd_ready(int fd, time_t timelimit)
 {
-fd_set select_inset;
-int time_left = timelimit - time(NULL);
-int rc;
+int rc, time_left = timelimit - time(NULL);
 
 if (time_left <= 0)
   {
@@ -586,12 +604,8 @@ if (time_left <= 0)
 
 do
   {
-  struct timeval tv = { .tv_sec = time_left, .tv_usec = 0 };
-  FD_ZERO (&select_inset);
-  FD_SET (fd, &select_inset);
-
   /*DEBUG(D_transport) debug_printf("waiting for data on fd\n");*/
-  rc = select(fd + 1, (SELECT_ARG2_TYPE *)&select_inset, NULL, NULL, &tv);
+  rc = poll_one_fd(fd, POLLIN, time_left * 1000);
 
   /* If some interrupt arrived, just retry. We presume this to be rare,
   but it can happen (e.g. the SIGUSR1 signal sent by exiwhat causes
@@ -620,7 +634,7 @@ do
   /* Checking the FD_ISSET is not enough, if we're interrupted, the
   select_inset may still contain the 'input'. */
   }
-while (rc < 0 || !FD_ISSET(fd, &select_inset));
+while (rc < 0);
 return TRUE;
 }
 
@@ -649,7 +663,7 @@ if (!fd_ready(cctx->sock, timelimit))
 /* The socket is ready, read from it (via TLS if it's active). On EOF (i.e.
 close down of the connection), set errno to zero; otherwise leave it alone. */
 
-#ifdef SUPPORT_TLS
+#ifndef DISABLE_TLS
 if (cctx->tls_ctx)					/* client TLS */
   rc = tls_read(cctx->tls_ctx, buffer, buffsize);
 else if (tls_in.active.sock == cctx->sock)		/* server TLS */
@@ -833,8 +847,7 @@ return FALSE;
 void
 dscp_list_to_stream(FILE *stream)
 {
-int i;
-for (i=0; i < dscp_table_size; ++i)
+for (int i = 0; i < dscp_table_size; ++i)
   fprintf(stream, "%s\n", dscp_table[i].name);
 }
 

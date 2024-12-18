@@ -2,7 +2,7 @@
 .\" First parameter, NAME, should be all caps
 .\" Second parameter, SECTION, should be 1-8, maybe w/ subsection
 .\" other parameters are allowed: see man(7), man(1)
-.TH EXIM_LOCK 8 "March 26, 2003"
+.TH EXIM_LOCK 8 "May 12, 2020"
 .\" Please adjust this date whenever revising the manpage.
 .\"
 .\" Some roff macros, for reference:
@@ -27,7 +27,8 @@ exim_lock \- Mailbox maintenance
 The
 .B exim_lock
 utility locks a mailbox file using the same algorithm as Exim.
-For a discussion of locking issues, see section 25.2.
+For a discussion of locking issues, see section "appendfile transport",
+subsection "Operational details for appending" the Exim specification.
 .B exim_lock
 can be used to prevent any modification of a mailbox by Exim or a user
 agent while investigating a problem.
@@ -41,6 +42,10 @@ The following options are available:
 .TP
 .I \-fcntl
 Use \(lqfcntl()\(rq locking on the open mailbox.
+.TP
+.I \-flock
+Use \(lqflock()\(rq locking on the open mailbox, provided the operating
+system supports it.
 .TP
 .I \-interval
 This must be followed by a number, which is a number of seconds; it
@@ -59,6 +64,12 @@ Suppress verification output.
 This must be followed by a number; it sets the number of times to try
 to get the lock (default 10).
 .TP
+.I \-restore_time
+This option causes exim_lock to restore the modified and read times to the
+locked file before exiting. This allows you to access a locked mailbox (for
+example, to take a backup copy) without disturbing the times that the user
+subsequently sees.
+.TP
 .I \-timeout
 This must be followed by a number, which is a number of seconds; it
 sets a timeout to be used with a blocking \(lqfcntl()\(rq lock.
@@ -68,17 +79,18 @@ If it is not set (the default), a non-blocking call is used.
 Generate verbose output.
 
 If none of
-.I \-fcntl, \-lockfile
+.I \-fcntl, \-flock, \-lockfile
 or
 .I \-mbx
-are given, the default is to create a lock file and also use \(lqfcntl()\(rq locking
-on the mailbox, which is the same as
+are given, the default is to create a lock file and also use \(lqfcntl()\(rq
+locking on the mailbox, which is the same as
 .B Exim's
 default.
 The use of
 .I \-fcntl
-requires that the file be writable; the use
-of
+or
+.I \-flock
+requires that the file be writable; the use of
 .I \-lockfile
 requires that the directory containing the file be writable.
 Locking by lock file does not last for ever; Exim assumes that a lock file
@@ -86,13 +98,17 @@ is expired if it is more than 30 minutes old.
 
 The
 .I \-mbx
-option is mutually exclusive with
-.I \-fcntl.
-It causes a shared lock to be taken out on the open mailbox, and an
-exclusive lock on the file /tmp/.n.m where n and m are the device number
-and inode number of the mailbox file.
-When the locking is released, if an exclusive lock can be obtained for the
-mailbox, the file in /tmp is deleted.
+can be used with either or both of
+.I \-fcntl
+or
+.I \-flock.
+It assumes
+.I \-fcntl
+by default. MBX locking causes a shared lock to be taken out on the open
+mailbox, and an exclusive lock on the file /tmp/.n.m where n and m are the
+device number and inode number of the mailbox file. When the locking is
+released, if an exclusive lock can be obtained for the mailbox, the file
+in /tmp is deleted.
 
 The default output contains verification of the locking that takes place.
 The

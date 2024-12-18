@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 #include "lf_functions.h"
@@ -18,19 +20,28 @@
 /* See local README for interface description. */
 
 static void *
-sqlite_open(uschar *filename, uschar **errmsg)
+sqlite_open(const uschar * filename, uschar ** errmsg)
 {
 sqlite3 *db = NULL;
 int ret;
 
-ret = sqlite3_open(CS filename, &db);
-if (ret != 0)
+if (!filename || !*filename)
   {
-  *errmsg = (void *)sqlite3_errmsg(db);
-  debug_printf("Error opening database: %s\n", *errmsg);
+  DEBUG(D_lookup) debug_printf_indent("Using sqlite_dbfile: %s\n", sqlite_dbfile);
+  filename = sqlite_dbfile;
+  }
+if (!filename || *filename != '/')
+  *errmsg = US"absolute file name expected for \"sqlite\" lookup";
+else if ((ret = sqlite3_open(CCS filename, &db)) != 0)
+  {
+  *errmsg = string_copy(US sqlite3_errmsg(db));
+  sqlite3_close(db);
+  db = NULL;
+  DEBUG(D_lookup) debug_printf_indent("Error opening database: %s\n", *errmsg);
   }
 
-sqlite3_busy_timeout(db, 1000 * sqlite_lock_timeout);
+if (db)
+  sqlite3_busy_timeout(db, 1000 * sqlite_lock_timeout);
 return db;
 }
 
@@ -45,7 +56,6 @@ static int
 sqlite_callback(void *arg, int argc, char **argv, char **azColName)
 {
 gstring * res = *(gstring **)arg;
-int i;
 
 /* For second and subsequent results, insert \n */
 
@@ -55,9 +65,9 @@ if (res)
 if (argc > 1)
   {
   /* For multiple fields, include the field name too */
-  for (i = 0; i < argc; i++)
+  for (int i = 0; i < argc; i++)
     {
-    uschar *value = US((argv[i] != NULL)? argv[i]:"<NULL>");
+    uschar * value = US(argv[i] ? argv[i] : "<NULL>");
     res = lf_quote(US azColName[i], value, Ustrlen(value), res);
     }
   }
@@ -65,26 +75,28 @@ if (argc > 1)
 else
   res = string_cat(res, argv[0] ? US argv[0] : US "<NULL>");
 
-*(gstring **)arg = res;
+/* always return a non-null gstring, even for a zero-length string result */
+*(gstring **)arg = res ? res : string_get(1);
 return 0;
 }
 
 
 static int
-sqlite_find(void *handle, uschar *filename, const uschar *query, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+sqlite_find(void * handle, const uschar * filename, const uschar * query,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
 int ret;
 gstring * res = NULL;
 
-ret = sqlite3_exec(handle, CS query, sqlite_callback, &res, (char **)errmsg);
+ret = sqlite3_exec(handle, CS query, sqlite_callback, &res, CSS errmsg);
 if (ret != SQLITE_OK)
   {
-  debug_printf("sqlite3_exec failed: %s\n", *errmsg);
+  debug_printf_indent("sqlite3_exec failed: %s\n", *errmsg);
   return FAIL;
   }
 
-if (!res) *do_cache = 0;
+if (!res) *do_cache = 0;	/* on fail, wipe cache */
 
 *result = string_from_gstring(res);
 return OK;
@@ -115,26 +127,25 @@ for sqlite is the single quote, and it is quoted by doubling.
 Arguments:
   s          the string to be quoted
   opt        additional option text or NULL if none
+  idx	     lookup type index
 
 Returns:     the processed string or NULL for a bad option
 */
 
 static uschar *
-sqlite_quote(uschar *s, uschar *opt)
+sqlite_quote(uschar * s, uschar * opt, unsigned idx)
 {
-register int c;
-int count = 0;
-uschar *t = s;
-uschar *quoted;
+int c, count = 0;
+uschar * t = s, * quoted;
 
-if (opt != NULL) return NULL;     /* No options recognized */
+if (opt) return NULL;     /* No options recognized */
 
-while ((c = *t++) != 0) if (c == '\'') count++;
+while ((c = *t++)) if (c == '\'') count++;
+count += t - s;
 
-if (count == 0) return s;
-t = quoted = store_get(Ustrlen(s) + count + 1);
+t = quoted = store_get_quoted(count + 1, s, idx);
 
-while ((c = *s++) != 0)
+while ((c = *s++))
   {
   if (c == '\'') *t++ = '\'';
   *t++ = c;
@@ -154,27 +165,30 @@ return quoted;
 
 #include "../version.h"
 
-void
-sqlite_version_report(FILE *f)
+gstring *
+sqlite_version_report(gstring * g)
 {
-fprintf(f, "Library version: SQLite: Compile: %s\n"
-           "                         Runtime: %s\n",
+g = string_fmt_append(g,
+  "Library version: SQLite: Compile: %s\n"
+  "                         Runtime: %s\n",
         SQLITE_VERSION, sqlite3_libversion());
 #ifdef DYNLOOKUP
-fprintf(f, "                         Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g,
+  "                         Exim version %s\n", EXIM_VERSION_STR);
 #endif
+return g;
 }
 
 static lookup_info _lookup_info = {
-  US"sqlite",                    /* lookup name */
-  lookup_absfilequery,           /* query-style lookup, starts with file name */
-  sqlite_open,                   /* open function */
-  NULL,                          /* no check function */
-  sqlite_find,                   /* find function */
-  sqlite_close,                  /* close function */
-  NULL,                          /* no tidy function */
-  sqlite_quote,                  /* quoting function */
-  sqlite_version_report          /* version reporting */
+  .name = US"sqlite",			/* lookup name */
+  .type = lookup_absfilequery,		/* query-style lookup, starts with file name */
+  .open = sqlite_open,			/* open function */
+  .check = NULL,			/* no check function */
+  .find = sqlite_find,			/* find function */
+  .close = sqlite_close,		/* close function */
+  .tidy = NULL,				/* no tidy function */
+  .quote = sqlite_quote,		/* quoting function */
+  .version_report = sqlite_version_report          /* version reporting */
 };
 
 #ifdef DYNLOOKUP

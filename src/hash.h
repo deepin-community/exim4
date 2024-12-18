@@ -1,7 +1,7 @@
 /*
  *  Exim - an Internet mail transport agent
- *
- *  Copyright (C) 1995 - 2018  Exim maintainers
+ *  Copyright (c) The Exim Maintainers 1995 - 2022
+ *  SPDX-License-Identifier: GPL-2.0-or-later
  *
  *  Hash interface functions
  */
@@ -77,6 +77,7 @@ typedef struct {
 
 extern BOOL     exim_sha_init(hctx *, hashmethod);
 extern void     exim_sha_update(hctx *, const uschar *a, int);
+extern void     exim_sha_update_string(hctx *, const uschar *a);
 extern void     exim_sha_finish(hctx *, blob *);
 
 #endif

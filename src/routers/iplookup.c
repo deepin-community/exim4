@@ -2,11 +2,15 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "../exim.h"
+
+#ifdef ROUTER_IPLOOKUP		/* Remainder of file */
 #include "rf_functions.h"
 #include "iplookup.h"
 
@@ -21,21 +25,21 @@
 
 optionlist iplookup_router_options[] = {
   { "hosts",    opt_stringptr,
-      (void *)(offsetof(iplookup_router_options_block, hosts)) },
+      OPT_OFF(iplookup_router_options_block, hosts) },
   { "optional", opt_bool,
-      (void *)(offsetof(iplookup_router_options_block, optional)) },
+      OPT_OFF(iplookup_router_options_block, optional) },
   { "port",     opt_int,
-      (void *)(offsetof(iplookup_router_options_block, port)) },
+      OPT_OFF(iplookup_router_options_block, port) },
   { "protocol", opt_stringptr,
-      (void *)(offsetof(iplookup_router_options_block, protocol_name)) },
+      OPT_OFF(iplookup_router_options_block, protocol_name) },
   { "query",    opt_stringptr,
-      (void *)(offsetof(iplookup_router_options_block, query)) },
+      OPT_OFF(iplookup_router_options_block, query) },
   { "reroute",  opt_stringptr,
-      (void *)(offsetof(iplookup_router_options_block, reroute)) },
+      OPT_OFF(iplookup_router_options_block, reroute) },
   { "response_pattern", opt_stringptr,
-      (void *)(offsetof(iplookup_router_options_block, response_pattern)) },
+      OPT_OFF(iplookup_router_options_block, response_pattern) },
   { "timeout",  opt_time,
-      (void *)(offsetof(iplookup_router_options_block, timeout)) }
+      OPT_OFF(iplookup_router_options_block, timeout) }
 };
 
 /* Size of the options list. An extern variable has to be used so that its
@@ -83,10 +87,10 @@ iplookup_router_options_block iplookup_router_option_defaults = {
 consistency checks to be done, or anything else that needs to be set up. */
 
 void
-iplookup_router_init(router_instance *rblock)
+iplookup_router_init(router_instance * rblock)
 {
-iplookup_router_options_block *ob =
-  (iplookup_router_options_block *)(rblock->options_block);
+iplookup_router_options_block * ob =
+  (iplookup_router_options_block *) rblock->options_block;
 
 /* A port and a host list must be given */
 
@@ -94,13 +98,13 @@ if (ob->port < 0)
   log_write(0, LOG_PANIC_DIE|LOG_CONFIG_FOR, "%s router:\n  "
     "a port must be specified", rblock->name);
 
-if (ob->hosts == NULL)
+if (!ob->hosts)
   log_write(0, LOG_PANIC_DIE|LOG_CONFIG_FOR, "%s router:\n  "
     "a host list must be specified", rblock->name);
 
 /* Translate protocol name into value */
 
-if (ob->protocol_name != NULL)
+if (ob->protocol_name)
   {
   if (Ustrcmp(ob->protocol_name, "udp") == 0) ob->protocol = ip_udp;
   else if (Ustrcmp(ob->protocol_name, "tcp") == 0) ob->protocol = ip_tcp;
@@ -110,9 +114,9 @@ if (ob->protocol_name != NULL)
 
 /* If a response pattern is given, compile it now to get the error early. */
 
-if (ob->response_pattern != NULL)
+if (ob->response_pattern)
   ob->re_response_pattern =
-    regex_must_compile(ob->response_pattern, FALSE, TRUE);
+    regex_must_compile(ob->response_pattern, MCS_NOFLAGS, TRUE);
 }
 
 
@@ -160,40 +164,33 @@ uschar *reply;
 uschar *hostname, *reroute, *domain;
 const uschar *listptr;
 uschar host_buffer[256];
-host_item *host = store_get(sizeof(host_item));
+host_item *host = store_get(sizeof(host_item), GET_UNTAINTED);
 address_item *new_addr;
 iplookup_router_options_block *ob =
   (iplookup_router_options_block *)(rblock->options_block);
-const pcre *re = ob->re_response_pattern;
+const pcre2_code *re = ob->re_response_pattern;
 int count, query_len, rc;
 int sep = 0;
-
-addr_local = addr_local;    /* Keep picky compilers happy */
-addr_remote = addr_remote;
-addr_succeed = addr_succeed;
-pw = pw;
 
 DEBUG(D_route) debug_printf("%s router called for %s: domain = %s\n",
   rblock->name, addr->address, addr->domain);
 
-reply = store_get(256);
+reply = store_get(256, GET_TAINTED);
 
 /* Build the query string to send. If not explicitly given, a default of
 "user@domain user@domain" is used. */
 
-if (ob->query == NULL)
+GET_OPTION("query");
+if (!ob->query)
   query = string_sprintf("%s@%s %s@%s", addr->local_part, addr->domain,
     addr->local_part, addr->domain);
 else
-  {
-  query = expand_string(ob->query);
-  if (query == NULL)
+  if (!(query = expand_string(ob->query)))
     {
     addr->message = string_sprintf("%s router: failed to expand %s: %s",
       rblock->name, ob->query, expand_string_message);
     return DEFER;
     }
-  }
 
 query_len = Ustrlen(query);
 DEBUG(D_route) debug_printf("%s router query is \"%s\"\n", rblock->name,
@@ -204,6 +201,7 @@ response it received. Initialization insists on the port being set and there
 being a host list. */
 
 listptr = ob->hosts;
+/* not expanded so should never be tainted */
 while ((hostname = string_nextinlist(&listptr, &sep, host_buffer,
        sizeof(host_buffer))))
   {
@@ -364,23 +362,24 @@ else
 /* If an explicit rerouting string is specified, expand it. Otherwise, use
 what was sent back verbatim. */
 
-if (ob->reroute != NULL)
+GET_OPTION("reroute");
+if (ob->reroute)
   {
   reroute = expand_string(ob->reroute);
   expand_nmax = -1;
-  if (reroute == NULL)
+  if (!reroute)
     {
     addr->message = string_sprintf("%s router: failed to expand %s: %s",
       rblock->name, ob->reroute, expand_string_message);
     return DEFER;
     }
   }
-else reroute = reply;
+else
+  reroute = reply;
 
 /* We should now have a new address in the form user@domain. */
 
-domain = Ustrchr(reroute, '@');
-if (domain == NULL)
+if (!(domain = Ustrchr(reroute, '@')))
   {
   log_write(0, LOG_MAIN, "%s router: reroute string %s is not of the form "
     "user@domain", rblock->name, reroute);
@@ -417,5 +416,6 @@ if (rc != OK) return rc;
 return OK;
 }
 
-#endif   /*!MACRO_PREDEF*/
+#endif	/*!MACRO_PREDEF*/
+#endif	/*ROUTER_IPLOOKUP*/
 /* End of routers/iplookup.c */

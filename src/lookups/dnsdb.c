@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 #include "lf_functions.h"
@@ -77,10 +79,8 @@ static int type_values[] = {
 /* See local README for interface description. */
 
 static void *
-dnsdb_open(uschar *filename, uschar **errmsg)
+dnsdb_open(const uschar * filename, uschar **errmsg)
 {
-filename = filename;   /* Keep picky compilers happy */
-errmsg = errmsg;       /* Ditto */
 return (void *)(-1);   /* Any non-0 value */
 }
 
@@ -112,7 +112,7 @@ terminates option processing.  Recognised options are:
 causes the whole lookup to defer only if none of the DNS queries succeeds; and
 'never', where all defers are as if the lookup failed. The default is 'lax'.
 
-- 'dnssec_FOO', with 'strict', 'lax' and 'never' (default).  The meanings are
+- 'dnssec_FOO', with 'strict', 'lax' (default), and 'never'.  The meanings are
 require, try and don't-try dnssec respectively.
 
 - 'retrans_VAL', set the timeout value.  VAL is an Exim time specification
@@ -130,40 +130,31 @@ which may start with '<' in order to set a specific separator. The default
 separator, as always, is colon. */
 
 static int
-dnsdb_find(void *handle, uschar *filename, const uschar *keystring, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+dnsdb_find(void * handle, const uschar * filename, const uschar * keystring,
+ int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+ const uschar * opts)
 {
 int rc;
 int sep = 0;
-int defer_mode = PASS;
-int dnssec_mode = OK;
-int save_retrans = dns_retrans;
-int save_retry =   dns_retry;
+int defer_mode = PASS, dnssec_mode = PASS;
+int save_retrans = dns_retrans, save_retry =   dns_retry;
 int type;
 int failrc = FAIL;
-const uschar *outsep = CUS"\n";
-const uschar *outsep2 = NULL;
-uschar *equals, *domain, *found;
+const uschar * outsep = CUS"\n", * outsep2 = NULL;
+uschar * equals, * domain, * found;
+
+dns_answer * dnsa = store_get_dns_answer();
+dns_scan dnss;
 
 /* Because we're working in the search pool, we try to reclaim as much
 store as possible later, so we preallocate the result here */
 
 gstring * yield = string_get(256);
 
-dns_record * rr;
-dns_answer dnsa;
-dns_scan dnss;
-
-handle = handle;           /* Keep picky compilers happy */
-filename = filename;
-length = length;
-do_cache = do_cache;
-
 /* If the string starts with '>' we change the output separator.
 If it's followed by ';' or ',' we set the TXT output separator. */
 
-while (isspace(*keystring)) keystring++;
-if (*keystring == '>')
+if (Uskip_whitespace(&keystring) == '>')
   {
   outsep = keystring + 1;
   keystring += 2;
@@ -177,7 +168,7 @@ if (*keystring == '>')
     outsep2 = US"";
     keystring++;
     }
-  while (isspace(*keystring)) keystring++;
+  Uskip_whitespace(&keystring);
   }
 
 /* Check for a modifier keyword. */
@@ -196,7 +187,8 @@ for (;;)
     else
       {
       *errmsg = US"unsupported dnsdb defer behaviour";
-      return DEFER;
+      rc = DEFER;
+      goto out;
       }
     }
   else if (strncmpic(keystring, US"dnssec_", 7) == 0)
@@ -211,7 +203,8 @@ for (;;)
     else
       {
       *errmsg = US"unsupported dnsdb dnssec behaviour";
-      return DEFER;
+      rc = DEFER;
+      goto out;
       }
     }
   else if (strncmpic(keystring, US"retrans_", 8) == 0)
@@ -220,7 +213,8 @@ for (;;)
     if ((timeout_sec = readconf_readtime(keystring += 8, ',', FALSE)) <= 0)
       {
       *errmsg = US"unsupported dnsdb timeout value";
-      return DEFER;
+      rc = DEFER;
+      goto out;
       }
     dns_retrans = timeout_sec;
     while (*keystring != ',') keystring++;
@@ -231,20 +225,22 @@ for (;;)
     if ((retries = (int)strtol(CCS keystring + 6, CSS &keystring, 0)) < 0)
       {
       *errmsg = US"unsupported dnsdb retry count";
-      return DEFER;
+      rc = DEFER;
+      goto out;
       }
     dns_retry = retries;
     }
   else
     break;
 
-  while (isspace(*keystring)) keystring++;
+  Uskip_whitespace(&keystring);
   if (*keystring++ != ',')
     {
     *errmsg = US"dnsdb modifier syntax error";
-    return DEFER;
+    rc = DEFER;
+    goto out;
     }
-  while (isspace(*keystring)) keystring++;
+  Uskip_whitespace(&keystring);
   }
 
 /* Figure out the "type" value if it is not T_TXT.
@@ -270,11 +266,12 @@ if ((equals = Ustrchr(keystring, '=')) != NULL)
   if (i >= nelem(type_names))
     {
     *errmsg = US"unsupported DNS record type";
-    return DEFER;
+    rc = DEFER;
+    goto out;
     }
 
   keystring = equals + 1;
-  while (isspace(*keystring)) keystring++;
+  Uskip_whitespace(&keystring);
   }
 
 /* Initialize the resolver in case this is the first time it has been used. */
@@ -313,10 +310,9 @@ if (!outsep2) switch(type)
 
 while ((domain = string_nextinlist(&keystring, &sep, NULL, 0)))
   {
-  uschar rbuffer[256];
-  int searchtype = (type == T_CSA)? T_SRV :         /* record type we want */
-                   (type == T_MXH)? T_MX :
-                   (type == T_ZNS)? T_NS : type;
+  int searchtype = type == T_CSA ? T_SRV :         /* record type we want */
+                   type == T_MXH ? T_MX :
+                   type == T_ZNS ? T_NS : type;
 
   /* If the type is PTR or CSA, we have to construct the relevant magic lookup
   key if the original is an IP address (some experimental protocols are using
@@ -326,14 +322,11 @@ while ((domain = string_nextinlist(&keystring, &sep, NULL, 0)))
 
   if ((type == T_PTR || type == T_CSA) &&
       string_is_ip_address(domain, NULL) != 0)
-    {
-    dns_build_reverse(domain, rbuffer);
-    domain = rbuffer;
-    }
+    domain = dns_build_reverse(domain);
 
   do
     {
-    DEBUG(D_lookup) debug_printf("dnsdb key: %s\n", domain);
+    DEBUG(D_lookup) debug_printf_indent("dnsdb key: %s\n", domain);
 
     /* Do the lookup and sort out the result. There are four special types that
     are handled specially: T_CSA, T_ZNS, T_ADDRESSES and T_MXH.
@@ -350,18 +343,18 @@ while ((domain = string_nextinlist(&keystring, &sep, NULL, 0)))
       {
       if (searchtype == T_ADDRESSES) searchtype = T_AAAA;
       else if (searchtype == T_AAAA) searchtype = T_A;
-      rc = dns_special_lookup(&dnsa, domain, searchtype, CUSS &found);
+      rc = dns_special_lookup(dnsa, domain, searchtype, CUSS &found);
       }
     else
 #endif
-      rc = dns_special_lookup(&dnsa, domain, type, CUSS &found);
+      rc = dns_special_lookup(dnsa, domain, type, CUSS &found);
 
     lookup_dnssec_authenticated = dnssec_mode==OK ? NULL
-      : dns_is_secure(&dnsa) ? US"yes" : US"no";
+      : dns_is_secure(dnsa) ? US"yes" : US"no";
 
     if (rc == DNS_NOMATCH || rc == DNS_NODATA) continue;
     if (  rc != DNS_SUCCEED
-       || (dnssec_mode == DEFER && !dns_is_secure(&dnsa))
+       || (dnssec_mode == DEFER && !dns_is_secure(dnsa))
        )
       {
       if (defer_mode == DEFER)
@@ -369,7 +362,8 @@ while ((domain = string_nextinlist(&keystring, &sep, NULL, 0)))
 	dns_retrans = save_retrans;
 	dns_retry = save_retry;
 	dns_init(FALSE, FALSE, FALSE);			/* clr dnssec bit */
-	return DEFER;					/* always defer */
+	rc = DEFER;					/* always defer */
+	goto out;
 	}
       if (defer_mode == PASS) failrc = DEFER;         /* defer only if all do */
       continue;                                       /* treat defer as fail */
@@ -378,67 +372,69 @@ while ((domain = string_nextinlist(&keystring, &sep, NULL, 0)))
 
     /* Search the returned records */
 
-    for (rr = dns_next_rr(&dnsa, &dnss, RESET_ANSWERS); rr;
-         rr = dns_next_rr(&dnsa, &dnss, RESET_NEXT)) if (rr->type == searchtype)
+    for (dns_record * rr = dns_next_rr(dnsa, &dnss, RESET_ANSWERS); rr;
+         rr = dns_next_rr(dnsa, &dnss, RESET_NEXT)) if (rr->type == searchtype)
       {
       if (*do_cache > rr->ttl)
 	*do_cache = rr->ttl;
 
       if (type == T_A || type == T_AAAA || type == T_ADDRESSES)
         {
-        dns_address *da;
-        for (da = dns_address_from_rr(&dnsa, rr); da; da = da->next)
-          {
-          if (yield->ptr) yield = string_catn(yield, outsep, 1);
-          yield = string_cat(yield, da->address);
-          }
+        for (dns_address * da = dns_address_from_rr(dnsa, rr); da; da = da->next)
+	  yield = string_append_listele(yield, *outsep, da->address);
         continue;
         }
 
       /* Other kinds of record just have one piece of data each, but there may be
-      several of them, of course. */
+      several of them, of course.  TXT & SPF can have data in multiple chunks. */
 
       if (yield->ptr) yield = string_catn(yield, outsep, 1);
 
       if (type == T_TXT || type == T_SPF)
-        {
-        if (outsep2 == NULL)	/* output only the first item of data */
-          yield = string_catn(yield, US (rr->data+1), (rr->data)[0]);
-        else
-          {
-          /* output all items */
-          int data_offset = 0;
-          while (data_offset < rr->size)
-            {
-            uschar chunk_len = (rr->data)[data_offset++];
-            if (outsep2[0] != '\0' && data_offset != 1)
-              yield = string_catn(yield, outsep2, 1);
-            yield = string_catn(yield, US ((rr->data)+data_offset), chunk_len);
-            data_offset += chunk_len;
-            }
-          }
-        }
+	for (unsigned data_offset = 0; data_offset + 1 < rr->size; )
+	  {
+	  uschar chunk_len = (rr->data)[data_offset];
+	  int remain;
+
+	  if (outsep2 && *outsep2 && data_offset != 0)
+	    yield = string_catn(yield, outsep2, 1);
+
+	  /* Apparently there are resolvers that do not check RRs before passing
+	  them on, and glibc fails to do so.  So every application must...
+	  Check for chunk len exceeding RR */
+
+	  remain = rr->size - ++data_offset;
+	  if (chunk_len > remain)
+	    chunk_len = remain;
+	  yield = string_catn(yield, US ((rr->data) + data_offset), chunk_len);
+	  data_offset += chunk_len;
+
+	  if (!outsep2) break;		/* output only the first chunk of the RR */
+	  }
       else if (type == T_TLSA)
-        {
-        uint8_t usage, selector, matching_type;
-        uint16_t payload_length;
-        uschar s[MAX_TLSA_EXPANDED_SIZE];
-	uschar * sp = s;
-        uschar * p = US rr->data;
+	if (rr->size < 3)
+	  continue;
+	else
+	  {
+	  uint8_t usage, selector, matching_type;
+	  uint16_t payload_length;
+	  uschar s[MAX_TLSA_EXPANDED_SIZE];
+	  uschar * sp = s;
+	  uschar * p = US rr->data;
 
-        usage = *p++;
-        selector = *p++;
-        matching_type = *p++;
-        /* What's left after removing the first 3 bytes above */
-        payload_length = rr->size - 3;
-        sp += sprintf(CS s, "%d%c%d%c%d%c", usage, *outsep2,
-		selector, *outsep2, matching_type, *outsep2);
-        /* Now append the cert/identifier, one hex char at a time */
-	while (payload_length-- > 0 && sp-s < (MAX_TLSA_EXPANDED_SIZE - 4))
-          sp += sprintf(CS sp, "%02x", *p++);
+	  usage = *p++;
+	  selector = *p++;
+	  matching_type = *p++;
+	  /* What's left after removing the first 3 bytes above */
+	  payload_length = rr->size - 3;
+	  sp += sprintf(CS s, "%d%c%d%c%d%c", usage, *outsep2,
+		  selector, *outsep2, matching_type, *outsep2);
+	  /* Now append the cert/identifier, one hex char at a time */
+	  while (payload_length-- > 0 && sp-s < (MAX_TLSA_EXPANDED_SIZE - 4))
+	    sp += sprintf(CS sp, "%02x", *p++);
 
-        yield = string_cat(yield, s);
-        }
+	  yield = string_cat(yield, s);
+	  }
       else   /* T_CNAME, T_CSA, T_MX, T_MXH, T_NS, T_PTR, T_SOA, T_SRV */
         {
         int priority, weight, port;
@@ -448,17 +444,20 @@ while ((domain = string_nextinlist(&keystring, &sep, NULL, 0)))
 	switch (type)
 	  {
 	  case T_MXH:
+	    if (rr_bad_size(rr, sizeof(uint16_t))) continue;
 	    /* mxh ignores the priority number and includes only the hostnames */
 	    GETSHORT(priority, p);
 	    break;
 
 	  case T_MX:
+	    if (rr_bad_size(rr, sizeof(uint16_t))) continue;
 	    GETSHORT(priority, p);
 	    sprintf(CS s, "%d%c", priority, *outsep2);
 	    yield = string_cat(yield, s);
 	    break;
 
 	  case T_SRV:
+	    if (rr_bad_size(rr, 3*sizeof(uint16_t))) continue;
 	    GETSHORT(priority, p);
 	    GETSHORT(weight, p);
 	    GETSHORT(port, p);
@@ -468,6 +467,7 @@ while ((domain = string_nextinlist(&keystring, &sep, NULL, 0)))
 	    break;
 
 	  case T_CSA:
+	    if (rr_bad_size(rr, 3*sizeof(uint16_t))) continue;
 	    /* See acl_verify_csa() for more comments about CSA. */
 	    GETSHORT(priority, p);
 	    GETSHORT(weight, p);
@@ -502,7 +502,7 @@ while ((domain = string_nextinlist(&keystring, &sep, NULL, 0)))
 
         /* GETSHORT() has advanced the pointer to the target domain. */
 
-        rc = dn_expand(dnsa.answer, dnsa.answer + dnsa.answerlen, p,
+        rc = dn_expand(dnsa->answer, dnsa->answer + dnsa->answerlen, p,
           (DN_EXPAND_ARG4_TYPE)s, sizeof(s));
 
         /* If an overlong response was received, the data will have been
@@ -518,12 +518,12 @@ while ((domain = string_nextinlist(&keystring, &sep, NULL, 0)))
 
 	if (type == T_SOA && outsep2 != NULL)
 	  {
-	  unsigned long serial, refresh, retry, expire, minimum;
+	  unsigned long serial = 0, refresh = 0, retry = 0, expire = 0, minimum = 0;
 
 	  p += rc;
 	  yield = string_catn(yield, outsep2, 1);
 
-	  rc = dn_expand(dnsa.answer, dnsa.answer + dnsa.answerlen, p,
+	  rc = dn_expand(dnsa->answer, dnsa->answer + dnsa->answerlen, p,
 	    (DN_EXPAND_ARG4_TYPE)s, sizeof(s));
 	  if (rc < 0)
 	    {
@@ -534,8 +534,11 @@ while ((domain = string_nextinlist(&keystring, &sep, NULL, 0)))
 	  else yield = string_cat(yield, s);
 
 	  p += rc;
-	  GETLONG(serial, p); GETLONG(refresh, p);
-	  GETLONG(retry,  p); GETLONG(expire,  p); GETLONG(minimum, p);
+	  if (!rr_bad_increment(rr, p, 5 * sizeof(u_int32_t)))
+	    {
+	    GETLONG(serial, p); GETLONG(refresh, p);
+	    GETLONG(retry,  p); GETLONG(expire,  p); GETLONG(minimum, p);
+	    }
 	  sprintf(CS s, "%c%lu%c%lu%c%lu%c%lu%c%lu",
 	    *outsep2, serial, *outsep2, refresh,
 	    *outsep2, retry,  *outsep2, expire,  *outsep2, minimum);
@@ -551,7 +554,7 @@ while ((domain = string_nextinlist(&keystring, &sep, NULL, 0)))
 
 /* Reclaim unused memory */
 
-store_reset(yield->s + yield->ptr + 1);
+gstring_release_unused(yield);
 
 /* If yield NULL we have not found anything. Otherwise, insert the terminating
 zero and return the result. */
@@ -560,10 +563,18 @@ dns_retrans = save_retrans;
 dns_retry = save_retry;
 dns_init(FALSE, FALSE, FALSE);	/* clear the dnssec bit for getaddrbyname */
 
-if (!yield || !yield->ptr) return failrc;
+if (!yield || !yield->ptr)
+  rc = failrc;
+else
+  {
+  *result = string_from_gstring(yield);
+  rc = OK;
+  }
 
-*result = string_from_gstring(yield);
-return OK;
+out:
+
+store_free_dns_answer(dnsa);
+return rc;
 }
 
 
@@ -576,25 +587,26 @@ return OK;
 
 #include "../version.h"
 
-void
-dnsdb_version_report(FILE *f)
+gstring *
+dnsdb_version_report(gstring * g)
 {
 #ifdef DYNLOOKUP
-fprintf(f, "Library version: DNSDB: Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g, "Library version: DNSDB: Exim version %s\n", EXIM_VERSION_STR);
 #endif
+return g;
 }
 
 
 static lookup_info _lookup_info = {
-  US"dnsdb",                     /* lookup name */
-  lookup_querystyle,             /* query style */
-  dnsdb_open,                    /* open function */
-  NULL,                          /* check function */
-  dnsdb_find,                    /* find function */
-  NULL,                          /* no close function */
-  NULL,                          /* no tidy function */
-  NULL,                          /* no quoting function */
-  dnsdb_version_report           /* version reporting */
+  .name = US"dnsdb",			/* lookup name */
+  .type = lookup_querystyle,		/* query style */
+  .open = dnsdb_open,			/* open function */
+  .check = NULL,			/* check function */
+  .find = dnsdb_find,			/* find function */
+  .close = NULL,			/* no close function */
+  .tidy = NULL,				/* no tidy function */
+  .quote = NULL,			/* no quoting function */
+  .version_report = dnsdb_version_report           /* version reporting */
 };
 
 #ifdef DYNLOOKUP

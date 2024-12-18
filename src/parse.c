@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Functions for parsing addresses */
 
@@ -11,7 +13,7 @@
 #include "exim.h"
 
 
-static uschar *last_comment_position;
+static const uschar *last_comment_position;
 
 
 
@@ -21,22 +23,25 @@ redundant apparatus. */
 
 #ifdef STAND_ALONE
 
-address_item *deliver_make_addr(uschar *address, BOOL copy)
+address_item *
+deliver_make_addr(uschar *address, BOOL copy)
 {
-address_item *addr = store_get(sizeof(address_item));
+address_item *addr = store_get(sizeof(address_item), GET_UNTAINTED);
 addr->next = NULL;
 addr->parent = NULL;
 addr->address = address;
 return addr;
 }
 
-uschar *rewrite_address(uschar *recipient, BOOL dummy1, BOOL dummy2, rewrite_rule
+uschar *
+rewrite_address(uschar *recipient, BOOL dummy1, BOOL dummy2, rewrite_rule
   *dummy3, int dummy4)
 {
 return recipient;
 }
 
-uschar *rewrite_address_qualify(uschar *recipient, BOOL dummy1)
+uschar *
+rewrite_address_qualify(uschar *recipient, BOOL dummy1)
 {
 return recipient;
 }
@@ -64,30 +69,31 @@ Returns:   pointer past the end of the address
 */
 
 uschar *
-parse_find_address_end(uschar *s, BOOL nl_ends)
+parse_find_address_end(const uschar * s, BOOL nl_ends)
 {
 BOOL source_routing = *s == '@';
-int no_term = source_routing? 1 : 0;
+int no_term = source_routing ? 1 : 0;
 
-while (*s != 0 && (*s != ',' || no_term > 0) && (*s != '\n' || !nl_ends))
+while (*s && (*s != ',' || no_term > 0) && (*s != '\n' || !nl_ends))
   {
   /* Skip single quoted characters. Strictly these should not occur outside
   quoted strings in RFC 822 addresses, but they can in RFC 821 addresses. Pity
   about the lack of consistency, isn't it? */
 
-  if (*s == '\\' && s[1] != 0) s += 2;
+  if (*s == '\\' && s[1])
+    s += 2;
 
   /* Skip quoted items that are not inside brackets. Note that
   quoted pairs are allowed inside quoted strings. */
 
   else if (*s == '\"')
-    {
-    while (*(++s) != 0 && (*s != '\n' || !nl_ends))
+    while (*++s && (*s != '\n' || !nl_ends))
       {
-      if (*s == '\\' && s[1] != 0) s++;
-        else if (*s == '\"') { s++; break; }
+      if (*s == '\\' && s[1])
+	s++;
+      else if (*s == '\"')
+	{ s++; break; }
       }
-    }
 
   /* Skip comments, which may include nested brackets, but quotes
   are not recognized inside comments, though quoted pairs are. */
@@ -95,12 +101,13 @@ while (*s != 0 && (*s != ',' || no_term > 0) && (*s != '\n' || !nl_ends))
   else if (*s == '(')
     {
     int level = 1;
-    while (*(++s) != 0 && (*s != '\n' || !nl_ends))
-      {
-      if (*s == '\\' && s[1] != 0) s++;
-        else if (*s == '(') level++;
-          else if (*s == ')' && --level <= 0) { s++; break; }
-      }
+    while (*++s && (*s != '\n' || !nl_ends))
+      if (*s == '\\' && s[1])
+	s++;
+      else if (*s == '(')
+	level++;
+      else if (*s == ')' && --level <= 0)
+	{ s++; break; }
     }
 
   /* Non-special character; just advance. Passing the colon in a source
@@ -112,15 +119,17 @@ while (*s != 0 && (*s != ',' || no_term > 0) && (*s != '\n' || !nl_ends))
     if (*s == '<')
       {
       source_routing = s[1] == '@';
-      no_term = source_routing? 2 : 1;
+      no_term = source_routing ? 2 : 1;
       }
-    else if (*s == '>') no_term--;
-    else if (source_routing && *s == ':') no_term--;
+    else if (*s == '>')
+      no_term--;
+    else if (source_routing && *s == ':')
+      no_term--;
     s++;
     }
   }
 
-return s;
+return US s;
 }
 
 
@@ -142,21 +151,21 @@ Argument:  pointer to an address, possibly unqualified
 Returns:   pointer to the last @ in an address, or NULL if none
 */
 
-uschar *
-parse_find_at(uschar *s)
+const uschar *
+parse_find_at(const uschar *s)
 {
-uschar *t = s + Ustrlen(s);
+const uschar * t = s + Ustrlen(s);
 while (--t >= s)
-  {
   if (*t == '@')
     {
     int backslash_count = 0;
-    uschar *tt = t - 1;
+    const uschar *tt = t - 1;
     while (tt > s && *tt-- == '\\') backslash_count++;
     if ((backslash_count & 1) == 0) return t;
     }
-  else if (*t == '\"') return NULL;
-  }
+  else if (*t == '\"')
+    return NULL;
+
 return NULL;
 }
 
@@ -190,17 +199,17 @@ Argument: current character pointer
 Returns:  new character pointer
 */
 
-static uschar *
-skip_comment(uschar *s)
+static const uschar *
+skip_comment(const uschar *s)
 {
 last_comment_position = s;
 while (*s)
   {
   int c, level;
-  while (isspace(*s)) s++;
-  if (*s != '(') break;
+
+  if (Uskip_whitespace(&s) != '(') break;
   level = 1;
-  while((c = *(++s)) != 0)
+  while((c = *(++s)))
     {
     if (c == '(') level++;
     else if (c == ')') { if (--level <= 0) { s++; break; } }
@@ -223,16 +232,20 @@ If allow_domain_literals is TRUE, a "domain" may also be an IP address enclosed
 in []. Make sure the output is set to the null string if there is a syntax
 error as well as if there is no domain at all.
 
+Optionally, msg_id domain literals ( printable-ascii enclosed in [] )
+are permitted.
+
 Arguments:
   s          current character pointer
   t          where to put the domain
+  msg_id_literals     flag for relaxed domain-literal processing
   errorptr   put error message here on failure (*t will be 0 on exit)
 
 Returns:     new character pointer
 */
 
-static uschar *
-read_domain(uschar *s, uschar *t, uschar **errorptr)
+static const uschar *
+read_domain(const uschar *s, uschar *t, BOOL msg_id_literals, uschar **errorptr)
 {
 uschar *tt = t;
 s = skip_comment(s);
@@ -258,7 +271,11 @@ if (*s == '[')
     t += 5;
     s += 5;
     }
-  while (*s == '.' || *s == ':' || isxdigit(*s)) *t++ = *s++;
+
+  if (msg_id_literals)
+    while (*s >= 33 && *s <= 90 || *s >= 94 && *s <= 126) *t++ = *s++;
+  else
+    while (*s == '.' || *s == ':' || isxdigit(*s)) *t++ = *s++;
 
   if (*s == ']') *t++ = *s++; else
     {
@@ -266,7 +283,7 @@ if (*s == '[')
     *tt = 0;
     }
 
-  if (!allow_domain_literals)
+  if (!allow_domain_literals && !msg_id_literals)
     {
     *errorptr = US"domain literals not allowed";
     *tt = 0;
@@ -405,8 +422,8 @@ Arguments:
 Returns:   new character pointer
 */
 
-static uschar *
-read_local_part(uschar *s, uschar *t, uschar **error, BOOL allow_null)
+static const uschar *
+read_local_part(const uschar *s, uschar *t, uschar **error, BOOL allow_null)
 {
 uschar *tt = t;
 *error = NULL;
@@ -490,8 +507,8 @@ Arguments:
 Returns:     new character pointer
 */
 
-static uschar *
-read_route(uschar *s, uschar *t, uschar **errorptr)
+static const uschar *
+read_route(const uschar *s, uschar *t, uschar **errorptr)
 {
 BOOL commas = FALSE;
 *errorptr = NULL;
@@ -499,7 +516,7 @@ BOOL commas = FALSE;
 while (*s == '@')
   {
   *t++ = '@';
-  s = read_domain(s+1, t, errorptr);
+  s = read_domain(s+1, t, FALSE, errorptr);
   if (*t == 0) return s;
   t += Ustrlen((const uschar *)t);
   if (*s != ',') break;
@@ -544,8 +561,8 @@ Arguments:
 Returns:     new character pointer
 */
 
-static uschar *
-read_addr_spec(uschar *s, uschar *t, int term, uschar **errorptr,
+static const uschar *
+read_addr_spec(const uschar *s, uschar *t, int term, uschar **errorptr,
   uschar **domainptr)
 {
 s = read_local_part(s, t, errorptr, FALSE);
@@ -558,7 +575,7 @@ if (*errorptr == NULL)
       t += Ustrlen((const uschar *)t);
       *t++ = *s++;
       *domainptr = t;
-      s = read_domain(s, t, errorptr);
+      s = read_domain(s, t, FALSE, errorptr);
       }
 return s;
 }
@@ -615,12 +632,12 @@ Returns:      points to the extracted address, or NULL on error
 #define FAILED(s) { *errorptr = s; goto PARSE_FAILED; }
 
 uschar *
-parse_extract_address(uschar *mailbox, uschar **errorptr, int *start, int *end,
+parse_extract_address(const uschar *mailbox, uschar **errorptr, int *start, int *end,
   int *domain, BOOL allow_null)
 {
-uschar *yield = store_get(Ustrlen(mailbox) + 1);
-uschar *startptr, *endptr;
-uschar *s = US mailbox;
+uschar * yield = store_get(Ustrlen(mailbox) + 1, mailbox);
+const uschar *startptr, *endptr;
+const uschar *s = US mailbox;
 uschar *t = US yield;
 
 *domain = 0;
@@ -646,9 +663,9 @@ followed by a route-addr (more words must follow). */
 
 if (*s != '@' && *s != '<')
   {
-  if (*s == 0 || *s == ';')
+  if (!*s || *s == ';')
     {
-    if (*t == 0) FAILED(US"empty address");
+    if (!*t) FAILED(US"empty address");
     endptr = last_comment_position;
     goto PARSE_SUCCEEDED;              /* Bare local part */
     }
@@ -739,7 +756,7 @@ if (*s == '<')
     }
 
   endptr = s;
-  if (*errorptr != NULL) goto PARSE_FAILED;
+  if (*errorptr) goto PARSE_FAILED;
   while (bracket_count-- > 0) if (*s++ != '>')
     {
     *errorptr = s[-1] == 0
@@ -758,14 +775,14 @@ should be the domain. However, for flexibility we allow for a route-address
 not enclosed in <> as well, which is indicated by an empty first local
 part preceding '@'. The source routing is, however, ignored. */
 
-else if (*t == 0)
+else if (!*t)
   {
   uschar *domainptr = yield;
   s = read_route(s, t, errorptr);
-  if (*errorptr != NULL) goto PARSE_FAILED;
+  if (*errorptr) goto PARSE_FAILED;
   *t = 0;         /* Ensure route is ignored - probably overkill */
   s = read_addr_spec(s, t, 0, errorptr, &domainptr);
-  if (*errorptr != NULL) goto PARSE_FAILED;
+  if (*errorptr) goto PARSE_FAILED;
   *domain = domainptr - yield;
   endptr = last_comment_position;
   if (*domain == 0) FAILED(US"domain missing in source-routed address");
@@ -778,8 +795,8 @@ else
   t += Ustrlen((const uschar *)t);
   *t++ = *s++;
   *domain = t - yield;
-  s = read_domain(s, t, errorptr);
-  if (*t == 0) goto PARSE_FAILED;
+  s = read_domain(s, t, TRUE, errorptr);
+  if (!*t) goto PARSE_FAILED;
   endptr = last_comment_position;
   }
 
@@ -788,7 +805,7 @@ through for other cases. Endptr may have been moved over whitespace, so
 move it back past white space if necessary. */
 
 PARSE_SUCCEEDED:
-if (*s != 0)
+if (*s)
   {
   if (f.parse_found_group && *s == ';')
     {
@@ -807,11 +824,11 @@ while (isspace(endptr[-1])) endptr--;
 *end = endptr - US mailbox;
 
 /* Although this code has no limitation on the length of address extracted,
-other parts of Exim may have limits, and in any case, RFC 2821 limits local
-parts to 64 and domains to 255, so we do a check here, giving an error if the
-address is ridiculously long. */
+other parts of Exim may have limits, and in any case, RFC 5321 limits email
+addresses to 256, so we do a check here, giving an error if the address is
+ridiculously long. */
 
-if (*end - *start > ADDRESS_MAXLENGTH)
+if (*end - *start > EXIM_EMAILADDR_MAX)
   {
   *errorptr = string_sprintf("address is ridiculously long: %.64s...", yield);
   return NULL;
@@ -842,8 +859,7 @@ return NULL;
 
 /* This function is used for quoting text in headers according to RFC 2047.
 If the only characters that strictly need quoting are spaces, we return the
-original string, unmodified. If a quoted string is too long for the buffer, it
-is truncated. (This shouldn't happen: this is normally handling short strings.)
+original string, unmodified.
 
 Hmmph. As always, things get perverted for other uses. This function was
 originally for the "phrase" part of addresses. Now it is being used for much
@@ -855,77 +871,63 @@ Arguments:
                  chars
   len          the length of the string
   charset      the name of the character set; NULL => iso-8859-1
-  buffer       the buffer to put the answer in
-  buffer_size  the size of the buffer
   fold         if TRUE, a newline is inserted before the separating space when
                  more than one encoded-word is generated
 
 Returns:       pointer to the original string, if no quoting needed, or
-               pointer to buffer containing the quoted string, or
-               a pointer to "String too long" if the buffer can't even hold
-               the introduction
+               pointer to allocated memory containing the quoted string
 */
 
 const uschar *
-parse_quote_2047(const uschar *string, int len, uschar *charset, uschar *buffer,
-  int buffer_size, BOOL fold)
+parse_quote_2047(const uschar * string, int len, const uschar * charset,
+  BOOL fold)
 {
-const uschar *s = string;
-uschar *p, *t;
-int hlen;
+const uschar * s = string;
+int hlen, line_off;
 BOOL coded = FALSE;
 BOOL first_byte = FALSE;
+gstring * g =
+  string_fmt_append(NULL, "=?%s?Q?%n", charset ? charset : US"iso-8859-1", &hlen);
 
-if (!charset) charset = US"iso-8859-1";
+line_off = hlen;
 
-/* We don't expect this to fail! */
-
-if (!string_format(buffer, buffer_size, "=?%s?Q?", charset))
-  return US"String too long";
-
-hlen = Ustrlen(buffer);
-t = buffer + hlen;
-p = buffer;
-
-for (; len > 0; len--)
+for (s = string; len > 0; s++, len--)
   {
-  int ch = *s++;
-  if (t > buffer + buffer_size - hlen - 8) break;
+  int ch = *s;
 
-  if ((t - p > 67) && !first_byte)
+  if (g->ptr - line_off > 67 && !first_byte)
     {
-    *t++ = '?';
-    *t++ = '=';
-    if (fold) *t++ = '\n';
-    *t++ = ' ';
-    p = t;
-    Ustrncpy(p, buffer, hlen);
-    t += hlen;
+    g = fold ? string_catn(g, US"?=\n ", 4) : string_catn(g, US"?= ", 3);
+    line_off = g->ptr;
+    g = string_catn(g, g->s, hlen);
     }
 
-  if (ch < 33 || ch > 126 ||
-      Ustrchr("?=()<>@,;:\\\".[]_", ch) != NULL)
+  if (  ch < 33 || ch > 126
+     || Ustrchr("?=()<>@,;:\\\".[]_", ch) != NULL)
     {
     if (ch == ' ')
       {
-      *t++ = '_';
+      g = string_catn(g, US"_", 1);
       first_byte = FALSE;
       }
     else
       {
-      t += sprintf(CS t, "=%02X", ch);
+      g = string_fmt_append(g, "=%02X", ch);
       coded = TRUE;
       first_byte = !first_byte;
       }
     }
-  else { *t++ = ch; first_byte = FALSE; }
+  else
+    { g = string_catn(g, s, 1); first_byte = FALSE; }
   }
 
-*t++ = '?';
-*t++ = '=';
-*t = 0;
+if (coded)
+  string = string_from_gstring(g = string_catn(g, US"?=", 2));
+else
+  g->ptr = -1;
 
-return coded ? buffer : string;
+gstring_release_unused(g);
+return string;
 }
 
 
@@ -968,32 +970,25 @@ August 2000: Additional code added:
   We *could* use this for all cases, getting rid of the messy original code,
   but leave it for now. It would complicate simple cases like "John Q. Smith".
 
-The result is passed back in the buffer; it is usually going to be added to
-some other string. In order to be sure there is going to be no overflow,
-restrict the length of the input to 1/4 of the buffer size - this allows for
-every single character to be quoted or encoded without overflowing, and that
-wouldn't happen because of amalgamation. If the phrase is too long, return a
-fixed string.
+The result is passed back in allocated memory.
 
 Arguments:
   phrase       an RFC822 phrase
   len          the length of the phrase
-  buffer       a buffer to put the result in
-  buffer_size  the size of the buffer
 
 Returns:       the fixed RFC822 phrase
 */
 
 const uschar *
-parse_fix_phrase(const uschar *phrase, int len, uschar *buffer, int buffer_size)
+parse_fix_phrase(const uschar *phrase, int len)
 {
 int ch, i;
 BOOL quoted = FALSE;
 const uschar *s, *end;
+uschar * buffer;
 uschar *t, *yield;
 
 while (len > 0 && isspace(*phrase)) { phrase++; len--; }
-if (len > buffer_size/4) return US"Name too long";
 
 /* See if there are any non-printing characters, and if so, use the RFC 2047
 encoding for the whole thing. */
@@ -1001,10 +996,15 @@ encoding for the whole thing. */
 for (i = 0, s = phrase; i < len; i++, s++)
   if ((*s < 32 && *s != '\t') || *s > 126) break;
 
-if (i < len) return parse_quote_2047(phrase, len, headers_charset, buffer,
-  buffer_size, FALSE);
+if (i < len)
+  return parse_quote_2047(phrase, len, headers_charset, FALSE);
 
 /* No non-printers; use the RFC 822 quoting rules */
+
+if (len <= 0 || len >= INT_MAX/4)
+  return string_copy_taint(CUS"", phrase);
+
+buffer = store_get((len+1)*4, phrase);
 
 s = phrase;
 end = s + len;
@@ -1175,6 +1175,7 @@ while (s < end)
   }
 
 *t = 0;
+store_release_above(t+1);
 return yield;
 }
 
@@ -1247,8 +1248,8 @@ Returns:      FF_DELIVERED      addresses extracted
 */
 
 int
-parse_forward_list(uschar *s, int options, address_item **anchor,
-  uschar **error, const uschar *incoming_domain, uschar *directory,
+parse_forward_list(const uschar *s, int options, address_item **anchor,
+  uschar **error, const uschar *incoming_domain, const uschar *directory,
   error_block **syntax_errors)
 {
 int count = 0;
@@ -1257,18 +1258,15 @@ DEBUG(D_route) debug_printf("parse_forward_list: %s\n", s);
 
 for (;;)
   {
-  int len;
-  int special = 0;
-  int specopt = 0;
-  int specbit = 0;
-  uschar *ss, *nexts;
-  address_item *addr;
+  int len, special = 0, specopt = 0, specbit = 0;
+  const uschar * ss, * nexts;
+  address_item * addr;
   BOOL inquote = FALSE;
 
   for (;;)
     {
     while (isspace(*s) || *s == ',') s++;
-    if (*s == '#') { while (*s != 0 && *s != '\n') s++; } else break;
+    if (*s == '#') { while (*s && *s != '\n') s++; } else break;
     }
 
   /* When we reach the end of the list, we return FF_DELIVERED if any child
@@ -1280,27 +1278,26 @@ for (;;)
   However, if the list is empty only because syntax errors were skipped, we
   return FF_DELIVERED. */
 
-  if (*s == 0)
+  if (!*s)
     {
-    return (count > 0 || (syntax_errors != NULL && *syntax_errors != NULL))?
-      FF_DELIVERED : FF_NOTDELIVERED;
+    return (count > 0 || (syntax_errors && *syntax_errors))
+      ?  FF_DELIVERED : FF_NOTDELIVERED;
 
     /* This previous code returns FF_ERROR if nothing is generated but a
     syntax error has been skipped. I now think it is the wrong approach, but
     have left this here just in case, and for the record. */
 
-    #ifdef NEVER
+#ifdef NEVER
     if (count > 0) return FF_DELIVERED;   /* Something was generated */
 
-    if (syntax_errors == NULL ||          /* Not skipping syntax errors, or */
-       *syntax_errors == NULL)            /*   we didn't actually skip any */
+    if (!syntax_errors ||          /* Not skipping syntax errors, or */
+       !*syntax_errors)            /*   we didn't actually skip any */
       return FF_NOTDELIVERED;
 
     *error = string_sprintf("no addresses generated: syntax error in %s: %s",
        (*syntax_errors)->text2, (*syntax_errors)->text1);
     return FF_ERROR;
-    #endif
-
+#endif
     }
 
   /* Find the end of the next address. Quoted strings in addresses may contain
@@ -1317,7 +1314,7 @@ for (;;)
 
   /* Remove any trailing spaces; we know there's at least one non-space. */
 
-  while (isspace((ss[-1]))) ss--;
+  while (isspace(ss[-1])) ss--;
 
   /* We now have s->start and ss->end of the next address. Remove quotes
   if they completely enclose, remembering the address started with a quote
@@ -1330,20 +1327,14 @@ for (;;)
     ss--;
     inquote = TRUE;
     while (s < ss && isspace(*s)) s++;
-    while (ss > s && isspace((ss[-1]))) ss--;
+    while (ss > s && isspace(ss[-1])) ss--;
     }
 
   /* Set up the length of the address. */
 
   len = ss - s;
 
-  DEBUG(D_route)
-    {
-    int save = s[len];
-    s[len] = 0;
-    debug_printf("extract item: %s\n", s);
-    s[len] = save;
-    }
+  DEBUG(D_route) debug_printf("extract item: %.*s\n", len, s);
 
   /* Handle special addresses if permitted. If the address is :unknown:
   ignore it - this is for backward compatibility with old alias files. You
@@ -1364,18 +1355,18 @@ for (;;)
   else if (Ustrncmp(s, ":fail:", 6) == 0)
     { special = FF_FAIL; specopt = RDO_FAIL; }  /* specbit is 0 */
 
-  if (special != 0)
+  if (special)
     {
-    uschar *ss = Ustrchr(s+1, ':') + 1;
+    uschar * ss = Ustrchr(s+1, ':') + 1; /* line after the special... */
     if ((options & specopt) == specbit)
       {
       *error = string_sprintf("\"%.*s\" is not permitted", len, s);
       return FF_ERROR;
       }
-    while (*ss != 0 && isspace(*ss)) ss++;
-    while (s[len] != 0 && s[len] != '\n') len++;
-    s[len] = 0;
-    *error = string_copy(ss);
+    Uskip_whitespace(&ss);		/* skip leading whitespace */
+    if ((len = Ustrlen(ss)) > 0)	/* ignore trailing newlines */
+      for (const uschar * t = ss + len - 1; t >= ss && *t == '\n'; t--) len--;
+    *error = string_copyn(ss, len);	/* becomes the error */
     return special;
     }
 
@@ -1386,24 +1377,24 @@ for (;;)
 
   if (Ustrncmp(s, ":include:", 9) == 0)
     {
-    uschar *filebuf;
+    uschar * filebuf;
     uschar filename[256];
-    uschar *t = s+9;
+    const uschar * t = s+9;
     int flen = len - 9;
     int frc;
     struct stat statbuf;
-    address_item *last;
-    FILE *f;
+    address_item * last;
+    FILE * f;
 
     while (flen > 0 && isspace(*t)) { t++; flen--; }
 
     if (flen <= 0)
       {
-      *error = string_sprintf("file name missing after :include:");
+      *error = US"file name missing after :include:";
       return FF_ERROR;
       }
 
-    if (flen > 255)
+    if (flen > sizeof(filename)-1)
       {
       *error = string_sprintf("included file name \"%s\" is too long", t);
       return FF_ERROR;
@@ -1414,7 +1405,7 @@ for (;;)
 
     /* Insist on absolute path */
 
-    if (filename[0]!= '/')
+    if (filename[0] != '/')
       {
       *error = string_sprintf("included file \"%s\" is not an absolute path",
         filename);
@@ -1423,9 +1414,16 @@ for (;;)
 
     /* Check if include is permitted */
 
-    if ((options & RDO_INCLUDE) != 0)
+    if (options & RDO_INCLUDE)
       {
       *error = US"included files not permitted";
+      return FF_ERROR;
+      }
+
+    if (is_tainted(filename))
+      {
+      *error = string_sprintf("Tainted name '%s' for included file  not permitted\n",
+       filename);
       return FF_ERROR;
       }
 
@@ -1434,8 +1432,10 @@ for (;;)
     if (directory)
       {
       int len = Ustrlen(directory);
-      uschar *p = filename + len;
+      uschar * p;
 
+      while (len > 0 && directory[len-1] == '/') len--;		/* ignore trailing '/' */
+      p = filename + len;
       if (Ustrncmp(filename, directory, len) != 0 || *p != '/')
         {
         *error = string_sprintf("included file %s is not in directory %s",
@@ -1450,7 +1450,7 @@ for (;;)
       with a flag that fails symlinks. */
 
       {
-      int fd = open(CS directory, O_RDONLY);
+      int fd = exim_open2(CCS directory, O_RDONLY);
       if (fd < 0)
 	{
 	*error = string_sprintf("failed to open directory %s", directory);
@@ -1460,13 +1460,14 @@ for (;;)
 	{
 	uschar temp;
 	int fd2;
-	uschar * q = p;
+	uschar * q = p + 1;		/* skip dividing '/' */
 
-	while (*++p && *p != '/') ;
+	while (*q == '/') q++;		/* skip extra '/' */
+	while (*++p && *p != '/') ;	/* end of component */
 	temp = *p;
 	*p = '\0';
 
-	fd2 = openat(fd, CS q, O_RDONLY|O_NOFOLLOW);
+	fd2 = exim_openat(fd, CS q, O_RDONLY|O_NOFOLLOW);
 	close(fd);
 	*p = temp;
 	if (fd2 < 0)
@@ -1520,7 +1521,7 @@ for (;;)
 
     if (!f)
       {
-      *error = string_open_failed(errno, "included file %s", filename);
+      *error = string_open_failed("included file %s", filename);
       return FF_INCLUDEFAIL;
       }
 
@@ -1550,7 +1551,7 @@ for (;;)
       return FF_ERROR;
       }
 
-    filebuf = store_get(statbuf.st_size + 1);
+    filebuf = store_get(statbuf.st_size + 1, filename);
     if (fread(filebuf, 1, statbuf.st_size, f) != statbuf.st_size)
       {
       *error = string_sprintf("error while reading included file %s: %s",
@@ -1597,43 +1598,42 @@ for (;;)
   else
     {
     int start, end, domain;
-    uschar *recipient = NULL;
-    int save = s[len];
-    s[len] = 0;
+    const uschar *recipient = NULL;
+    uschar * s_ltd = string_copyn(s, len);
 
     /* If it starts with \ and the rest of it parses as a valid mail address
     without a domain, carry on with that address, but qualify it with the
     incoming domain. Otherwise arrange for the address to fall through,
     causing an error message on the re-parse. */
 
-    if (*s == '\\')
+    if (*s_ltd == '\\')
       {
       recipient =
-        parse_extract_address(s+1, error, &start, &end, &domain, FALSE);
-      if (recipient != NULL)
-        recipient = (domain != 0)? NULL :
+        parse_extract_address(s_ltd+1, error, &start, &end, &domain, FALSE);
+      if (recipient)
+        recipient = domain != 0 ? NULL :
           string_sprintf("%s@%s", recipient, incoming_domain);
       }
 
     /* Try parsing the item as an address. */
 
-    if (recipient == NULL) recipient =
-      parse_extract_address(s, error, &start, &end, &domain, FALSE);
+    if (!recipient) recipient =
+      parse_extract_address(s_ltd, error, &start, &end, &domain, FALSE);
 
     /* If item starts with / or | and is not a valid address, or there
     is no domain, treat it as a file or pipe. If it was a quoted item,
     remove the quoting occurrences of \ within it. */
 
-    if ((*s == '|' || *s == '/') && (recipient == NULL || domain == 0))
+    if ((*s_ltd == '|' || *s_ltd == '/') && (!recipient || domain == 0))
       {
-      uschar *t = store_get(Ustrlen(s) + 1);
-      uschar *p = t;
-      uschar *q = s;
-      while (*q != 0)
+      uschar * t = store_get(Ustrlen(s_ltd) + 1, s_ltd);
+      uschar * p = t, * q = s_ltd;
+
+      while (*q)
         {
         if (inquote)
           {
-          *p++ = (*q == '\\')? *(++q) : *q;
+          *p++ = *q == '\\' ? *++q : *q;
           q++;
           }
         else *p++ = *q++;
@@ -1641,7 +1641,7 @@ for (;;)
       *p = 0;
       addr = deliver_make_addr(t, TRUE);
       setflag(addr, af_pfr);                   /* indicates pipe/file/reply */
-      if (*s != '|') setflag(addr, af_file);   /* indicates file */
+      if (*s_ltd != '|') setflag(addr, af_file);   /* indicates file */
       }
 
     /* Item must be an address. Complain if not, else qualify, rewrite and set
@@ -1653,36 +1653,35 @@ for (;;)
 
     else
       {
-      if (recipient == NULL)
+      if (!recipient)
         {
         if (Ustrcmp(*error, "empty address") == 0)
           {
           *error = NULL;
-          s[len] = save;
           s = nexts;
           continue;
           }
 
-        if (syntax_errors != NULL)
+        if (syntax_errors)
           {
-          error_block *e = store_get(sizeof(error_block));
-          error_block *last = *syntax_errors;
-          if (last == NULL) *syntax_errors = e; else
+          error_block * e = store_get(sizeof(error_block), GET_UNTAINTED);
+          error_block * last = *syntax_errors;
+          if (last)
             {
-            while (last->next != NULL) last = last->next;
+            while (last->next) last = last->next;
             last->next = e;
             }
+          else
+	    *syntax_errors = e;
           e->next = NULL;
           e->text1 = *error;
-          e->text2 = string_copy(s);
-          s[len] = save;
+          e->text2 = s_ltd;
           s = nexts;
           continue;
           }
         else
           {
-          *error = string_sprintf("%s in \"%s\"", *error, s);
-          s[len] = save;   /* _after_ using it for *error */
+          *error = string_sprintf("%s in \"%s\"", *error, s_ltd);
           return FF_ERROR;
           }
         }
@@ -1690,17 +1689,15 @@ for (;;)
       /* Address was successfully parsed. Rewrite, and then make an address
       block. */
 
-      recipient = ((options & RDO_REWRITE) != 0)?
-        rewrite_address(recipient, TRUE, FALSE, global_rewrite_rules,
-          rewrite_existflags) :
-        rewrite_address_qualify(recipient, TRUE);
-      addr = deliver_make_addr(recipient, TRUE);  /* TRUE => copy recipient */
+      recipient = options & RDO_REWRITE
+	? rewrite_address(recipient, TRUE, FALSE, global_rewrite_rules,
+			  rewrite_existflags)
+	: rewrite_address_qualify(recipient, TRUE);	/*XXX loses track of const */
+      addr = deliver_make_addr(US recipient, TRUE);  /* TRUE => copy recipient, so deconst ok */
       }
 
-    /* Restore the final character in the original data, and add to the
-    output chain. */
+    /* Add the original data to the output chain. */
 
-    s[len] = save;
     addr->next = *anchor;
     *anchor = addr;
     count++;
@@ -1728,11 +1725,12 @@ Arguments:
 Returns:       points after the processed message-id or NULL on error
 */
 
-uschar *
-parse_message_id(uschar *str, uschar **yield, uschar **error)
+const uschar *
+parse_message_id(const uschar *str, uschar **yield, uschar **error)
 {
 uschar *domain = NULL;
 uschar *id;
+rmark reset_point;
 
 str = skip_comment(str);
 if (*str != '<')
@@ -1745,30 +1743,30 @@ if (*str != '<')
 for the answer, but it may also be very long if we are processing a header
 line. Therefore, take care to release unwanted store afterwards. */
 
-id = *yield = store_get(Ustrlen(str) + 1);
+reset_point = store_mark();
+id = *yield = store_get(Ustrlen(str) + 1, str);
 *id++ = *str++;
 
 str = read_addr_spec(str, id, '>', error, &domain);
 
-if (*error == NULL)
+if (!*error)
   {
   if (*str != '>') *error = US"Missing '>' after message-id";
     else if (domain == NULL) *error = US"domain missing in message-id";
   }
 
-if (*error != NULL)
+if (*error)
   {
-  store_reset(*yield);
+  store_reset(reset_point);
   return NULL;
   }
 
-while (*id != 0) id++;
+while (*id) id++;
 *id++ = *str++;
 *id++ = 0;
-store_reset(id);
+store_release_above(id);
 
-str = skip_comment(str);
-return str;
+return skip_comment(str);
 }
 
 
@@ -1786,16 +1784,16 @@ Arguments:
 Returns:       points after the processed date or NULL on error
 */
 
-static uschar *
-parse_number(uschar *str, int *n, int digits)
+static const uschar *
+parse_number(const uschar *str, int *n, int digits)
 {
-  *n=0;
-  while (digits--)
+*n=0;
+while (digits--)
   {
-    if (*str<'0' || *str>'9') return NULL;
-    *n=10*(*n)+(*str++-'0');
+  if (*str<'0' || *str>'9') return NULL;
+  *n=10*(*n)+(*str++-'0');
   }
-  return str;
+return str;
 }
 
 
@@ -1812,8 +1810,8 @@ Arguments:
 Returns:       points after the parsed day or NULL on error
 */
 
-static uschar *
-parse_day_of_week(uschar *str)
+static const uschar *
+parse_day_of_week(const uschar * str)
 {
 /*
 day-of-week     =       ([FWS] day-name) / obs-day-of-week
@@ -1828,17 +1826,16 @@ static const uschar *day_name[7]={ US"mon", US"tue", US"wed", US"thu", US"fri", 
 int i;
 uschar day[4];
 
-str=skip_comment(str);
-for (i=0; i<3; ++i)
+str = skip_comment(str);
+for (i = 0; i < 3; ++i)
   {
-  if ((day[i]=tolower(*str))=='\0') return NULL;
+  if ((day[i] = tolower(*str)) == '\0') return NULL;
   ++str;
   }
-day[3]='\0';
-for (i=0; i<7; ++i) if (Ustrcmp(day,day_name[i])==0) break;
-if (i==7) return NULL;
-str=skip_comment(str);
-return str;
+day[3] = '\0';
+for (i = 0; i<7; ++i) if (Ustrcmp(day,day_name[i]) == 0) break;
+if (i == 7) return NULL;
+return skip_comment(str);
 }
 
 
@@ -1858,8 +1855,8 @@ Arguments:
 Returns:       points after the processed date or NULL on error
 */
 
-static uschar *
-parse_date(uschar *str, int *d, int *m, int *y)
+static const uschar *
+parse_date(const uschar *str, int *d, int *m, int *y)
 {
 /*
 date            =       day month year
@@ -1881,36 +1878,39 @@ day             =       ([FWS] 1*2DIGIT) / obs-day
 obs-day         =       [CFWS] 1*2DIGIT [CFWS]
 */
 
-uschar *c,*n;
+const uschar * s, * n;
 static const uschar *month_name[]={ US"jan", US"feb", US"mar", US"apr", US"may", US"jun", US"jul", US"aug", US"sep", US"oct", US"nov", US"dec" };
 int i;
 uschar month[4];
 
-str=skip_comment(str);
-if ((str=parse_number(str,d,1))==NULL) return NULL;
-if (*str>='0' && *str<='9') *d=10*(*d)+(*str++-'0');
-c=skip_comment(str);
-if (c==str) return NULL;
-else str=c;
-for (i=0; i<3; ++i) if ((month[i]=tolower(*(str+i)))=='\0') return NULL;
-month[3]='\0';
-for (i=0; i<12; ++i) if (Ustrcmp(month,month_name[i])==0) break;
-if (i==12) return NULL;
+str = skip_comment(str);
+if ((str = parse_number(str,d,1)) == NULL) return NULL;
+
+if (*str>='0' && *str<='9') *d = 10*(*d)+(*str++-'0');
+s = skip_comment(str);
+if (s == str) return NULL;
+str = s;
+
+for (i = 0; i<3; ++i) if ((month[i]=tolower(*(str+i))) == '\0') return NULL;
+month[3] = '\0';
+for (i = 0; i<12; ++i) if (Ustrcmp(month,month_name[i]) == 0) break;
+if (i == 12) return NULL;
 str+=3;
-*m=i;
-c=skip_comment(str);
-if (c==str) return NULL;
-else str=c;
-if ((n=parse_number(str,y,4)))
+*m = i;
+s = skip_comment(str);
+if (s == str) return NULL;
+str=s;
+
+if ((n = parse_number(str,y,4)))
   {
-  str=n;
+  str = n;
   if (*y<1900) return NULL;
-  *y=*y-1900;
+  *y = *y-1900;
   }
-else if ((n=parse_number(str,y,2)))
+else if ((n = parse_number(str,y,2)))
   {
-  str=skip_comment(n);
-  while (*(str-1)==' ' || *(str-1)=='\t') --str; /* match last FWS later */
+  str = skip_comment(n);
+  while (*(str-1) == ' ' || *(str-1) == '\t') --str; /* match last FWS later */
   if (*y<50) *y+=100;
   }
 else return NULL;
@@ -1935,8 +1935,8 @@ Arguments:
 Returns:       points after the processed time or NULL on error
 */
 
-static uschar *
-parse_time(uschar *str, int *h, int *m, int *s, int *z)
+static const uschar *
+parse_time(const uschar *str, int *h, int *m, int *s, int *z)
 {
 /*
 time            =       time-of-day FWS zone
@@ -1971,61 +1971,61 @@ obs-zone        =       "UT" / "GMT" /          ; Universal Time
                         %d107-122               ; upper and lower case
 */
 
-uschar *c;
+const uschar * c;
 
-str=skip_comment(str);
-if ((str=parse_number(str,h,2))==NULL) return NULL;
-str=skip_comment(str);
+str = skip_comment(str);
+if ((str = parse_number(str,h,2)) == NULL) return NULL;
+str = skip_comment(str);
 if (*str!=':') return NULL;
 ++str;
-str=skip_comment(str);
-if ((str=parse_number(str,m,2))==NULL) return NULL;
-c=skip_comment(str);
-if (*str==':')
+str = skip_comment(str);
+if ((str = parse_number(str,m,2)) == NULL) return NULL;
+c = skip_comment(str);
+if (*str == ':')
   {
   ++str;
-  str=skip_comment(str);
-  if ((str=parse_number(str,s,2))==NULL) return NULL;
-  c=skip_comment(str);
+  str = skip_comment(str);
+  if ((str = parse_number(str,s,2)) == NULL) return NULL;
+  c = skip_comment(str);
   }
-if (c==str) return NULL;
+if (c == str) return NULL;
 else str=c;
-if (*str=='+' || *str=='-')
+if (*str == '+' || *str == '-')
   {
   int neg;
 
-  neg=(*str=='-');
+  neg = (*str == '-');
   ++str;
-  if ((str=parse_number(str,z,4))==NULL) return NULL;
-  *z=(*z/100)*3600+(*z%100)*60;
-  if (neg) *z=-*z;
+  if ((str = parse_number(str,z,4)) == NULL) return NULL;
+  *z = (*z/100)*3600+(*z%100)*60;
+  if (neg) *z = -*z;
   }
 else
   {
   char zone[5];
-  struct { const char *name; int off; } zone_name[10]=
+  struct { const char *name; int off; } zone_name[10] =
   { {"gmt",0}, {"ut",0}, {"est",-5}, {"edt",-4}, {"cst",-6}, {"cdt",-5}, {"mst",-7}, {"mdt",-6}, {"pst",-8}, {"pdt",-7}};
   int i,j;
 
-  for (i=0; i<4; ++i)
+  for (i = 0; i<4; ++i)
     {
-    zone[i]=tolower(*(str+i));
+    zone[i] = tolower(*(str+i));
     if (zone[i]<'a' || zone[i]>'z') break;
     }
-  zone[i]='\0';
-  for (j=0; j<10 && strcmp(zone,zone_name[j].name); ++j);
+  zone[i] = '\0';
+  for (j = 0; j<10 && strcmp(zone,zone_name[j].name); ++j);
   /* Besides zones named in the grammar, RFC 2822 says other alphabetic */
   /* time zones should be treated as unknown offsets. */
   if (j<10)
     {
-    *z=zone_name[j].off*3600;
+    *z = zone_name[j].off*3600;
     str+=i;
     }
   else if (zone[0]<'a' || zone[1]>'z') return 0;
   else
     {
     while ((*str>='a' && *str<='z') || (*str>='A' && *str<='Z')) ++str;
-    *z=0;
+    *z = 0;
     }
   }
 return str;
@@ -2045,8 +2045,8 @@ Arguments:
 Returns:       points after the processed date-time or NULL on error
 */
 
-uschar *
-parse_date_time(uschar *str, time_t *t)
+const uschar *
+parse_date_time(const uschar *str, time_t *t)
 {
 /*
 date-time       =       [ day-of-week "," ] date FWS time [CFWS]
@@ -2058,27 +2058,26 @@ extern char **environ;
 char **old_environ;
 static char gmt0[]="TZ=GMT0";
 static char *gmt_env[]={ gmt0, (char*)0 };
-uschar *try;
+const uschar * try;
 
-if ((try=parse_day_of_week(str)))
+if ((try = parse_day_of_week(str)))
   {
-  str=try;
+  str = try;
   if (*str!=',') return 0;
   ++str;
   }
-if ((str=parse_date(str,&tm.tm_mday,&tm.tm_mon,&tm.tm_year))==NULL) return NULL;
+if ((str = parse_date(str,&tm.tm_mday,&tm.tm_mon,&tm.tm_year)) == NULL) return NULL;
 if (*str!=' ' && *str!='\t') return NULL;
-while (*str==' ' || *str=='\t') ++str;
-if ((str=parse_time(str,&tm.tm_hour,&tm.tm_min,&tm.tm_sec,&zone))==NULL) return NULL;
-tm.tm_isdst=0;
-old_environ=environ;
-environ=gmt_env;
-*t=mktime(&tm);
-environ=old_environ;
-if (*t==-1) return NULL;
+while (*str == ' ' || *str == '\t') ++str;
+if ((str = parse_time(str,&tm.tm_hour,&tm.tm_min,&tm.tm_sec,&zone)) == NULL) return NULL;
+tm.tm_isdst = 0;
+old_environ = environ;
+environ = gmt_env;
+*t = mktime(&tm);
+environ = old_environ;
+if (*t == -1) return NULL;
 *t-=zone;
-str=skip_comment(str);
-return str;
+return skip_comment(str);
 }
 
 
@@ -2095,8 +2094,8 @@ int main(void)
 {
 int start, end, domain;
 uschar buffer[1024];
-uschar outbuff[1024];
 
+store_init();
 big_buffer = store_malloc(big_buffer_size);
 
 /* strip_trailing_dot = TRUE; */
@@ -2108,8 +2107,7 @@ while (Ufgets(buffer, sizeof(buffer), stdin) != NULL)
   {
   buffer[Ustrlen(buffer)-1] = 0;
   if (buffer[0] == 0) break;
-  printf("%s\n", CS parse_fix_phrase(buffer, Ustrlen(buffer), outbuff,
-    sizeof(outbuff)));
+  printf("%s\n", CS parse_fix_phrase(buffer, Ustrlen(buffer)));
   }
 
 printf("Testing parse_extract_address without group syntax and without UTF-8\n");
@@ -2121,7 +2119,9 @@ while (Ufgets(buffer, sizeof(buffer), stdin) != NULL)
   buffer[Ustrlen(buffer) - 1] = 0;
   if (buffer[0] == 0) break;
   out = parse_extract_address(buffer, &errmess, &start, &end, &domain, FALSE);
-  if (out == NULL) printf("*** bad address: %s\n", errmess); else
+  if (!out)
+    printf("*** bad address: %s\n", errmess);
+  else
     {
     uschar extract[1024];
     Ustrncpy(extract, buffer+start, end-start);
@@ -2140,7 +2140,9 @@ while (Ufgets(buffer, sizeof(buffer), stdin) != NULL)
   buffer[Ustrlen(buffer) - 1] = 0;
   if (buffer[0] == 0) break;
   out = parse_extract_address(buffer, &errmess, &start, &end, &domain, FALSE);
-  if (out == NULL) printf("*** bad address: %s\n", errmess); else
+  if (!out)
+    printf("*** bad address: %s\n", errmess);
+  else
     {
     uschar extract[1024];
     Ustrncpy(extract, buffer+start, end-start);
@@ -2161,7 +2163,7 @@ while (Ufgets(buffer, sizeof(buffer), stdin) != NULL)
   buffer[Ustrlen(buffer) - 1] = 0;
   if (buffer[0] == 0) break;
   s = buffer;
-  while (*s != 0)
+  while (*s)
     {
     uschar *ss = parse_find_address_end(s, FALSE);
     int terminator = *ss;
@@ -2169,7 +2171,9 @@ while (Ufgets(buffer, sizeof(buffer), stdin) != NULL)
     out = parse_extract_address(buffer, &errmess, &start, &end, &domain, FALSE);
     *ss = terminator;
 
-    if (out == NULL) printf("*** bad address: %s\n", errmess); else
+    if (!out)
+      printf("*** bad address: %s\n", errmess);
+    else
       {
       uschar extract[1024];
       Ustrncpy(extract, buffer+start, end-start);
@@ -2178,7 +2182,7 @@ while (Ufgets(buffer, sizeof(buffer), stdin) != NULL)
       }
 
     s = ss + (terminator? 1:0);
-    while (isspace(*s)) s++;
+    Uskip_whitespace(&s);
     }
   }
 

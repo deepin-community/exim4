@@ -5,6 +5,8 @@
 /* Code for calling Brightmail AntiSpam.
    Copyright (c) Tom Kistner <tom@duncanthrax.net> 2004
    License: GPL */
+/* Copyright (c) The Exim Maintainers 2021 - 2022 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "exim.h"
 #ifdef EXPERIMENTAL_BRIGHTMAIL
@@ -190,17 +192,20 @@ uschar *bmi_process_message(header_line *header_list, int data_fd) {
     return NULL;
   };
 
-  /* get store for the verdict string */
-  verdicts = store_get(1);
+  /* Get store for the verdict string.  Since we are processing message data, assume that
+  the verdict is tainted.  XXX this should use a growable-string  */
+
+  verdicts = store_get(1, GET_TAINTED);
   *verdicts = '\0';
 
   for ( err = bmiAccessFirstVerdict(message, &verdict);
-        verdict != NULL;
+        verdict;
         err = bmiAccessNextVerdict(message, verdict, &verdict) ) {
     char *verdict_str;
 
     err = bmiCreateStrFromVerdict(verdict,&verdict_str);
-    if (!store_extend(verdicts, Ustrlen(verdicts)+1, Ustrlen(verdicts)+1+strlen(verdict_str)+1)) {
+    if (!store_extend(verdicts,
+	  Ustrlen(verdicts)+1, Ustrlen(verdicts)+1+strlen(verdict_str)+1)) {
       /* can't allocate more store */
       return NULL;
     };
@@ -299,7 +304,7 @@ uschar *bmi_get_alt_location(uschar *base64_verdict) {
   }
   else {
     /* deliver to alternate location */
-    rc = store_get(strlen(bmiVerdictAccessDestination(verdict))+1);
+    rc = store_get(strlen(bmiVerdictAccessDestination(verdict))+1, GET_TAINTED);
     Ustrcpy(rc, bmiVerdictAccessDestination(verdict));
     rc[strlen(bmiVerdictAccessDestination(verdict))] = '\0';
   };
@@ -324,7 +329,7 @@ uschar *bmi_get_base64_verdict(uschar *bmi_local_part, uschar *bmi_domain) {
     return NULL;
 
   /* allocate room for the b64 verdict string */
-  verdict_buffer = store_get(Ustrlen(bmi_verdicts)+1);
+  verdict_buffer = store_get(Ustrlen(bmi_verdicts)+1, GET_TAINTED);
 
   /* loop through verdicts */
   verdict_ptr = bmi_verdicts;
@@ -445,9 +450,11 @@ int bmi_check_rule(uschar *base64_verdict, uschar *option_list) {
   }
 
   /* loop through numbers */
+  /* option_list doesn't seem to be expanded so cannot be tainted.  If it ever is we
+  will trap here */
   rule_ptr = option_list;
   while ((rule_num = string_nextinlist(&rule_ptr, &sep,
-                                       rule_buffer, 32)) != NULL) {
+                                       rule_buffer, sizeof(rule_buffer)))) {
     int rule_int = -1;
 
     /* try to translate to int */

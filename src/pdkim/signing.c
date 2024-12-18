@@ -1,7 +1,7 @@
 /*
  *  PDKIM - a RFC4871 (DKIM) implementation
- *
- *  Copyright (C) 1995 - 2018  Exim maintainers
+ *  Copyright (c) The Exim Maintainers 1995 - 2024
+ *  SPDX-License-Identifier: GPL-2.0-or-later
  *
  *  signing/verification interface
  */
@@ -28,14 +28,18 @@ features_crypto(void)
 
 #ifndef DISABLE_DKIM	/* rest of file */
 
-#ifndef SUPPORT_TLS
-# error Need SUPPORT_TLS for DKIM
+#ifdef DISABLE_TLS
+# error Must no DISABLE_TLS, for DKIM
 #endif
 
 
 /******************************************************************************/
 #ifdef SIGN_GNUTLS
 # define EXIM_GNUTLS_LIBRARY_LOG_LEVEL 3
+
+# ifndef GNUTLS_VERIFY_ALLOW_BROKEN
+#  define GNUTLS_VERIFY_ALLOW_BROKEN 0
+# endif
 
 
 /* Logging function which can be registered with
@@ -155,7 +159,8 @@ return NULL;
 Return: NULL for success, or an error string */
 
 const uschar *
-exim_dkim_verify_init(blob * pubkey, keyformat fmt, ev_ctx * verify_ctx)
+exim_dkim_verify_init(blob * pubkey, keyformat fmt, ev_ctx * verify_ctx,
+  unsigned * bits)
 {
 gnutls_datum_t k;
 int rc;
@@ -182,6 +187,7 @@ switch(fmt)
     ret = US"pubkey format not handled";
     break;
   }
+if (!ret && bits) gnutls_pubkey_get_pk_algorithm(verify_ctx->key, bits);
 return ret;
 }
 
@@ -217,7 +223,8 @@ else
     default:		return US"nonhandled hash type";
     }
 
-  if ((rc = gnutls_pubkey_verify_hash2(verify_ctx->key, algo, 0, &k, &s)) < 0)
+  if ((rc = gnutls_pubkey_verify_hash2(verify_ctx->key, algo,
+	      GNUTLS_VERIFY_ALLOW_BROKEN, &k, &s)) < 0)
     ret = US gnutls_strerror(rc);
   }
 
@@ -301,7 +308,7 @@ makes sure that important subsystems are initialized. */
 if (!gcry_check_version (GCRYPT_VERSION))
   {
   fputs ("libgcrypt version mismatch\n", stderr);
-  exit (2);
+  exim_exit(2);
   }
 
 /* We don't want to see any warnings, e.g. because we have not yet
@@ -412,8 +419,9 @@ if (  !(s1 = Ustrstr(CS privkey_pem, "-----BEGIN RSA PRIVATE KEY-----"))
 
 *s2 = '\0';
 
-if ((der.len = b64decode(s1, &der.data)) < 0)
+if ((rc = b64decode(s1, &der.data, s1) < 0))
   return US"Bad PEM-DER b64 decode";
+der.len = rc;
 
 /* untangle asn.1 */
 
@@ -499,7 +507,7 @@ switch (hash)
   }
 
 #define SIGSPACE 128
-sig->data = store_get(SIGSPACE);
+sig->data = store_get(SIGSPACE, GET_UNTAINTED);
 
 if (gcry_mpi_cmp (sign_ctx->p, sign_ctx->q) > 0)
   {
@@ -551,7 +559,8 @@ return NULL;
 Return: NULL for success, or an error string */
 
 const uschar *
-exim_dkim_verify_init(blob * pubkey, keyformat fmt, ev_ctx * verify_ctx)
+exim_dkim_verify_init(blob * pubkey, keyformat fmt, ev_ctx * verify_ctx,
+  unsigned * bits)
 {
 /*
 in code sequence per b81207d2bfa92 rsa_parse_public_key() and asn1_get_mpi()
@@ -559,6 +568,7 @@ in code sequence per b81207d2bfa92 rsa_parse_public_key() and asn1_get_mpi()
 uschar tag_class;
 int taglen;
 long alen;
+unsigned nbits;
 int rc;
 uschar * errstr;
 gcry_error_t gerr;
@@ -607,10 +617,10 @@ if ((rc = as_tag(pubkey, ASN1_CLASS_STRUCTURED, ASN1_TAG_SEQUENCE, NULL))
 
 /* read two integers */
 DEBUG(D_acl) stage = US"MPI";
-if (  (errstr = as_mpi(pubkey, &verify_ctx->n))
-   || (errstr = as_mpi(pubkey, &verify_ctx->e))
-   )
-  return errstr;
+nbits = pubkey->len;
+if ((errstr = as_mpi(pubkey, &verify_ctx->n))) return errstr;
+nbits = (nbits - pubkey->len) * 8;
+if ((errstr = as_mpi(pubkey, &verify_ctx->e))) return errstr;
 
 #ifdef extreme_debug
 DEBUG(D_acl) debug_printf_indent("rsa_verify_init:\n");
@@ -623,6 +633,7 @@ DEBUG(D_acl) debug_printf_indent("rsa_verify_init:\n");
 	}
 
 #endif
+if (bits) *bits = nbits;
 return NULL;
 
 asn_err:
@@ -712,7 +723,7 @@ Return: NULL for success, or an error string */
 const uschar *
 exim_dkim_signing_init(const uschar * privkey_pem, es_ctx * sign_ctx)
 {
-BIO * bp = BIO_new_mem_buf(privkey_pem, -1);
+BIO * bp = BIO_new_mem_buf((void *)privkey_pem, -1);
 
 if (!(sign_ctx->key = PEM_read_bio_PrivateKey(bp, NULL, NULL, NULL)))
   return string_sprintf("privkey PEM-block import: %s",
@@ -755,7 +766,7 @@ switch (hash)
 if (  (ctx = EVP_MD_CTX_new())
    && EVP_DigestSignInit(ctx, NULL, md, NULL, sign_ctx->key) > 0
    && EVP_DigestSign(ctx, NULL, &siglen, NULL, 0) > 0
-   && (sig->data = store_get(siglen))
+   && (sig->data = store_get(siglen, GET_UNTAINTED))
 
    /* Obtain the signature (slen could change here!) */
    && EVP_DigestSign(ctx, sig->data, &siglen, data->data, data->len) > 0
@@ -771,7 +782,7 @@ if (  (ctx = EVP_MD_CTX_create())
    && EVP_DigestSignInit(ctx, NULL, md, NULL, sign_ctx->key) > 0
    && EVP_DigestSignUpdate(ctx, data->data, data->len) > 0
    && EVP_DigestSignFinal(ctx, NULL, &siglen) > 0
-   && (sig->data = store_get(siglen))
+   && (sig->data = store_get(siglen, GET_UNTAINTED))
  
    /* Obtain the signature (slen could change here!) */
    && EVP_DigestSignFinal(ctx, sig->data, &siglen) > 0
@@ -793,7 +804,8 @@ return US ERR_error_string(ERR_get_error(), NULL);
 Return: NULL for success, or an error string */
 
 const uschar *
-exim_dkim_verify_init(blob * pubkey, keyformat fmt, ev_ctx * verify_ctx)
+exim_dkim_verify_init(blob * pubkey, keyformat fmt, ev_ctx * verify_ctx,
+  unsigned * bits)
 {
 const uschar * s = pubkey->data;
 uschar * ret = NULL;
@@ -817,6 +829,7 @@ switch(fmt)
     break;
   }
 
+if (!ret && bits) *bits = EVP_PKEY_bits(verify_ctx->key);
 return ret;
 }
 

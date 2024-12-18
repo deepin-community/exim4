@@ -8,7 +8,7 @@ maildrop:
   domains = +local_domains
   check_local_user
   transport = maildrop_pipe
-  require_files = ${local_part}:${home}/.mailfilter:+/usr/bin/maildrop
+  require_files = ${local_part_data}:${home}/.mailfilter:+/usr/bin/maildrop
   no_verify
   no_expn
 

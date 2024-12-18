@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2023 */
 /* Copyright (c) University of Cambridge 1995 - 2009 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "../exim.h"
@@ -38,14 +40,12 @@ Side effect: sets errno to ERRNO_BADUGID, ERRNO_NOTREGULAR or ERRNO_BADMODE for
 */
 
 int
-lf_check_file(int fd, uschar *filename, int s_type, int modemask, uid_t *owners,
-  gid_t *owngroups, const char *type, uschar **errmsg)
+lf_check_file(int fd, const uschar * filename, int s_type, int modemask,
+  uid_t * owners, gid_t * owngroups, const char * type, uschar ** errmsg)
 {
-int i;
 struct stat statbuf;
 
-if ((fd >= 0 && fstat(fd, &statbuf) != 0) ||
-    (fd  < 0 && Ustat(filename, &statbuf) != 0))
+if ((fd  < 0 ? Ustat(filename, &statbuf) : fstat(fd, &statbuf)) != 0)
   {
   int save_errno = errno;
   *errmsg = string_sprintf("%s: stat failed", filename);
@@ -79,10 +79,10 @@ if ((statbuf.st_mode & modemask) != 0)
   return +1;
   }
 
-if (owners != NULL)
+if (owners)
   {
   BOOL uid_ok = FALSE;
-  for (i = 1; i <= (int)owners[0]; i++)
+  for (int i = 1; i <= (int)owners[0]; i++)
     if (owners[i] == statbuf.st_uid) { uid_ok = TRUE; break; }
   if (!uid_ok)
     {
@@ -93,10 +93,10 @@ if (owners != NULL)
     }
   }
 
-if (owngroups != NULL)
+if (owngroups)
   {
   BOOL gid_ok = FALSE;
-  for (i = 1; i <= (int)owngroups[0]; i++)
+  for (int i = 1; i <= (int)owngroups[0]; i++)
     if (owngroups[i] == statbuf.st_gid) { gid_ok = TRUE; break; }
   if (!gid_ok)
     {

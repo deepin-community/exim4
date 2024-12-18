@@ -6,6 +6,262 @@ Before a formal release, there may be quite a lot of detail so that people can
 test from the snapshots or the Git before the documentation is updated. Once
 the documentation is updated, this file is reduced to a short list.
 
+Version 4.98
+------------
+ 1. The dkim_status ACL condition may now be used in data ACLs
+
+ 2. The dkim_verbose logging control also enables logging of signing
+
+ 3. The dkim_timestamps signing option now accepts zero to include a current
+    timestamp but no expiry timestamp.  Code by Simon Arlott; testsuite
+    additions by jgh.
+
+ 4. The recipients_max main option is now expanded.
+
+ 5. Setting variables for "exim -be" can set a tainted value.
+
+ 6. A dns:fail event.
+
+ 7. The dsearch lookup supports search for a sub-path.
+
+ 8. Include mailtest utility for simple connection checking.
+
+ 9. Add SMTP WELLKNOWN extension.
+
+ 10. Sqlite3 can be used for the hints databases (vs. DBD, NDB, GBDM, TDB).
+     Add "USE_SQLITE = y" and "DBMLIB = -lsqlite3" in Local/Makefile, to override 
+     the settings done in the OS/Makefile-<platform> file.
+
+Version 4.97
+------------
+
+ 1. The expansion-test facility (exim -be) can set variables.
+
+ 2. An event on a failing SMTP AUTH, for both client and server operations.
+
+ 3. Variable $sender_helo_verified with the result of an ACL "verify = helo".
+
+ 4. Predefined macros for expansion items, operators, conditions and variables.
+
+ 5. The smtp transport option "max_rcpt" is now expanded before use.
+
+ 6. The tls_eccurve option for OpenSSL now takes a list of group names.
+
+ 7. Queue runners for several queues can now be started from one daemon.
+
+ 8. New utility exim_msgdate converts message-ids to human readable format.
+
+ 9. An expansion operator for wrapping long header lines.
+
+ 10. A commandline option to print just the message IDs of the queue
+
+ 11. An option for the ${readsocket } expansion to set an SNI for TLS.
+
+ 12. The ACL remove_header modifier can take a pattern.
+
+ 13. Variable $recipients_list, a properly-quoted exim list.
+
+ 14. A log_selector for an incoming connection ID.
+
+Version 4.96
+------------
+
+ 1. A new ACL condition: seen. Records/tests a timestamp against a key.
+
+ 2. A variant of the "mask" expansion operator to give normalised IPv6.
+
+ 3. UTC output option for exim_dumpdb, exim_fixdb.
+
+ 4. An event for failing TLS connects to the daemon.
+
+ 5. The ACL "debug" control gains options "stop", "pretrigger" and "trigger".
+
+ 6. Query-style lookups are now checked for quoting, if the query string is
+    built using untrusted data ("tainted").  For now lack of quoting is merely
+    logged; a future release will upgrade this to an error.
+
+ 7. The expansion conditions match_<list-type> and inlist now set $value for
+    the expansion of the "true" result of the ${if}.  With a static list, this
+    can be used for de-tainting.
+
+ 8. Recipient verify callouts now set $domain_data & $local_part_data, with
+    de-tainted values.
+
+Version 4.95
+------------
+
+ 1. The fast-ramp two phase queue run support, previously experimental, is
+    now supported by default.
+
+ 2. The native SRS support, previously experimental, is now supported. It is
+    not built unless specified in the Local/Makefile.
+
+ 3. TLS resumption support, previously experimental, is now supported and
+    included in default builds.
+
+ 4. Single-key LMDB lookups, previously experimental, are now supported.
+    The support is not built unless specified in the Local/Makefile.
+
+ 5. Option "message_linelength_limit" on the smtp transport to enforce (by
+    default) the RFC 998 character limit.
+
+ 6. An option to ignore the cache on a lookup.
+
+ 7. Quota checking during reception (i.e. at SMTP time) for appendfile-
+    transport-managed quotas.
+
+ 8. Sqlite lookups accept a "file=<path>" option to specify a per-operation
+    db file, replacing the previous prefix to the SQL string (which had
+    issues when the SQL used tainted values).
+
+ 9. Lsearch lookups accept a "ret=full" option, to return both the portion
+    of the line matching the key, and the remainder.
+
+10. A command-line option to have a daemon not create a notifier socket.
+
+11. Faster TLS startup.  When various configuration options contain no
+    expandable elements, the information can be preloaded and cached rather
+    than the previous behaviour of always loading at startup time for every
+    connection.  This helps particularly for the CA bundle.
+
+12. Proxy Protocol Timeout is configurable via "proxy_protocol_timeout"
+    main config option.
+
+13. Option "smtp_accept_max_per_connection" is now expanded.
+
+14. Log selector "queue_time_exclusive", enabled by default, to exclude the
+    time taken for reception from QT log elements.
+
+15. Main option "smtp_backlog_monitor", to set a level above which listen
+    socket backlogs are logged.
+
+16. Main option "hosts_require_helo", requiring HELO or EHLO before MAIL.
+
+17. A main config option "allow_insecure_tainted_data" allows to turn
+
+18. TLS ALPN handling.  By default, refuse TLS connections that try to specify
+    a non-smtp (eg. http) use.  Options for customising.
+
+19. Support for MacOS (darwin) has been dropped.
+
+
+Version 4.94
+------------
+
+ 1. EXPERIMENTAL_SRS_NATIVE optional build feature.  See the experimental.spec
+    file.
+
+ 2. Channel-binding for authenticators is now supported under OpenSSL.
+    Previously it was GnuTLS-only.
+
+ 3. A msg:defer event.
+
+ 4. Client-side support in the gsasl authenticator.  Tested against the
+    plaintext driver for PLAIN; only against itself for SCRAM-SHA-1 and
+    SCRAM-SHA-1-PLUS methods.
+
+ 5. Server-side support in the gsasl authenticator for encrypted passwords, as
+    an alternate for the existing plaintext.
+
+ 6. Variable $local_part_data now also set by router check_local_user option,
+    with an de-tainted version of $local_part.
+
+ 7. Named-list definitions can now be prefixed "hide" so that "-bP" commands do
+    not output the content.  Previously this could only be done on options.
+
+ 8. As an experimental feature, the dovecot authentication driver supports inet
+    sockets.  Previously it was unix-domain sockets only.
+
+ 9. The ACL control "queue_only" can also be spelled "queue", and now takes an
+    option "first_pass_route" to do the same as a "-odqs" on the command line.
+
+10. Items specified for the router and transport headers_remove option can use
+    a trailing asterisk to specify globbing.
+
+11. New $queue_size variable.
+
+12. New variables $local_part_{pre,suf}fix_v.
+
+13. New main option "sqlite_dbfile", for use in preference to prefixing the
+    lookup string.  The older method fails when tainted variables are used
+    in the lookup, as the filename becomes tainted.  The new method keeps the
+    filename separate.
+
+14. Options on the dsearch lookup, to return the full path and to filter
+    filetypes for matching.
+
+15. Options on pgsql and mysql lookups, to specify server separate from the
+    lookup string.
+
+16. An option on all single-key lookups, to return (on a hit) a de-tainted
+    version of the lookup key rather than the looked-up data.
+
+17. $domain_data and $local_part_data are now set by all list-match successes.
+    Previously only list items that performed lookups did so.
+    Also, matching list items that are tail-match or RE-match now set the
+    numeric variables $0 (etc) in the same way os other RE matches.
+
+18. Expansion item ${listquote {<char} {<item>}}.
+
+19. An option for the ${readsocket {}{}{}} expansion to make the result data
+    cacheable.
+
+20. dkim_verify_min_keysizes, a list of minimum acceptable public-key sizes.
+
+21. bounce_message_file and warn_message_file are now expanded before use.
+
+22. New main config option spf_smtp_comment_template to customise the
+    $spf_smtp_comment variable
+
+
+
+Version 4.93
+------------
+
+ 1. An "external" authenticator, per RFC 4422 Appendix A.
+
+ 2. A JSON lookup type, and JSON variants of the forall/any expansion conditions.
+
+ 3. Variables $tls_in_cipher_std, $tls_out_cipher_std giving the RFC names
+    for ciphersuites.
+
+ 4. Log_selectors "msg_id" (on by default) and "msg_id_created".
+
+ 5. A case_insensitive option for verify=not_blind.
+
+ 6. EXPERIMENTAL_TLS_RESUME optional build feature.  See the experimental.spec
+    file.
+
+ 7. A main option exim_version to override the version Exim
+    reports in verious places ($exim_version, $version_number).
+
+ 8. Expansion operator ${sha2_N:} for N=256, 384, 512.
+
+ 9. Router variables, $r_... settable from router options and usable in routers
+    and transports.
+
+10. The spf lookup now supports IPv6.
+
+11. Main options for DKIM verify to filter hash and key types.
+
+12. With TLS1.3, support for full-chain OCSP stapling.
+
+13. Dual-certificate stacks on servers now support OCSP stapling, under OpenSSL.
+
+14: An smtp:ehlo transport event, for observability of the remote offered features.
+
+15: Support under OpenSSL for writing NSS-style key files for packet-capture
+    decode.  The environment variable SSLKEYLOGFILE is used; if an absolute path
+    it must indicate a file under the spool directory; if relative the the spool
+    directory is prepended.  Works on the server side only.  Support under
+    GnuTLS was already there, being done purely by the library (server side
+    only, and exim must be run as root).
+
+16: Command-line option to move messages from one named queue to another.
+
+17. Variables $tls_in_ver, $tls_out_ver.
+
+
 Version 4.92
 --------------
 
@@ -157,7 +413,7 @@ Version 4.89
 
  2. A main-section config option "debug_store" to control the checks on
     variable locations during store-reset.  Normally false but can be enabled
-    when a memory corrution issue is suspected on a production system.
+    when a memory corruption issue is suspected on a production system.
 
 
 Version 4.88
@@ -288,7 +544,6 @@ Version 4.86
 
 14. Main option "dns_trust_aa" for trusting your local nameserver at the
     same level as DNSSEC.
-
 
 Version 4.85
 ------------
@@ -961,7 +1216,7 @@ Version 4.68
 
  9. There is a new ACL, specified by acl_smtp_notquit, which is run in most
     cases when an SMTP session ends without sending QUIT. However, when Exim
-    itself is is bad trouble, such as being unable to write to its log files,
+    itself is in bad trouble, such as being unable to write to its log files,
     this ACL is not run, because it might try to do things (such as write to
     log files) that make the situation even worse.
 

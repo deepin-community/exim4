@@ -14,3 +14,7 @@ REMOTE_SMTP_HELO_DATA==${lookup dnsdb {ptr=$sending_ip_address}{$value}{$primary
 REMOTE_SMTP_HELO_DATA=${lookup dnsdb {ptr=$sending_ip_address}{$value}{$primary_hostname}}
 .endif
 .endif
+
+.ifndef REMOTE_SMTP_SMARTHOST_TLS_VERIFY_HOSTS
+  REMOTE_SMTP_SMARTHOST_TLS_VERIFY_HOSTS = *
+.endif

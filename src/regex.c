@@ -2,9 +2,11 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
-/* Copyright (c) Tom Kistner <tom@duncanthrax.net> 2003-2015
+/*
+ * Copyright (c) The Exim Maintainers 2016 - 2024
+ * Copyright (c) Tom Kistner <tom@duncanthrax.net> 2003-2015
  * License: GPL
- * Copyright (c) The Exim Maintainers 2016 - 2018
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 /* Code for matching regular expressions against headers and body.
@@ -17,91 +19,109 @@
 
 /* Structure to hold a list of Regular expressions */
 typedef struct pcre_list {
-  pcre *re;
-  uschar *pcre_text;
-  struct pcre_list *next;
+  const pcre2_code *	re;
+  uschar *		pcre_text;
+  struct pcre_list *	next;
 } pcre_list;
-
-uschar regex_match_string_buffer[1024];
 
 extern FILE *mime_stream;
 extern uschar *mime_current_boundary;
 
+
 static pcre_list *
-compile(const uschar * list)
+compile(const uschar * list, BOOL cacheable, int * cntp)
 {
-int sep = 0;
-uschar *regex_string;
-const char *pcre_error;
-int pcre_erroffset;
-pcre_list *re_list_head = NULL;
-pcre_list *ri;
+int sep = 0, cnt = 0;
+uschar * regex_string;
+pcre_list * re_list_head = NULL, * ri;
 
 /* precompile our regexes */
 while ((regex_string = string_nextinlist(&list, &sep, NULL, 0)))
   if (strcmpic(regex_string, US"false") != 0 && Ustrcmp(regex_string, "0") != 0)
     {
-    pcre *re;
-
     /* compile our regular expression */
-    if (!(re = pcre_compile( CS regex_string,
-		       0, &pcre_error, &pcre_erroffset, NULL )))
+    uschar * errstr;
+    const pcre2_code * re = regex_compile(regex_string,
+      cacheable ? MCS_CACHEABLE : MCS_NOFLAGS, &errstr, pcre_gen_cmp_ctx);
+
+    if (!re)
       {
-      log_write(0, LOG_MAIN,
-	   "regex acl condition warning - error in regex '%s': %s at offset %d, skipped.",
-	   regex_string, pcre_error, pcre_erroffset);
+      log_write(0, LOG_MAIN, "regex acl condition warning - %s, skipped", errstr);
       continue;
       }
 
-    ri = store_get(sizeof(pcre_list));
+    ri = store_get(sizeof(pcre_list), GET_UNTAINTED);
     ri->re = re;
     ri->pcre_text = regex_string;
     ri->next = re_list_head;
     re_list_head = ri;
+    cnt++;
     }
+if (cntp) *cntp = cnt;
 return re_list_head;
 }
 
+
+/* Check list of REs against buffer, returning OK for (first) match,
+else FAIL.  On match return allocated result strings in regex_vars[]. 
+
+We use the perm-pool for that, so that our caller can release
+other allocations.
+*/
 static int
 matcher(pcre_list * re_list_head, uschar * linebuffer, int len)
 {
-pcre_list * ri;
+pcre2_match_data * md = pcre2_match_data_create(REGEX_VARS + 1, pcre_gen_ctx);
 
-for(ri = re_list_head; ri; ri = ri->next)
+for (pcre_list * ri = re_list_head; ri; ri = ri->next)
   {
-  int ovec[3*(REGEX_VARS+1)];
-  int n, nn;
+  int n;
 
   /* try matcher on the line */
-  n = pcre_exec(ri->re, NULL, CS linebuffer, len, 0, 0, ovec, nelem(ovec));
-  if (n > 0)
+  if ((n = pcre2_match(ri->re, (PCRE2_SPTR)linebuffer, len, 0, 0, md, pcre_gen_mtc_ctx)) > 0)
     {
-    Ustrncpy(regex_match_string_buffer, ri->pcre_text,
-	      sizeof(regex_match_string_buffer)-1);
-    regex_match_string = regex_match_string_buffer;
+    int save_pool = store_pool;
+    store_pool = POOL_PERM;
 
-    for (nn = 1; nn < n; nn++)
-      regex_vars[nn-1] =
-	string_copyn(linebuffer + ovec[nn*2], ovec[nn*2+1] - ovec[nn*2]);
+    regex_match_string = string_copy(ri->pcre_text);
 
+    for (int nn = 1; nn < n; nn++)
+      {
+      PCRE2_SIZE * ovec = pcre2_get_ovector_pointer(md);
+      int off = nn * 2;
+      int len = ovec[off + 1] - ovec[off];
+      regex_vars[nn-1] = string_copyn(linebuffer + ovec[off], len);
+      }
+
+    store_pool = save_pool;
     return OK;
     }
   }
+/* pcre2_match_data_free(md);	gen ctx needs no free */
 return FAIL;
 }
 
+
+/* reset expansion variables */
+void
+regex_vars_clear(void)
+{
+regex_match_string = NULL;
+for (int i = 0; i < REGEX_VARS; i++) regex_vars[i] = NULL;
+}
+
+
+
 int
-regex(const uschar **listptr)
+regex(const uschar ** listptr, BOOL cacheable)
 {
 unsigned long mbox_size;
-FILE *mbox_file;
-pcre_list *re_list_head;
-uschar *linebuffer;
+FILE * mbox_file;
+pcre_list * re_list_head;
 long f_pos = 0;
-int ret = FAIL;
+int ret = FAIL, cnt, lcount = REGEX_LOOPCOUNT_STORE_RESET;
 
-/* reset expansion variable */
-regex_match_string = NULL;
+regex_vars_clear();
 
 if (!mime_stream)				/* We are in the DATA ACL */
   {
@@ -123,26 +143,33 @@ else
   mbox_file = mime_stream;
   }
 
-/* precompile our regexes */
-if (!(re_list_head = compile(*listptr)))
-  return FAIL;			/* no regexes -> nothing to do */
+  /* precompile our regexes */
+  if ((re_list_head = compile(*listptr, cacheable, &cnt)))
+    {
+    rmark reset_point = store_mark();
 
-/* match each line against all regexes */
-linebuffer = store_get(32767);
-while (fgets(CS linebuffer, 32767, mbox_file))
-  {
-  if (  mime_stream && mime_current_boundary		/* check boundary */
-     && Ustrncmp(linebuffer, "--", 2) == 0
-     && Ustrncmp((linebuffer+2), mime_current_boundary,
-		  Ustrlen(mime_current_boundary)) == 0)
-      break;						/* found boundary */
+    /* match each line against all regexes */
+    while (fgets(CS big_buffer, big_buffer_size, mbox_file))
+      {
+      if (  mime_stream && mime_current_boundary		/* check boundary */
+	 && Ustrncmp(big_buffer, "--", 2) == 0
+	 && Ustrncmp((big_buffer+2), mime_current_boundary,
+		      Ustrlen(mime_current_boundary)) == 0)
+	break;						/* found boundary */
 
-  if ((ret = matcher(re_list_head, linebuffer, (int)Ustrlen(linebuffer))) == OK)
-    goto done;
-  }
-/* no matches ... */
+      if ((ret = matcher(re_list_head, big_buffer, (int)Ustrlen(big_buffer))) == OK)
+	break;
 
-done:
+      if ((lcount -= cnt) <= 0)
+	{
+	store_reset(reset_point); reset_point = store_mark();
+	lcount = REGEX_LOOPCOUNT_STORE_RESET;
+	}
+      }
+
+    store_reset(reset_point);
+    }
+
 if (!mime_stream)
   (void)fclose(mbox_file);
 else
@@ -161,20 +188,16 @@ return ret;
 
 
 int
-mime_regex(const uschar **listptr)
+mime_regex(const uschar **listptr, BOOL cacheable)
 {
-pcre_list *re_list_head = NULL;
-FILE *f;
-uschar *mime_subject = NULL;
+pcre_list * re_list_head = NULL;
+FILE * f;
+uschar * mime_subject = NULL;
 int mime_subject_len = 0;
-int ret;
+int ret = FAIL;
+rmark reset_point;
 
-/* reset expansion variable */
-regex_match_string = NULL;
-
-/* precompile our regexes */
-if (!(re_list_head = compile(*listptr)))
-  return FAIL;			/* no regexes -> nothing to do */
+regex_vars_clear();
 
 /* check if the file is already decoded */
 if (!mime_decoded_filename)
@@ -198,12 +221,20 @@ if (!(f = fopen(CS mime_decoded_filename, "rb")))
   return DEFER;
   }
 
-/* get 32k memory */
-mime_subject = store_get(32767);
+reset_point = store_mark();
+  {
+  /* precompile our regexes */
+  if ((re_list_head = compile(*listptr, cacheable, NULL)))
+    {
+    /* get 32k memory, tainted */
+    mime_subject = store_get(32767, GET_TAINTED);
 
-mime_subject_len = fread(mime_subject, 1, 32766, f);
+    mime_subject_len = fread(mime_subject, 1, 32766, f);
 
-ret = matcher(re_list_head, mime_subject, mime_subject_len);
+    ret = matcher(re_list_head, mime_subject, mime_subject_len);
+    }
+  }
+store_reset(reset_point);
 (void)fclose(f);
 return ret;
 }

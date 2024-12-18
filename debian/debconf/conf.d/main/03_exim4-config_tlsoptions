@@ -75,11 +75,6 @@ tls_verify_hosts = MAIN_TLS_VERIFY_HOSTS
 tls_try_verify_hosts = MAIN_TLS_TRY_VERIFY_HOSTS
 .endif
 
-.ifdef _HAVE_GNUTLS
-tls_dhparam = historic
-.endif
-
 .else
-# Don't advertise TLS if MAIN_TLS_ENABLE is not set.
-tls_advertise_hosts =
+# Use upstream defaults
 .endif

@@ -46,7 +46,7 @@ message_size_limit = MESSAGE_SIZE_LIMIT
 # scanners. The second modification is in the acl_check_data access
 # control list.
 
-# av_scanner = clamd:/var/run/clamav/clamd.ctl
+# av_scanner = clamd:/run/clamav/clamd.ctl
 
 
 # For spam scanning, there is a similar option that defines the interface to
@@ -113,7 +113,11 @@ primary_hostname = MAIN_HARDCODE_PRIMARY_HOSTNAME
 # Enable an efficiency feature.  We advertise the feature; clients
 # may request to use it.  For multi-recipient mails we then can
 # reject or accept per-user after the message is received.
-#
+# This supports recipient-dependent content filtering; without it
+# you have to temp-reject any recipients after the first that have
+# incompatible filtering, and do the filtering in the data ACL.
+# Even with this enabled, you must support the old style for peers
+# not flagging support for PRDR (visible via $prdr_requested).
 prdr_enable = true
 
 # When using an external relay tester (such as rt.njabl.org and/or the
@@ -219,4 +223,11 @@ keep_environment =
 .endif
 .ifdef MAIN_ADD_ENVIRONMENT
 add_environment = MAIN_ADD_ENVIRONMENT
+.endif
+
+.ifdef _OPT_MAIN_SMTPUTF8_ADVERTISE_HOSTS
+.ifndef MAIN_SMTPUTF8_ADVERTISE_HOSTS
+MAIN_SMTPUTF8_ADVERTISE_HOSTS =
+.endif
+smtputf8_advertise_hosts = MAIN_SMTPUTF8_ADVERTISE_HOSTS
 .endif

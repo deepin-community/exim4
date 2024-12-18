@@ -2,8 +2,8 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2018 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
-/* Copyright (c) The Exim Maintainers 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
 
 /* The default settings for Exim configuration variables. A #define without
@@ -24,15 +24,14 @@ Do not put spaces between # and the 'define'.
 #define AUTH_CRAM_MD5
 #define AUTH_CYRUS_SASL
 #define AUTH_DOVECOT
+#define AUTH_EXTERNAL
 #define AUTH_GSASL
 #define AUTH_HEIMDAL_GSSAPI
 #define AUTH_PLAINTEXT
 #define AUTH_SPA
 #define AUTH_TLS
 
-#define AUTH_VARS                     3
-
-#define DLOPEN_LOCAL_SCAN
+#define AUTH_VARS                     4
 
 #define BIN_DIRECTORY
 
@@ -47,12 +46,20 @@ Do not put spaces between # and the 'define'.
 #define DEFAULT_CRYPT              crypt
 #define DELIVER_IN_BUFFER_SIZE     8192
 #define DELIVER_OUT_BUFFER_SIZE    8192
+
+#define DISABLE_CLIENT_CMD_LOG
+#define DISABLE_D_OPTION
 #define DISABLE_DNSSEC
 #define DISABLE_DKIM
+#define DISABLE_ESMTP_LIMITS
 #define DISABLE_EVENT
-#define DISABLE_PRDR
 #define DISABLE_OCSP
-#define DISABLE_D_OPTION
+#define DISABLE_PIPE_CONNECT
+#define DISABLE_PRDR
+#define DISABLE_QUEUE_RAMP
+#define DISABLE_TLS
+#define DISABLE_TLS_RESUME
+#define DISABLE_WELLKNOWN
 
 #define ENABLE_DISABLE_FSYNC
 
@@ -94,7 +101,9 @@ Do not put spaces between # and the 'define'.
 #define LOOKUP_DNSDB
 #define LOOKUP_DSEARCH
 #define LOOKUP_IBASE
+#define LOOKUP_JSON
 #define LOOKUP_LDAP
+#define LOOKUP_LMDB
 #define LOOKUP_LSEARCH
 #define LOOKUP_MYSQL
 #define LOOKUP_NIS
@@ -142,6 +151,9 @@ Do not put spaces between # and the 'define'.
 
 #define SUPPORT_CRYPTEQ
 #define SUPPORT_DANE
+#define SUPPORT_DMARC
+#define DMARC_API 100400
+#define DMARC_TLD_FILE "/etc/exim/opendmarc.tlds"
 #define SUPPORT_I18N
 #define SUPPORT_I18N_2008
 #define SUPPORT_MAILDIR
@@ -152,7 +164,7 @@ Do not put spaces between # and the 'define'.
 #define SUPPORT_PROXY
 #define SUPPORT_SOCKS
 #define SUPPORT_SPF
-#define SUPPORT_TLS
+#define SUPPORT_SRS
 #define SUPPORT_TRANSLATE_IP_ADDRESS
 
 #define SYSLOG_LOG_PID
@@ -172,8 +184,11 @@ Do not put spaces between # and the 'define'.
 #define USE_GDBM
 #define USE_GNUTLS
 #define AVOID_GNUTLS_PKCS11
+#define USE_NDBM
+#define USE_OPENSSL
 #define USE_READLINE
 #define USE_TCP_WRAPPERS
+#define USE_SQLITE
 #define USE_TDB
 
 #define WHITELIST_D_MACROS
@@ -197,13 +212,8 @@ Do not put spaces between # and the 'define'.
 #define EXPERIMENTAL_BRIGHTMAIL
 #define EXPERIMENTAL_DCC
 #define EXPERIMENTAL_DSN_INFO
-#define EXPERIMENTAL_DMARC
-    #define DMARC_TLD_FILE "/etc/exim/opendmarc.tlds"
-#define EXPERIMENTAL_LMDB
-#define EXPERIMENTAL_PIPE_CONNECT
-#define EXPERIMENTAL_REQUIRETLS
 #define EXPERIMENTAL_QUEUEFILE
-#define EXPERIMENTAL_SRS
+#define EXPERIMENTAL_XCLIENT
 
 
 /* For developers */

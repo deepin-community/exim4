@@ -2,9 +2,11 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
-/* Copyright (c) Tom Kistner <tom@duncanthrax.net> 2003 - 2015
+/*
+ * Copyright (c) The Exim Maintainers 2016 - 2023
+ * Copyright (c) Tom Kistner <tom@duncanthrax.net> 2003 - 2015
  * License: GPL
- * Copyright (c) The Exim Maintainers 2016 - 2018
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 /* Code for setting up a MBOX style spool file inside a /scan/<msgid>
@@ -36,16 +38,15 @@ uschar buffer[16384];
 uschar *temp_string;
 uschar *mbox_path;
 FILE *mbox_file = NULL, *l_data_file = NULL, *yield = NULL;
-header_line *my_headerlist;
 struct stat statbuf;
-int i, j;
-void *reset_point;
+int j;
+rmark reset_point;
 
 mbox_path = string_sprintf("%s/scan/%s/%s.eml",
   spool_directory, message_id, message_id);
 if (mbox_fname) *mbox_fname = mbox_path;
 
-reset_point = store_get(0);
+reset_point = store_mark();
 
 /* Skip creation if already spooled out as mbox file */
 if (!spool_mbox_ok)
@@ -54,8 +55,8 @@ if (!spool_mbox_ok)
   temp_string = string_sprintf("scan/%s", message_id);
   if (!directory_make(spool_directory, temp_string, 0750, FALSE))
     {
-    log_write(0, LOG_MAIN|LOG_PANIC, "%s", string_open_failed(errno,
-      "scan directory %s/scan/%s", spool_directory, temp_string));
+    log_write(0, LOG_MAIN|LOG_PANIC, "%s",
+      string_open_failed("scan directory %s/scan/%s", spool_directory, temp_string));
     goto OUT;
     }
 
@@ -63,8 +64,8 @@ if (!spool_mbox_ok)
 
   if (!(mbox_file = modefopen(mbox_path, "wb", SPOOL_MODE)))
     {
-    log_write(0, LOG_MAIN|LOG_PANIC, "%s", string_open_failed(errno,
-      "scan file %s", mbox_path));
+    log_write(0, LOG_MAIN|LOG_PANIC, "%s",
+      string_open_failed("scan file %s", mbox_path));
     goto OUT;
     }
 
@@ -88,7 +89,7 @@ if (!spool_mbox_ok)
 
   /* write all non-deleted header lines to mbox file */
 
-  for (my_headerlist = header_list; my_headerlist;
+  for (header_line * my_headerlist = header_list; my_headerlist;
       my_headerlist = my_headerlist->next)
     if (my_headerlist->type != '*')
       if (fwrite(my_headerlist->text, my_headerlist->slen, 1, mbox_file) != 1)
@@ -99,6 +100,7 @@ if (!spool_mbox_ok)
 	}
 
   /* End headers */
+
   if (fwrite("\n", 1, 1, mbox_file) != 1)
     {
     log_write(0, LOG_MAIN|LOG_PANIC, "Error/short write while writing \
@@ -109,20 +111,18 @@ if (!spool_mbox_ok)
   /* Copy body file.  If the main receive still has it open then it is holding
   a lock, and we must not close it (which releases the lock), so just use the
   global file handle. */
+
   if (source_file_override)
     l_data_file = Ufopen(source_file_override, "rb");
   else if (spool_data_file)
     l_data_file = spool_data_file;
   else
-    {
-    message_subdir[1] = '\0';
-    for (i = 0; i < 2; i++)
+    for (int i = 0; i < 2; i++)
       {
-      message_subdir[0] = split_spool_directory == (i == 0) ? message_id[5] : 0;
+      set_subdir_str(message_subdir, message_id, i);
       temp_string = spool_fname(US"input", message_subdir, message_id, US"-D");
       if ((l_data_file = Ufopen(temp_string, "rb"))) break;
       }
-    }
 
   if (!l_data_file)
     {
@@ -141,7 +141,7 @@ if (!spool_mbox_ok)
      explicitly, because the one in the file is parted of the locked area.  */
 
   if (!source_file_override)
-    (void)fseek(l_data_file, SPOOL_DATA_START_OFFSET, SEEK_SET);
+    (void)fseek(l_data_file, spool_data_start_offset(message_id), SEEK_SET);
 
   do
     {
@@ -186,8 +186,8 @@ if (!spool_mbox_ok)
 if (  !(yield = Ufopen(mbox_path,"rb"))
    || fstat(fileno(yield), &statbuf) != 0
    )
-  log_write(0, LOG_MAIN|LOG_PANIC, "%s", string_open_failed(errno,
-    "scan file %s", mbox_path));
+  log_write(0, LOG_MAIN|LOG_PANIC, "%s",
+    string_open_failed( "scan file %s", mbox_path));
 else
   *mbox_file_size = statbuf.st_size;
 
@@ -211,37 +211,36 @@ malware_ok = 0;
 
 if (spool_mbox_ok && !f.no_mbox_unspool)
   {
-  uschar *mbox_path;
   uschar *file_path;
-  struct dirent *entry;
   DIR *tempdir;
+  rmark reset_point = store_mark();
+  uschar * mbox_path = string_sprintf("%s/scan/%s", spool_directory, spooled_message_id);
 
-  mbox_path = string_sprintf("%s/scan/%s", spool_directory, spooled_message_id);
-
-  if (!(tempdir = opendir(CS mbox_path)))
+  if (!(tempdir = exim_opendir(mbox_path)))
     {
     debug_printf("Unable to opendir(%s): %s\n", mbox_path, strerror(errno));
     /* Just in case we still can: */
-    rmdir(CS mbox_path);
+    (void) rmdir(CS mbox_path);
     return;
     }
   /* loop thru dir & delete entries */
-  while((entry = readdir(tempdir)))
+  for (struct dirent *entry; entry = readdir(tempdir); )
     {
     uschar *name = US entry->d_name;
-    int dummy;
     if (Ustrcmp(name, US".") == 0 || Ustrcmp(name, US"..") == 0) continue;
 
     file_path = string_sprintf("%s/%s", mbox_path, name);
     debug_printf("unspool_mbox(): unlinking '%s'\n", file_path);
-    dummy = unlink(CS file_path); dummy = dummy;	/* compiler quietening */
+    if (unlink(CS file_path) != 0)
+      log_write(0, LOG_MAIN|LOG_PANIC, "unlink(%s): %s", file_path, strerror(errno));
     }
 
   closedir(tempdir);
 
   /* remove directory */
-  rmdir(CS mbox_path);
-  store_reset(mbox_path);
+  if (rmdir(CS mbox_path) != 0)
+    log_write(0, LOG_MAIN|LOG_PANIC, "rmdir(%s): %s", mbox_path, strerror(errno));
+  store_reset(reset_point);
   }
 spool_mbox_ok = 0;
 }

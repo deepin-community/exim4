@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2022 - 2023 */
 /* Copyright (c) University of Cambridge 1995 - 2009 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 
@@ -30,10 +32,10 @@ Returns:      the number of bytes in the result, excluding the final zero;
 */
 
 int
-auth_xtextdecode(uschar *code, uschar **ptr)
+auth_xtextdecode(uschar * code, uschar ** ptr)
 {
-register int x;
-uschar *result = store_get(Ustrlen(code) + 1);
+int x;
+uschar * result = store_get(Ustrlen(code) + 1, code);
 *ptr = result;
 
 while ((x = (*code++)) != 0)

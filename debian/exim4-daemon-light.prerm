@@ -7,27 +7,31 @@ if [ -n "$EX4DEBUG" ]; then
   set -x
 fi
 
-case "$1" in
-	remove|upgrade)
-    	if [ -x /etc/init.d/exim4 ]; then
+# SysV Init
+if ! [ -d /run/systemd/system ] && \
+	[ -z "${DPKG_ROOT:-}" ] && \
+	[ -x /etc/init.d/exim4 ] ; then
+	case "$1" in
+		remove|upgrade)
 		if [ -n "$EX4DEBUG" ]; then
-		  netstat -tulpen
-		  ls -al /run/exim4/
-		  cat /run/exim4/exim.pid
-		  pidof exim4
+			netstat -tulpen
+			ls -al /run/exim4/
+			cat /run/exim4/exim.pid
+			pidof exim4
 		fi
 		invoke-rc.d exim4 stop
 		if [ -n "$EX4DEBUG" ]; then
-		  netstat -tulpen
-		  ls -al /run/exim4/
-		  cat /run/exim4/exim.pid
-		  pidof exim4
-		  if pidof exim4; then
-		    echo >&2 "WARN: There are some exim4 processes still running after stopping exim"
-		  fi
+			netstat -tulpen
+			ls -al /run/exim4/
+			cat /run/exim4/exim.pid
+			pidof exim4
+			if pidof exim4; then
+				echo >&2 "WARN: There are some exim4 processes still running after stopping exim"
+			fi
 		fi
-	fi
-	;;
-esac
+		;;
+	esac
+fi
+
 
 #DEBHELPER#

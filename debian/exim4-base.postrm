@@ -16,7 +16,8 @@ case "$1" in
     remove)
     # work around apt purging -base before even removing -daemon #261994.
     # postrm is good enough, we just need the init-script which is a conffile.
-    	if [ -x /etc/init.d/exim4 ]; then
+	if [ -x /etc/init.d/exim4 ] && \
+		! [ -d /run/systemd/system ] ; then
                 if [ -n "$EX4DEBUG" ]; then
                   netstat -tulpen
                   ls -al /run/exim4/
@@ -34,7 +35,8 @@ case "$1" in
                   fi
                 fi
 	fi
-	rm -f /var/lib/exim4/berkeleydbvers.txt
+	rm -f /var/lib/exim4/berkeleydbvers.txt \
+		/var/spool/exim4/gnutls-params-2048 
     ;;
     purge)
 	update-rc.d exim4 remove > /dev/null

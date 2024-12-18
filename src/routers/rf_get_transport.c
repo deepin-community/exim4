@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2009 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 #include "rf_functions.h"
@@ -44,11 +46,11 @@ rf_get_transport(uschar *tpname, transport_instance **tpptr, address_item *addr,
 {
 uschar *ss;
 BOOL expandable;
-transport_instance *tp;
 
-if (tpname == NULL)
+GET_OPTION("transport");
+if (!tpname)
   {
-  if (require_name == NULL) return TRUE;
+  if (!require_name) return TRUE;
   addr->basic_errno = ERRNO_BADTRANSPORT;
   addr->message = string_sprintf("%s unset in %s router", require_name,
     router_name);
@@ -56,30 +58,37 @@ if (tpname == NULL)
   }
 
 expandable = Ustrchr(tpname, '$') != NULL;
-if (*tpptr != NULL && !expandable) return TRUE;
+if (*tpptr && !expandable) return TRUE;
 
 if (expandable)
   {
-  ss = expand_string(tpname);
-  if (ss == NULL)
+  if (!(ss = expand_string(tpname)))
     {
     addr->basic_errno = ERRNO_BADTRANSPORT;
     addr->message = string_sprintf("failed to expand transport "
       "\"%s\" in %s router: %s", tpname, router_name, expand_string_message);
     return FALSE;
     }
+  if (is_tainted(ss))
+    {
+    log_write(0, LOG_MAIN|LOG_PANIC,
+      "attempt to use tainted value '%s' from '%s' for transport", ss, tpname);
+    addr->basic_errno = ERRNO_BADTRANSPORT;
+    /* Avoid leaking info to an attacker */
+    addr->message = US"internal configuration error";
+    return FALSE;
+    }
   }
-else ss = tpname;
+else
+  ss = tpname;
 
-for (tp = transports; tp != NULL; tp = tp->next)
-  {
+for (transport_instance * tp = transports; tp; tp = tp->next)
   if (Ustrcmp(tp->name, ss) == 0)
     {
     DEBUG(D_route) debug_printf("set transport %s\n", ss);
     *tpptr = tp;
     return TRUE;
     }
-  }
 
 addr->basic_errno = ERRNO_BADTRANSPORT;
 addr->message = string_sprintf("transport \"%s\" not found in %s router", ss,

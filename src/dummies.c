@@ -3,7 +3,9 @@
 *************************************************/
 
 /* Copyright (c) University of Cambridge 1995 - 2009 */
+/* Copyright (c) The Exim Maintainers 2021 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* This file is not part of the main Exim code. There are little bits of test
 code for some of Exim's modules, and when they are used, the module they are
@@ -20,7 +22,7 @@ alternates. */
 /* We don't have the full Exim headers dragged in, but this function
 is used for debugging output. */
 
-extern gstring * string_vformat(gstring *, BOOL, const char *, va_list);
+extern gstring * string_vformat(gstring *, unsigned, const char *, va_list);
 
 
 /*************************************************
@@ -47,8 +49,6 @@ va_start(ap, format);
 vfprintf(stderr, format, ap);
 fprintf(stderr, "\n");
 va_end(ap);
-selector = selector;     /* Keep picky compilers happy */
-flags = flags;
 }
 
 
@@ -56,7 +56,9 @@ flags = flags;
 *      Handle calls to print debug output        *
 *************************************************/
 
-/* The message just gets written to stderr
+/* The message just gets written to stderr.
+We use tainted memory to format into just so that we can handle
+tainted arguments.
 
 Arguments:
   format    a printf() format
@@ -69,12 +71,12 @@ void
 debug_printf(char *format, ...)
 {
 va_list ap;
-gstring * g = string_get(1024);
-void * reset_point = g;
+rmark reset_point = store_mark();
+gstring * g = string_get_tainted(1024, TRUE);
 
 va_start(ap, format);
 
-if (!string_vformat(g, FALSE, format, ap))
+if (!string_vformat(g, 0, format, ap))
   {
   char * s = "**** debug string overflowed buffer ****\n";
   char * p = CS g->s + g->ptr;
@@ -101,7 +103,6 @@ extern int sigalrm_seen;
 void
 sigalrm_handler(int sig)
 {
-sig = sig;            /* Keep picky compilers happy */
 sigalrm_seen = TRUE;
 }
 
@@ -114,19 +115,12 @@ sigalrm_seen = TRUE;
 int
 header_checkname(void *h, char *name, int len)
 {
-h = h;            /* Keep picky compilers happy */
-name = name;
-len = len;
 return 0;
 }
 
 void
 directory_make(char *parent, char *name, int mode, int panic)
 {
-parent = parent;  /* Keep picky compilers happy */
-name = name;
-mode = mode;
-panic = panic;
 }
 
 void
@@ -138,10 +132,6 @@ host_build_sender_fullhost(void) { }
 char *
 host_ntoa(int type, const void *arg, char *buffer, int *portptr)
 {
-type = type;      /* Keep picky compilers happy */
-arg = arg;
-buffer = buffer;
-portptr = portptr;
 return NULL;
 }
 #endif

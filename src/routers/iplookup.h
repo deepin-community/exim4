@@ -3,7 +3,9 @@
 *************************************************/
 
 /* Copyright (c) University of Cambridge 1995 - 2009 */
+/* Copyright (c) The Exim Maintainers 2021 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 /* Private structure for the private options. */
@@ -17,7 +19,7 @@ typedef struct {
   uschar *query;
   uschar *response_pattern;
   uschar *reroute;
-  const pcre *re_response_pattern;
+  const pcre2_code *re_response_pattern;
   BOOL  optional;
 } iplookup_router_options_block;
 

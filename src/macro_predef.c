@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) Jeremy Harris 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Create a static data structure with the predefined macros, to be
 included in the main Exim build */
@@ -70,9 +72,8 @@ void
 options_from_list(optionlist * opts, unsigned nopt,
   const uschar * section, uschar * group)
 {
-int i;
 const uschar * s;
-uschar buf[64];
+uschar buf[EXIM_DRIVERNAME_MAX];
 
 /* The 'previously-defined-substring' rule for macros in config file
 lines is done thus for these builtin macros: we know that the table
@@ -81,7 +82,7 @@ of the macros list is in reverse-alpha (we prepend them) - so longer
 macros that have substrings are always discovered first during
 expansion. */
 
-for (i = 0; i < nopt; i++)  if (*(s = US opts[i].name) && *s != '*')
+for (int i = 0; i < nopt; i++)  if (*(s = US opts[i].name) && *s != '*')
   {
   if (group)
     spf(buf, sizeof(buf), CUS"_OPT_%T_%T_%T", section, group, s);
@@ -118,6 +119,12 @@ due to conflicts with other common macros. */
 #ifdef SUPPORT_PAM
   builtin_macro_create(US"_HAVE_PAM");
 #endif
+#ifdef RADIUS_CONFIG_FILE
+  builtin_macro_create(US"_HAVE_RADIUS");
+#endif
+#ifdef CYRUS_PWCHECK_SOCKET
+  builtin_macro_create(US"_HAVE_PWCHECK");
+#endif
 #ifdef EXIM_PERL
   builtin_macro_create(US"_HAVE_PERL");
 #endif
@@ -127,7 +134,7 @@ due to conflicts with other common macros. */
 #ifdef USE_TCP_WRAPPERS
   builtin_macro_create(US"_HAVE_TCPWRAPPERS");
 #endif
-#ifdef SUPPORT_TLS
+#ifndef DISABLE_TLS
   builtin_macro_create(US"_HAVE_TLS");
 # ifdef USE_GNUTLS
   builtin_macro_create(US"_HAVE_GNUTLS");
@@ -147,8 +154,14 @@ due to conflicts with other common macros. */
 #ifndef DISABLE_DKIM
   builtin_macro_create(US"_HAVE_DKIM");
 #endif
+#ifdef SUPPORT_DMARC
+  builtin_macro_create(US"_HAVE_DMARC");
+#endif
 #ifndef DISABLE_DNSSEC
   builtin_macro_create(US"_HAVE_DNSSEC");
+#endif
+#ifndef DISABLE_ESMTP_LIMITS
+  builtin_macro_create(US"_HAVE_ESMTP_LIMITS");
 #endif
 #ifndef DISABLE_EVENT
   builtin_macro_create(US"_HAVE_EVENT");
@@ -159,6 +172,9 @@ due to conflicts with other common macros. */
 #ifndef DISABLE_OCSP
   builtin_macro_create(US"_HAVE_OCSP");
 #endif
+#ifndef DISABLE_PIPE_CONNECT
+  builtin_macro_create(US"_HAVE_PIPE_CONNECT");
+#endif
 #ifndef DISABLE_PRDR
   builtin_macro_create(US"_HAVE_PRDR");
 #endif
@@ -168,16 +184,16 @@ due to conflicts with other common macros. */
 #ifdef SUPPORT_SOCKS
   builtin_macro_create(US"_HAVE_SOCKS");
 #endif
+#if defined(SUPPORT_SRS)
+  builtin_macro_create(US"_HAVE_NATIVE_SRS");	/* beware clash with _HAVE_SRS */
+#endif
 #ifdef TCP_FASTOPEN
   builtin_macro_create(US"_HAVE_TCP_FASTOPEN");
-#endif
-#ifdef EXPERIMENTAL_LMDB
-  builtin_macro_create(US"_HAVE_LMDB");
 #endif
 #ifdef SUPPORT_SPF
   builtin_macro_create(US"_HAVE_SPF");
 #endif
-#ifdef EXPERIMENTAL_SRS
+#ifdef SUPPORT_SRS
   builtin_macro_create(US"_HAVE_SRS");
 #endif
 #ifdef EXPERIMENTAL_ARC
@@ -192,17 +208,29 @@ due to conflicts with other common macros. */
 #ifdef EXPERIMENTAL_DCC
   builtin_macro_create(US"_HAVE_DCC");
 #endif
-#ifdef EXPERIMENTAL_DMARC
-  builtin_macro_create(US"_HAVE_DMARC");
-#endif
 #ifdef EXPERIMENTAL_DSN_INFO
   builtin_macro_create(US"_HAVE_DSN_INFO");
 #endif
-#ifdef EXPERIMENTAL_REQUIRETLS
-  builtin_macro_create(US"_HAVE_REQTLS");
+#ifndef DISABLE_TLS_RESUME
+  builtin_macro_create(US"_HAVE_TLS_RESUME");
 #endif
-#ifdef EXPERIMENTAL_PIPE_CONNECT
-  builtin_macro_create(US"_HAVE_PIPE_CONNECT");
+#ifndef DISABLE_WELLKNOWN
+  builtin_macro_create(US"_HAVE_WELLKNOWN");
+#endif
+#ifdef EXPERIMENTAL_XCLIENT
+  builtin_macro_create(US"_HAVE_XCLIENT");
+#endif
+
+#ifdef USE_SQLITE
+  builtin_macro_create(US"_HAVE_HINTS_SQLITE");
+#elif defined(USE_TDB)
+  builtin_macro_create(US"_HAVE_HINTS_TDB");
+#elif defined(USE_DB)
+  builtin_macro_create(US"_HAVE_HINTS_BDB");
+#elif defined(USE_GDBM)
+  builtin_macro_create(US"_HAVE_HINTS_GDBM");
+#else
+  builtin_macro_create(US"_HAVE_HINTS_NDBM");
 #endif
 
 #ifdef LOOKUP_LSEARCH
@@ -223,11 +251,15 @@ due to conflicts with other common macros. */
 #ifdef LOOKUP_IBASE
   builtin_macro_create(US"_HAVE_LOOKUP_IBASE");
 #endif
+#ifdef LOOKUP_LMDB
+  builtin_macro_create(US"_HAVE_LMDB");
+  builtin_macro_create(US"_HAVE_LOOKUP_LMDB");
+#endif
+#ifdef LOOKUP_LDAP
+  builtin_macro_create(US"_HAVE_LOOKUP_JSON");
+#endif
 #ifdef LOOKUP_LDAP
   builtin_macro_create(US"_HAVE_LOOKUP_LDAP");
-#endif
-#ifdef EXPERIMENTAL_LMDB
-  builtin_macro_create(US"_HAVE_LOOKUP_LMDB");
 #endif
 #ifdef LOOKUP_MYSQL
   builtin_macro_create(US"_HAVE_LOOKUP_MYSQL");
@@ -272,11 +304,32 @@ due to conflicts with other common macros. */
 # endif
 #endif
 
+features_acl();
+features_crypto();
+
 #ifdef WITH_CONTENT_SCAN
 features_malware();
 #endif
+}
 
-features_crypto();
+static void
+exp_features(void)
+{
+#ifdef EXPERIMENTAL_ARC
+  builtin_macro_create(US"_EXP_ARC");
+#endif
+#ifdef EXPERIMENTAL_BRIGHTMAIL
+  builtin_macro_create(US"_EXP_BMI");
+#endif
+#ifdef EXPERIMENTAL_DCC
+  builtin_macro_create(US"_EXP_DCC");
+#endif
+#ifdef EXPERIMENTAL_DSN_INFO
+  builtin_macro_create(US"_EXP_DSNI");
+#endif
+#ifdef EXPERIMENTAL_QUEUEFILE
+  builtin_macro_create(US"_EXP_QUEUEFILE");
+#endif
 }
 
 
@@ -288,7 +341,7 @@ options_routers();
 options_transports();
 options_auths();
 options_logging();
-#if defined(SUPPORT_TLS) && !defined(USE_GNUTLS)
+#ifndef DISABLE_TLS
 options_tls();
 #endif
 }
@@ -307,7 +360,9 @@ main(void)
 {
 printf("#include \"exim.h\"\n");
 features();
+exp_features();
 options();
+expansions();
 params();
 
 printf("macro_item * macros = &p%d;\n", mp_index-1);

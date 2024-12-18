@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 
@@ -28,7 +30,7 @@ static redis_connection *redis_connections = NULL;
 
 
 static void *
-redis_open(uschar *filename, uschar **errmsg)
+redis_open(const uschar * filename, uschar ** errmsg)
 {
 return (void *)(1);
 }
@@ -47,7 +49,7 @@ redis_connection *cn;
 while ((cn = redis_connections))
   {
   redis_connections = cn->next;
-  DEBUG(D_lookup) debug_printf("close REDIS connection: %s\n", cn->server);
+  DEBUG(D_lookup) debug_printf_indent("close REDIS connection: %s\n", cn->server);
   redisFree(cn->handle);
   }
 }
@@ -63,6 +65,7 @@ single server.
       errmsg       where to point an error message
       defer_break  TRUE if no more servers are to be tried after DEFER
       do_cache     set false if data is changed
+      opts	   options
 
     The server string is of the form "host/dbnumber/password". The host can be
     host:port. This string is in a nextinlist temporary buffer, so can be
@@ -73,7 +76,7 @@ single server.
 
 static int
 perform_redis_search(const uschar *command, uschar *server, uschar **resultptr,
-  uschar **errmsg, BOOL *defer_break, uint *do_cache)
+  uschar **errmsg, BOOL *defer_break, uint *do_cache, const uschar * opts)
 {
 redisContext *redis_handle = NULL;        /* Keep compilers happy */
 redisReply *redis_reply = NULL;
@@ -92,7 +95,7 @@ We can write to the string, since it is in a nextinlist temporary buffer.
 This copy is also used for debugging output.  */
 
 memset(sdata, 0, sizeof(sdata)) /* Set all to NULL */;
-for (i = 2; i > 0; i--)
+for (int i = 2; i > 0; i--)
   {
   uschar *pp = Ustrrchr(server, '/');
 
@@ -154,7 +157,7 @@ if (!cn)
     }
 
   DEBUG(D_lookup)
-    debug_printf("REDIS new connection: host=%s port=%d socket=%s database=%s\n",
+    debug_printf_indent("REDIS new connection: host=%s port=%d socket=%s database=%s\n",
       sdata[0], port, socket, sdata[1]);
 
   /* Get store for a new handle, initialize it, and connect to the server */
@@ -163,13 +166,13 @@ if (!cn)
     socket ? redisConnectUnix(CCS socket) : redisConnect(CCS server, port);
   if (!redis_handle)
     {
-    *errmsg = string_sprintf("REDIS connection failed");
+    *errmsg = US"REDIS connection failed";
     *defer_break = FALSE;
     goto REDIS_EXIT;
     }
 
   /* Add the connection to the cache */
-  cn = store_get(sizeof(redis_connection));
+  cn = store_get(sizeof(redis_connection), GET_UNTAINTED);
   cn->server = server_copy;
   cn->handle = redis_handle;
   cn->next = redis_connections;
@@ -178,7 +181,7 @@ if (!cn)
 else
   {
   DEBUG(D_lookup)
-    debug_printf("REDIS using cached connection for %s\n", server_copy);
+    debug_printf_indent("REDIS using cached connection for %s\n", server_copy);
 }
 
 /* Authenticate if there is a password */
@@ -199,18 +202,17 @@ if(sdata[1])
     *defer_break = FALSE;
     goto REDIS_EXIT;
     }
-  DEBUG(D_lookup) debug_printf("REDIS: Selecting database=%s\n", sdata[1]);
+  DEBUG(D_lookup) debug_printf_indent("REDIS: Selecting database=%s\n", sdata[1]);
   }
 
 /* split string on whitespace into argv */
   {
   uschar * argv[32];
-  int i;
   const uschar * s = command;
-  int siz, ptr;
+  int siz, ptr, i;
   uschar c;
 
-  while (isspace(*s)) s++;
+  Uskip_whitespace(&s);
 
   for (i = 0; *s && i < nele(argv); i++)
     {
@@ -221,15 +223,14 @@ if(sdata[1])
 	g = string_catn(g, s, 1);
     argv[i] = string_from_gstring(g);
 
-    DEBUG(D_lookup) debug_printf("REDIS: argv[%d] '%s'\n", i, argv[i]);
-    while (isspace(*s)) s++;
+    DEBUG(D_lookup) debug_printf_indent("REDIS: argv[%d] '%s'\n", i, argv[i]);
+    Uskip_whitespace(&s);
     }
 
   /* Run the command. We use the argv form rather than plain as that parses
   into args by whitespace yet has no escaping mechanism. */
 
-  redis_reply = redisCommandArgv(redis_handle, i, (const char **) argv, NULL);
-  if (!redis_reply)
+  if (!(redis_reply = redisCommandArgv(redis_handle, i, CCSS argv, NULL)))
     {
     *errmsg = string_sprintf("REDIS: query failed: %s\n", redis_handle->errstr);
     *defer_break = FALSE;
@@ -246,7 +247,7 @@ switch (redis_reply->type)
     if (Ustrncmp(redis_reply->str, "MOVED", 5) == 0)
       {
       DEBUG(D_lookup)
-        debug_printf("REDIS: cluster redirect %s\n", redis_reply->str);
+        debug_printf_indent("REDIS: cluster redirect %s\n", redis_reply->str);
       /* follow redirect
       This is cheating, we simply set defer_break = FALSE to move on to
       the next server in the redis_servers list */
@@ -261,7 +262,7 @@ switch (redis_reply->type)
 
   case REDIS_REPLY_NIL:
     DEBUG(D_lookup)
-      debug_printf("REDIS: query was not one that returned any data\n");
+      debug_printf_indent("REDIS: query was not one that returned any data\n");
     result = string_catn(result, US"", 1);
     *do_cache = 0;
     goto REDIS_EXIT;
@@ -281,7 +282,7 @@ switch (redis_reply->type)
     /* NOTE: For now support 1 nested array result. If needed a limitless
     result can be parsed */
 
-    for (i = 0; i < redis_reply->elements; i++)
+    for (int i = 0; i < redis_reply->elements; i++)
       {
       entry = redis_reply->element[i];
 
@@ -297,7 +298,7 @@ switch (redis_reply->type)
 	  result = string_catn(result, US entry->str, entry->len);
 	  break;
 	case REDIS_REPLY_ARRAY:
-	  for (j = 0; j < entry->elements; j++)
+	  for (int j = 0; j < entry->elements; j++)
 	    {
 	    tentry = entry->element[j];
 
@@ -314,18 +315,18 @@ switch (redis_reply->type)
 		break;
 	      case REDIS_REPLY_ARRAY:
 		DEBUG(D_lookup)
-		  debug_printf("REDIS: result has nesting of arrays which"
+		  debug_printf_indent("REDIS: result has nesting of arrays which"
 		    " is not supported. Ignoring!\n");
 		break;
 	      default:
-		DEBUG(D_lookup) debug_printf(
+		DEBUG(D_lookup) debug_printf_indent(
 			  "REDIS: result has unsupported type. Ignoring!\n");
 		break;
 	      }
 	    }
 	    break;
 	  default:
-	    DEBUG(D_lookup) debug_printf("REDIS: query returned unsupported type\n");
+	    DEBUG(D_lookup) debug_printf_indent("REDIS: query returned unsupported type\n");
 	    break;
 	  }
 	}
@@ -334,7 +335,7 @@ switch (redis_reply->type)
 
 
 if (result)
-  store_reset(result->s + result->ptr + 1);
+  gstring_release_unused(result);
 else
   {
   yield = FAIL;
@@ -357,7 +358,7 @@ if (result)
   }
 else
   {
-  DEBUG(D_lookup) debug_printf("%s\n", *errmsg);
+  DEBUG(D_lookup) debug_printf_indent("%s\n", *errmsg);
   /* NOTE: Required to close connection since it needs to be reopened */
   return yield;      /* FAIL or DEFER */
   }
@@ -376,13 +377,13 @@ else
  */
 
 static int
-redis_find(void *handle __attribute__((unused)),
-  uschar *filename __attribute__((unused)),
-  const uschar *command, int length, uschar **result, uschar **errmsg,
-  uint *do_cache)
+redis_find(void * handle __attribute__((unused)),
+  const uschar * filename __attribute__((unused)),
+  const uschar * command, int length, uschar ** result, uschar ** errmsg,
+  uint * do_cache, const uschar * opts)
 {
 return lf_sqlperform(US"Redis", US"redis_servers", redis_servers, command,
-  result, errmsg, do_cache, perform_redis_search);
+  result, errmsg, do_cache, opts, perform_redis_search);
 }
 
 
@@ -399,27 +400,25 @@ whitespace into an argument.
 Arguments:
   s          the string to be quoted
   opt        additional option text or NULL if none
+  idx	     lookup type index
 
 Returns:     the processed string or NULL for a bad option
 */
 
 static uschar *
-redis_quote(uschar *s, uschar *opt)
+redis_quote(uschar * s, uschar * opt, unsigned idx)
 {
-register int c;
-int count = 0;
-uschar *t = s;
-uschar *quoted;
+int c, count = 0;
+uschar * t = s, * quoted;
 
 if (opt) return NULL;     /* No options recognized */
 
-while ((c = *t++) != 0)
+while ((c = *t++))
   if (isspace(c) || c == '\\') count++;
 
-if (count == 0) return s;
-t = quoted = store_get(Ustrlen(s) + count + 1);
+t = quoted = store_get_quoted(Ustrlen(s) + count + 1, s, idx);
 
-while ((c = *s++) != 0)
+while ((c = *s++))
   {
   if (isspace(c) || c == '\\') *t++ = '\\';
   *t++ = c;
@@ -435,29 +434,31 @@ return quoted;
 *************************************************/
 #include "../version.h"
 
-void
-redis_version_report(FILE *f)
+gstring *
+redis_version_report(gstring * g)
 {
-fprintf(f, "Library version: REDIS: Compile: %d [%d]\n",
-               HIREDIS_MAJOR, HIREDIS_MINOR);
+g = string_fmt_append(g,
+  "Library version: REDIS: Compile: %d [%d]\n", HIREDIS_MAJOR, HIREDIS_MINOR);
 #ifdef DYNLOOKUP
-fprintf(f, "                        Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g,
+  "                        Exim version %s\n", EXIM_VERSION_STR);
 #endif
+return g;
 }
 
 
 
 /* These are the lookup_info blocks for this driver */
 static lookup_info redis_lookup_info = {
-  US"redis",                     /* lookup name */
-  lookup_querystyle,             /* query-style lookup */
-  redis_open,                    /* open function */
-  NULL,                          /* no check function */
-  redis_find,                    /* find function */
-  NULL,                          /* no close function */
-  redis_tidy,                    /* tidy function */
-  redis_quote,                   /* quoting function */
-  redis_version_report           /* version reporting */
+  .name = US"redis",			/* lookup name */
+  .type = lookup_querystyle,		/* query-style lookup */
+  .open = redis_open,			/* open function */
+  .check = NULL,			/* no check function */
+  .find = redis_find,			/* find function */
+  .close = NULL,			/* no close function */
+  .tidy = redis_tidy,			/* tidy function */
+  .quote = redis_quote,			/* quoting function */
+  .version_report = redis_version_report           /* version reporting */
 };
 
 #ifdef DYNLOOKUP

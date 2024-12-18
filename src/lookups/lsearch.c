@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 #include "lf_functions.h"
@@ -26,16 +28,11 @@ enum {
 /* See local README for interface description */
 
 static void *
-lsearch_open(uschar *filename, uschar **errmsg)
+lsearch_open(const uschar * filename, uschar ** errmsg)
 {
-FILE *f = Ufopen(filename, "rb");
-if (f == NULL)
-  {
-  int save_errno = errno;
-  *errmsg = string_open_failed(errno, "%s for linear search", filename);
-  errno = save_errno;
-  return NULL;
-  }
+FILE * f = Ufopen(filename, "rb");
+if (!f)
+  *errmsg = string_open_failed("%s for linear search", filename);
 return f;
 }
 
@@ -46,7 +43,7 @@ return f;
 *************************************************/
 
 static BOOL
-lsearch_check(void *handle, uschar *filename, int modemask, uid_t *owners,
+lsearch_check(void *handle, const uschar *filename, int modemask, uid_t *owners,
   gid_t *owngroups, uschar **errmsg)
 {
 return lf_check_file(fileno((FILE *)handle), filename, S_IFREG, modemask,
@@ -71,15 +68,25 @@ fit into the fixed sized buffer. Most of the time this will never be exercised,
 but people do occasionally do weird things. */
 
 static int
-internal_lsearch_find(void *handle, uschar *filename, const uschar *keystring,
-  int length, uschar **result, uschar **errmsg, int type)
+internal_lsearch_find(void * handle, const uschar * filename,
+  const uschar * keystring, int length, uschar ** result, uschar ** errmsg,
+  int type, const uschar * opts)
 {
-FILE *f = (FILE *)handle;
-BOOL last_was_eol = TRUE;
-BOOL this_is_eol = TRUE;
+FILE *f = handle;
+BOOL ret_full = FALSE;
 int old_pool = store_pool;
-void *reset_point = NULL;
+rmark reset_point = NULL;
 uschar buffer[4096];
+
+if (opts)
+  {
+  int sep = ',';
+  uschar * ele;
+
+  while ((ele = string_nextinlist(&opts, &sep, NULL, 0)))
+    if (Ustrcmp(ele, "ret=full") == 0)
+      { ret_full = TRUE; break; }
+  }
 
 /* Wildcard searches may use up some store, because of expansions. We don't
 want them to fill up our search store. What we do is set the pool to the main
@@ -87,17 +94,14 @@ pool and get a point to reset to later. Wildcard searches could also issue
 lookups, but internal_search_find will take care of that, and the cache will be
 safely stored in the search pool again. */
 
-if(type == LSEARCH_WILD || type == LSEARCH_NWILD)
+if (type == LSEARCH_WILD || type == LSEARCH_NWILD)
   {
   store_pool = POOL_MAIN;
-  reset_point = store_get(0);
+  reset_point = store_mark();
   }
 
-filename = filename;  /* Keep picky compilers happy */
-errmsg = errmsg;
-
 rewind(f);
-for (last_was_eol = TRUE;
+for (BOOL this_is_eol, last_was_eol = TRUE;
      Ufgets(buffer, sizeof(buffer), f) != NULL;
      last_was_eol = this_is_eol)
   {
@@ -143,21 +147,22 @@ for (last_was_eol = TRUE;
   if (*s == '\"')
     {
     uschar *t = s++;
-    while (*s != 0 && *s != '\"')
+    while (*s && *s != '\"')
       {
-      if (*s == '\\') *t++ = string_interpret_escape(CUSS &s);
-        else *t++ = *s;
+      *t++ = *s == '\\' ? string_interpret_escape(CUSS &s) : *s;
       s++;
       }
-    if (*s != 0) s++;               /* Past terminating " */
     linekeylength = t - buffer;
+    if (*s) s++;			/* Past terminating " */
+    if (ret_full)
+      memmove(t, s, Ustrlen(s)+1);	/* copy the rest of line also */
     }
 
   /* Otherwise it is terminated by a colon or white space */
 
   else
     {
-    while (*s != 0 && *s != ':' && !isspace(*s)) s++;
+    while (*s && *s != ':' && !isspace(*s)) s++;
     linekeylength = s - buffer;
     }
 
@@ -168,9 +173,9 @@ for (last_was_eol = TRUE;
     /* A plain lsearch treats each key as a literal */
 
     case LSEARCH_PLAIN:
-    if (linekeylength != length || strncmpic(buffer, keystring, length) != 0)
-      continue;
-    break;      /* Key matched */
+      if (linekeylength != length || strncmpic(buffer, keystring, length) != 0)
+	continue;
+      break;      /* Key matched */
 
     /* A wild lsearch treats each key as a possible wildcarded string; no
     expansion is done for nwildlsearch. */
@@ -187,7 +192,7 @@ for (last_was_eol = TRUE;
         UCHAR_MAX+1,              /* Single-item list */
         NULL,                     /* No anchor */
         NULL,                     /* No caching */
-        MCL_STRING + ((type == LSEARCH_WILD)? 0:MCL_NOEXPAND),
+        MCL_STRING + (type == LSEARCH_WILD ? 0 : MCL_NOEXPAND),
         TRUE,                     /* Caseless */
         NULL);
       buffer[linekeylength] = save;
@@ -195,53 +200,53 @@ for (last_was_eol = TRUE;
       if (rc == DEFER) return DEFER;
       }
 
-    /* The key has matched. If the search involved a regular expression, it
-    might have caused numerical variables to be set. However, their values will
-    be in the wrong storage pool for external use. Copying them to the standard
-    pool is not feasible because of the caching of lookup results - a repeated
-    lookup will not match the regular expression again. Therefore, we flatten
-    all numeric variables at this point. */
+      /* The key has matched. If the search involved a regular expression, it
+      might have caused numerical variables to be set. However, their values will
+      be in the wrong storage pool for external use. Copying them to the standard
+      pool is not feasible because of the caching of lookup results - a repeated
+      lookup will not match the regular expression again. Therefore, we drop
+      all numeric variables at this point. */
 
-    expand_nmax = -1;
-    break;
+      expand_nmax = -1;
+      break;
 
     /* Compare an ip address against a list of network/ip addresses. We have to
     allow for the "*" case specially. */
 
     case LSEARCH_IP:
-    if (linekeylength == 1 && buffer[0] == '*')
-      {
-      if (length != 1 || keystring[0] != '*') continue;
-      }
-    else if (length == 1 && keystring[0] == '*') continue;
-    else
-      {
-      int maskoffset;
-      int save = buffer[linekeylength];
-      buffer[linekeylength] = 0;
-      if (string_is_ip_address(buffer, &maskoffset) == 0 ||
-          !host_is_in_net(keystring, buffer, maskoffset)) continue;
-      buffer[linekeylength] = save;
-      }
-    break;      /* Key matched */
+      if (linekeylength == 1 && buffer[0] == '*')
+	{
+	if (length != 1 || keystring[0] != '*') continue;
+	}
+      else if (length == 1 && keystring[0] == '*') continue;
+      else
+	{
+	int maskoffset;
+	int save = buffer[linekeylength];
+	buffer[linekeylength] = 0;
+	if (string_is_ip_address(buffer, &maskoffset) == 0 ||
+	    !host_is_in_net(keystring, buffer, maskoffset)) continue;
+	buffer[linekeylength] = save;
+	}
+      break;      /* Key matched */
     }
 
   /* The key has matched. Skip spaces after the key, and allow an optional
   colon after the spaces. This is an odd specification, but it's for
   compatibility. */
 
-  while (isspace((uschar)*s)) s++;
-  if (*s == ':')
-    {
-    s++;
-    while (isspace((uschar)*s)) s++;
-    }
+  if (!ret_full)
+    if (Uskip_whitespace(&s) == ':')
+      {
+      s++;
+      Uskip_whitespace(&s);
+      }
 
   /* Reset dynamic store, if we need to, and revert to the search pool */
 
   if (reset_point)
     {
-    store_reset(reset_point);
+    reset_point = store_reset(reset_point);
     store_pool = old_pool;
     }
 
@@ -254,7 +259,9 @@ for (last_was_eol = TRUE;
 
   this_is_comment = FALSE;
   yield = string_get(100);
-  if (*s != 0)
+  if (ret_full)
+    yield = string_cat(yield, buffer);
+  else if (*s)
     yield = string_cat(yield, s);
 
   /* Now handle continuations */
@@ -284,8 +291,8 @@ for (last_was_eol = TRUE;
       this_is_comment = (this_is_comment || (buffer[0] == 0 || buffer[0] == '#'));
       if (this_is_comment) continue;
       if (!isspace((uschar)buffer[0])) break;
-      while (isspace((uschar)*s)) s++;
-      *(--s) = ' ';
+      Uskip_whitespace(&s);
+      *--s = ' ';
       }
     if (this_is_comment) continue;
 
@@ -294,7 +301,7 @@ for (last_was_eol = TRUE;
     yield = string_cat(yield, s);
     }
 
-  store_reset(yield->s + yield->ptr + 1);
+  gstring_release_unused(yield);
   *result = string_from_gstring(yield);
   return OK;
   }
@@ -318,12 +325,12 @@ return FAIL;
 /* See local README for interface description */
 
 static int
-lsearch_find(void *handle, uschar *filename, const uschar *keystring, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+lsearch_find(void * handle, const uschar * filename, const uschar * keystring,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
-do_cache = do_cache;  /* Keep picky compilers happy */
 return internal_lsearch_find(handle, filename, keystring, length, result,
-  errmsg, LSEARCH_PLAIN);
+  errmsg, LSEARCH_PLAIN, opts);
 }
 
 
@@ -335,12 +342,12 @@ return internal_lsearch_find(handle, filename, keystring, length, result,
 /* See local README for interface description */
 
 static int
-wildlsearch_find(void *handle, uschar *filename, const uschar *keystring, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+wildlsearch_find(void * handle, const uschar * filename, const uschar * keystring,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
-do_cache = do_cache;  /* Keep picky compilers happy */
 return internal_lsearch_find(handle, filename, keystring, length, result,
-  errmsg, LSEARCH_WILD);
+  errmsg, LSEARCH_WILD, opts);
 }
 
 
@@ -352,12 +359,12 @@ return internal_lsearch_find(handle, filename, keystring, length, result,
 /* See local README for interface description */
 
 static int
-nwildlsearch_find(void *handle, uschar *filename, const uschar *keystring, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+nwildlsearch_find(void * handle, const uschar * filename, const uschar * keystring,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
-do_cache = do_cache;  /* Keep picky compilers happy */
 return internal_lsearch_find(handle, filename, keystring, length, result,
-  errmsg, LSEARCH_NWILD);
+  errmsg, LSEARCH_NWILD, opts);
 }
 
 
@@ -370,23 +377,19 @@ return internal_lsearch_find(handle, filename, keystring, length, result,
 /* See local README for interface description */
 
 static int
-iplsearch_find(void *handle, uschar *filename, const uschar *keystring, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+iplsearch_find(void * handle, uschar const * filename, const uschar * keystring,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
-do_cache = do_cache;  /* Keep picky compilers happy */
 if ((length == 1 && keystring[0] == '*') ||
     string_is_ip_address(keystring, NULL) != 0)
-  {
   return internal_lsearch_find(handle, filename, keystring, length, result,
-    errmsg, LSEARCH_IP);
-  }
-else
-  {
-  *errmsg = string_sprintf("\"%s\" is not a valid iplsearch key (an IP "
-    "address, with optional CIDR mask, is wanted): "
-    "in a host list, use net-iplsearch as the search type", keystring);
-  return DEFER;
-  }
+    errmsg, LSEARCH_IP, opts);
+
+*errmsg = string_sprintf("\"%s\" is not a valid iplsearch key (an IP "
+"address, with optional CIDR mask, is wanted): "
+"in a host list, use net-iplsearch as the search type", keystring);
+return DEFER;
 }
 
 
@@ -414,61 +417,62 @@ lsearch_close(void *handle)
 
 #include "../version.h"
 
-void
-lsearch_version_report(FILE *f)
+gstring *
+lsearch_version_report(gstring * g)
 {
 #ifdef DYNLOOKUP
-fprintf(f, "Library version: lsearch: Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g, "Library version: lsearch: Exim version %s\n", EXIM_VERSION_STR);
 #endif
+return g;
 }
 
 
 static lookup_info iplsearch_lookup_info = {
-  US"iplsearch",                 /* lookup name */
-  lookup_absfile,                /* uses absolute file name */
-  lsearch_open,                  /* open function */
-  lsearch_check,                 /* check function */
-  iplsearch_find,                /* find function */
-  lsearch_close,                 /* close function */
-  NULL,                          /* no tidy function */
-  NULL,                          /* no quoting function */
-  NULL                           /* no version reporting (redundant) */
+  .name = US"iplsearch",		/* lookup name */
+  .type = lookup_absfile,		/* uses absolute file name */
+  .open = lsearch_open,			/* open function */
+  .check = lsearch_check,		/* check function */
+  .find = iplsearch_find,		/* find function */
+  .close = lsearch_close,		/* close function */
+  .tidy = NULL,				/* no tidy function */
+  .quote = NULL,			/* no quoting function */
+  .version_report = NULL                           /* no version reporting (redundant) */
 };
 
 static lookup_info lsearch_lookup_info = {
-  US"lsearch",                   /* lookup name */
-  lookup_absfile,                /* uses absolute file name */
-  lsearch_open,                  /* open function */
-  lsearch_check,                 /* check function */
-  lsearch_find,                  /* find function */
-  lsearch_close,                 /* close function */
-  NULL,                          /* no tidy function */
-  NULL,                          /* no quoting function */
-  lsearch_version_report         /* version reporting */
+  .name = US"lsearch",			/* lookup name */
+  .type = lookup_absfile,		/* uses absolute file name */
+  .open = lsearch_open,			/* open function */
+  .check = lsearch_check,		/* check function */
+  .find = lsearch_find,			/* find function */
+  .close = lsearch_close,		/* close function */
+  .tidy = NULL,				/* no tidy function */
+  .quote = NULL,			/* no quoting function */
+  .version_report = lsearch_version_report         /* version reporting */
 };
 
 static lookup_info nwildlsearch_lookup_info = {
-  US"nwildlsearch",              /* lookup name */
-  lookup_absfile,                /* uses absolute file name */
-  lsearch_open,                  /* open function */
-  lsearch_check,                 /* check function */
-  nwildlsearch_find,             /* find function */
-  lsearch_close,                 /* close function */
-  NULL,                          /* no tidy function */
-  NULL,                          /* no quoting function */
-  NULL                           /* no version reporting (redundant) */
+  .name = US"nwildlsearch",		/* lookup name */
+  .type = lookup_absfile,		/* uses absolute file name */
+  .open = lsearch_open,			/* open function */
+  .check = lsearch_check,		/* check function */
+  .find = nwildlsearch_find,		/* find function */
+  .close = lsearch_close,		/* close function */
+  .tidy = NULL,				/* no tidy function */
+  .quote = NULL,			/* no quoting function */
+  .version_report = NULL                           /* no version reporting (redundant) */
 };
 
 static lookup_info wildlsearch_lookup_info = {
-  US"wildlsearch",               /* lookup name */
-  lookup_absfile,                /* uses absolute file name */
-  lsearch_open,                  /* open function */
-  lsearch_check,                 /* check function */
-  wildlsearch_find,              /* find function */
-  lsearch_close,                 /* close function */
-  NULL,                          /* no tidy function */
-  NULL,                          /* no quoting function */
-  NULL                           /* no version reporting (redundant) */
+  .name = US"wildlsearch",		/* lookup name */
+  .type = lookup_absfile,		/* uses absolute file name */
+  .open = lsearch_open,			/* open function */
+  .check = lsearch_check,		/* check function */
+  .find = wildlsearch_find,		/* find function */
+  .close = lsearch_close,		/* close function */
+  .tidy = NULL,				/* no tidy function */
+  .quote = NULL,			/* no quoting function */
+  .version_report = NULL                           /* no version reporting (redundant) */
 };
 
 #ifdef DYNLOOKUP

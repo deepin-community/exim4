@@ -2,18 +2,25 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "exim.h"
+
+/* We have buffers holding path names for database files.
+PATH_MAX could be used here, but would be wasting memory, as we deal
+with database files like $spooldirectory/db/<name> */
+#define PATHLEN 256
 
 
 /* Functions for accessing Exim's hints database, which consists of a number of
 different DBM files. This module does not contain code for reading DBM files
 for (e.g.) alias expansion. That is all contained within the general search
 functions. As Exim now has support for several DBM interfaces, all the relevant
-functions are called as macros.
+functions are called as inlinable functions from an included file.
 
 All the data in Exim's database is in the nature of *hints*. Therefore it
 doesn't matter if it gets destroyed by accident. These functions are not
@@ -28,100 +35,93 @@ means of locking on independent lock files. (Earlier attempts to lock on the
 DBM files themselves were never completely successful.) Since callers may in
 general want to do more than one read or write while holding the lock, there
 are separate open and close functions. However, the calling modules should
-arrange to hold the locks for the bare minimum of time. */
+arrange to hold the locks for the bare minimum of time.
 
+API:
+  dbfn_open
+  dbfn_close
+  dbfn_read_with_length
+  dbfn_read_enforce_length
+  dbfn_write
+  dbfn_delete
+  dbfn_scan				unused; ifdeffout out
 
-
-/*************************************************
-*         Berkeley DB error callback             *
-*************************************************/
-
-/* For Berkeley DB >= 2, we can define a function to be called in case of DB
-errors. This should help with debugging strange DB problems, e.g. getting "File
-exists" when you try to open a db file. The API for this function was changed
-at DB release 4.3. */
-
-#if defined(USE_DB) && defined(DB_VERSION_STRING)
-void
-#if DB_VERSION_MAJOR > 4 || (DB_VERSION_MAJOR == 4 && DB_VERSION_MINOR >= 3)
-dbfn_bdb_error_callback(const DB_ENV *dbenv, const char *pfx, const char *msg)
-{
-dbenv = dbenv;
-#else
-dbfn_bdb_error_callback(const char *pfx, char *msg)
-{
-#endif
-pfx = pfx;
-log_write(0, LOG_MAIN, "Berkeley DB error: %s", msg);
-}
-#endif
-
-
-
-
-static enum {
-  PRIV_DROPPING, PRIV_DROPPED,
-  PRIV_RESTORING, PRIV_RESTORED
-} priv_state = PRIV_RESTORED;
-
-static uid_t priv_euid;
-static gid_t priv_egid;
-static gid_t priv_groups[EXIM_GROUPLIST_SIZE + 1];
-static int priv_ngroups;
-
-/* Inspired by OpenSSH's temporarily_use_uid(). Thanks! */
-
-static void
-priv_drop_temp(const uid_t temp_uid, const gid_t temp_gid)
-{
-if (priv_state != PRIV_RESTORED) _exit(EXIT_FAILURE);
-priv_state = PRIV_DROPPING;
-
-priv_euid = geteuid();
-if (priv_euid == root_uid)
-  {
-  priv_egid = getegid();
-  priv_ngroups = getgroups(nelem(priv_groups), priv_groups);
-  if (priv_ngroups < 0) _exit(EXIT_FAILURE);
-
-  if (priv_ngroups > 0 && setgroups(1, &temp_gid) != 0) _exit(EXIT_FAILURE);
-  if (setegid(temp_gid) != 0) _exit(EXIT_FAILURE);
-  if (seteuid(temp_uid) != 0) _exit(EXIT_FAILURE);
-
-  if (geteuid() != temp_uid) _exit(EXIT_FAILURE);
-  if (getegid() != temp_gid) _exit(EXIT_FAILURE);
-  }
-
-priv_state = PRIV_DROPPED;
-}
-
-/* Inspired by OpenSSH's restore_uid(). Thanks! */
-
-static void
-priv_restore(void)
-{
-if (priv_state != PRIV_DROPPED) _exit(EXIT_FAILURE);
-priv_state = PRIV_RESTORING;
-
-if (priv_euid == root_uid)
-  {
-  if (seteuid(priv_euid) != 0) _exit(EXIT_FAILURE);
-  if (setegid(priv_egid) != 0) _exit(EXIT_FAILURE);
-  if (priv_ngroups > 0 && setgroups(priv_ngroups, priv_groups) != 0) _exit(EXIT_FAILURE);
-
-  if (geteuid() != priv_euid) _exit(EXIT_FAILURE);
-  if (getegid() != priv_egid) _exit(EXIT_FAILURE);
-  }
-
-priv_state = PRIV_RESTORED;
-}
-
+Users:
+  ACL ratelimit & seen conditions
+  delivery retry handling
+  delivery serialization
+  TLS session resumption
+  peer capability cache
+  callout & quota cache
+*/
 
 
 
 /*************************************************
 *          Open and lock a database file         *
 *************************************************/
+
+/* Ensure the directory for the DB is present */
+
+static inline void
+db_dir_make(BOOL panic)
+{
+(void) directory_make(spool_directory, US"db", EXIMDB_DIRECTORY_MODE, panic);
+}
+
+
+/* Lock a file to protect the DB.  Return TRUE for success */
+
+static inline BOOL
+lockfile_take(open_db * dbblock, const uschar * filename, BOOL rdonly, BOOL panic)
+{
+flock_t lock_data;
+int rc, * fdp = &dbblock->lockfd;
+
+priv_drop_temp(exim_uid, exim_gid);
+if ((*fdp = Uopen(filename, O_RDWR, EXIMDB_LOCKFILE_MODE)) < 0)
+  {
+  db_dir_make(panic);
+  *fdp = Uopen(filename, O_RDWR|O_CREAT, EXIMDB_LOCKFILE_MODE);
+  }
+priv_restore();
+
+if (*fdp < 0)
+  {
+  log_write(0, LOG_MAIN, "%s",
+    string_open_failed("database lock file %s", filename));
+  errno = 0;      /* Indicates locking failure */
+  return FALSE;
+  }
+
+/* Now we must get a lock on the opened lock file; do this with a blocking
+lock that times out. */
+
+lock_data.l_type = rdonly ? F_RDLCK : F_WRLCK;
+lock_data.l_whence = lock_data.l_start = lock_data.l_len = 0;
+
+DEBUG(D_hints_lookup|D_retry|D_route|D_deliver)
+  debug_printf_indent("locking %s\n", filename);
+
+sigalrm_seen = FALSE;
+ALARM(EXIMDB_LOCK_TIMEOUT);
+rc = fcntl(*fdp, F_SETLKW, &lock_data);
+ALARM_CLR(0);
+
+if (sigalrm_seen) errno = ETIMEDOUT;
+if (rc < 0)
+  {
+  log_write(0, LOG_MAIN|LOG_PANIC, "Failed to get %s lock for %s: %s",
+    rdonly ? "read" : "write", filename,
+    errno == ETIMEDOUT ? "timed out" : strerror(errno));
+  (void)close(*fdp); *fdp = -1;
+  errno = 0;       /* Indicates locking failure */
+  return FALSE;
+  }
+
+DEBUG(D_hints_lookup) debug_printf_indent("locked  %s\n", filename);
+return TRUE;
+}
 
 /* Used for accessing Exim's hints databases.
 
@@ -132,25 +132,22 @@ Arguments:
   dbblock  Points to an open_db block to be filled in.
   lof      If TRUE, write to the log for actual open failures (locking failures
            are always logged).
+  panic	   If TRUE, panic on failure to create the db directory
 
 Returns:   NULL if the open failed, or the locking failed. After locking
            failures, errno is zero.
 
            On success, dbblock is returned. This contains the dbm pointer and
            the fd of the locked lock file.
-
-There are some calls that use O_RDWR|O_CREAT for the flags. Having discovered
-this in December 2005, I'm not sure if this is correct or not, but for the
-moment I haven't changed them.
 */
 
 open_db *
-dbfn_open(uschar *name, int flags, open_db *dbblock, BOOL lof)
+dbfn_open(const uschar * name, int flags, open_db * dbblock,
+  BOOL lof, BOOL panic)
 {
 int rc, save_errno;
-BOOL read_only = flags == O_RDONLY;
 flock_t lock_data;
-uschar dirname[256], filename[256];
+uschar dirname[PATHLEN], filename[PATHLEN];
 
 DEBUG(D_hints_lookup) acl_level++;
 
@@ -170,50 +167,17 @@ exists, there is no error. */
 snprintf(CS dirname, sizeof(dirname), "%s/db", spool_directory);
 snprintf(CS filename, sizeof(filename), "%s/%s.lockfile", dirname, name);
 
-priv_drop_temp(exim_uid, exim_gid);
-if ((dbblock->lockfd = Uopen(filename, O_RDWR, EXIMDB_LOCKFILE_MODE)) < 0)
+dbblock->lockfd = -1;
+if (!exim_lockfile_needed())
+  db_dir_make(panic);
+else
   {
-  (void)directory_make(spool_directory, US"db", EXIMDB_DIRECTORY_MODE, TRUE);
-  dbblock->lockfd = Uopen(filename, O_RDWR|O_CREAT, EXIMDB_LOCKFILE_MODE);
+  if (!lockfile_take(dbblock, filename, flags == O_RDONLY, panic))
+    {
+    DEBUG(D_hints_lookup) acl_level--;
+    return NULL;
+    }
   }
-priv_restore();
-
-if (dbblock->lockfd < 0)
-  {
-  log_write(0, LOG_MAIN, "%s",
-    string_open_failed(errno, "database lock file %s", filename));
-  errno = 0;      /* Indicates locking failure */
-  DEBUG(D_hints_lookup) acl_level--;
-  return NULL;
-  }
-
-/* Now we must get a lock on the opened lock file; do this with a blocking
-lock that times out. */
-
-lock_data.l_type = read_only? F_RDLCK : F_WRLCK;
-lock_data.l_whence = lock_data.l_start = lock_data.l_len = 0;
-
-DEBUG(D_hints_lookup|D_retry|D_route|D_deliver)
-  debug_printf_indent("locking %s\n", filename);
-
-sigalrm_seen = FALSE;
-ALARM(EXIMDB_LOCK_TIMEOUT);
-rc = fcntl(dbblock->lockfd, F_SETLKW, &lock_data);
-ALARM_CLR(0);
-
-if (sigalrm_seen) errno = ETIMEDOUT;
-if (rc < 0)
-  {
-  log_write(0, LOG_MAIN|LOG_PANIC, "Failed to get %s lock for %s: %s",
-    read_only ? "read" : "write", filename,
-    errno == ETIMEDOUT ? "timed out" : strerror(errno));
-  (void)close(dbblock->lockfd);
-  errno = 0;       /* Indicates locking failure */
-  DEBUG(D_hints_lookup) acl_level--;
-  return NULL;
-  }
-
-DEBUG(D_hints_lookup) debug_printf_indent("locked  %s\n", filename);
 
 /* At this point we have an opened and locked separate lock file, that is,
 exclusive access to the database, so we can go ahead and open it. If we are
@@ -224,15 +188,16 @@ databases - often this is caused by non-matching db.h and the library. To make
 it easy to pin this down, there are now debug statements on either side of the
 open call. */
 
+flags &= O_RDONLY | O_RDWR;
 snprintf(CS filename, sizeof(filename), "%s/%s", dirname, name);
 
 priv_drop_temp(exim_uid, exim_gid);
-EXIM_DBOPEN(filename, dirname, flags, EXIMDB_MODE, &(dbblock->dbptr));
+dbblock->dbptr = exim_dbopen(filename, dirname, flags, EXIMDB_MODE);
 if (!dbblock->dbptr && errno == ENOENT && flags == O_RDWR)
   {
   DEBUG(D_hints_lookup)
     debug_printf_indent("%s appears not to exist: trying to create\n", filename);
-  EXIM_DBOPEN(filename, dirname, flags|O_CREAT, EXIMDB_MODE, &(dbblock->dbptr));
+  dbblock->dbptr = exim_dbopen(filename, dirname, flags|O_CREAT, EXIMDB_MODE);
   }
 save_errno = errno;
 priv_restore();
@@ -243,14 +208,16 @@ exist. */
 
 if (!dbblock->dbptr)
   {
+  errno = save_errno;
   if (lof && save_errno != ENOENT)
-    log_write(0, LOG_MAIN, "%s", string_open_failed(save_errno, "DB file %s",
+    log_write(0, LOG_MAIN, "%s", string_open_failed("DB file %s",
         filename));
   else
     DEBUG(D_hints_lookup)
-      debug_printf_indent("%s\n", CS string_open_failed(save_errno, "DB file %s",
+      debug_printf_indent("%s\n", CS string_open_failed("DB file %s",
           filename));
   (void)close(dbblock->lockfd);
+  dbblock->lockfd = -1;
   errno = save_errno;
   DEBUG(D_hints_lookup) acl_level--;
   return NULL;
@@ -260,7 +227,6 @@ DEBUG(D_hints_lookup)
   debug_printf_indent("opened hints database %s: flags=%s\n", filename,
     flags == O_RDONLY ? "O_RDONLY"
     : flags == O_RDWR ? "O_RDWR"
-    : flags == (O_RDWR|O_CREAT) ? "O_RDWR|O_CREAT"
     : "??");
 
 /* Pass back the block containing the opened database handle and the open fd
@@ -277,7 +243,7 @@ return dbblock;
 *************************************************/
 
 /* Closing a file automatically unlocks it, so after closing the database, just
-close the lock file.
+close the lock file if there was one.
 
 Argument: a pointer to an open database block
 Returns:  nothing
@@ -286,10 +252,17 @@ Returns:  nothing
 void
 dbfn_close(open_db *dbblock)
 {
-EXIM_DBCLOSE(dbblock->dbptr);
-(void)close(dbblock->lockfd);
+int * fdp = &dbblock->lockfd;
+
+exim_dbclose(dbblock->dbptr);
+if (*fdp >= 0) (void)close(*fdp);
 DEBUG(D_hints_lookup)
-  { debug_printf_indent("closed hints database and lockfile\n"); acl_level--; }
+  {
+  debug_printf_indent("closed hints database%s\n",
+		      *fdp < 0 ? "" : " and lockfile");
+  acl_level--;
+  }
+*fdp = -1;
 }
 
 
@@ -317,32 +290,70 @@ Returns: a pointer to the retrieved record, or
 */
 
 void *
-dbfn_read_with_length(open_db *dbblock, const uschar *key, int *length)
+dbfn_read_with_length(open_db * dbblock, const uschar * key, int * length)
 {
-void *yield;
+void * yield;
 EXIM_DATUM key_datum, result_datum;
 int klen = Ustrlen(key) + 1;
-uschar * key_copy = store_get(klen);
+uschar * key_copy = store_get(klen, key);
+unsigned dlen;
 
 memcpy(key_copy, key, klen);
 
 DEBUG(D_hints_lookup) debug_printf_indent("dbfn_read: key=%s\n", key);
 
-EXIM_DATUM_INIT(key_datum);         /* Some DBM libraries require the datum */
-EXIM_DATUM_INIT(result_datum);      /* to be cleared before use. */
-EXIM_DATUM_DATA(key_datum) = CS key_copy;
-EXIM_DATUM_SIZE(key_datum) = klen;
+exim_datum_init(&key_datum);         /* Some DBM libraries require the datum */
+exim_datum_init(&result_datum);      /* to be cleared before use. */
+exim_datum_data_set(&key_datum, key_copy);
+exim_datum_size_set(&key_datum, klen);
 
-if (!EXIM_DBGET(dbblock->dbptr, key_datum, result_datum)) return NULL;
+if (!exim_dbget(dbblock->dbptr, &key_datum, &result_datum))
+  {
+  DEBUG(D_hints_lookup) debug_printf_indent("dbfn_read: null return\n");
+  return NULL;
+  }
 
-yield = store_get(EXIM_DATUM_SIZE(result_datum));
-memcpy(yield, EXIM_DATUM_DATA(result_datum), EXIM_DATUM_SIZE(result_datum));
-if (length != NULL) *length = EXIM_DATUM_SIZE(result_datum);
+/* Assume the data store could have been tainted.  Properly, we should
+store the taint status with the data. */
 
-EXIM_DATUM_FREE(result_datum);    /* Some DBM libs require freeing */
+dlen = exim_datum_size_get(&result_datum);
+yield = store_get(dlen, GET_TAINTED);
+memcpy(yield, exim_datum_data_get(&result_datum), dlen);
+DEBUG(D_hints_lookup) debug_printf_indent("dbfn_read: size %u return\n", dlen);
+if (length) *length = dlen;
+
+exim_datum_free(&result_datum);    /* Some DBM libs require freeing */
 return yield;
 }
 
+
+/* Read a record.  If the length is not as expected then delete it, write
+an error log line, delete the record and return NULL.
+Use this for fixed-size records (so not retry or wait records).
+
+Arguments:
+  dbblock   a pointer to an open database block
+  key       the key of the record to be read
+  length    the expected record length
+
+Returns: a pointer to the retrieved record, or
+         NULL if the record is not found/bad
+*/
+
+void *
+dbfn_read_enforce_length(open_db * dbblock, const uschar * key, size_t length)
+{
+int rlen;
+void * yield = dbfn_read_with_length(dbblock, key, &rlen);
+
+if (yield)
+  {
+  if (rlen == length) return yield;
+  log_write(0, LOG_MAIN|LOG_PANIC, "Bad db record size for '%s'", key);
+  dbfn_delete(dbblock, key);
+  }
+return NULL;
+}
 
 
 /*************************************************
@@ -366,20 +377,21 @@ dbfn_write(open_db *dbblock, const uschar *key, void *ptr, int length)
 EXIM_DATUM key_datum, value_datum;
 dbdata_generic *gptr = (dbdata_generic *)ptr;
 int klen = Ustrlen(key) + 1;
-uschar * key_copy = store_get(klen);
+uschar * key_copy = store_get(klen, key);
 
 memcpy(key_copy, key, klen);
 gptr->time_stamp = time(NULL);
 
-DEBUG(D_hints_lookup) debug_printf_indent("dbfn_write: key=%s\n", key);
+DEBUG(D_hints_lookup)
+  debug_printf_indent("dbfn_write: key=%s datalen %d\n", key, length);
 
-EXIM_DATUM_INIT(key_datum);         /* Some DBM libraries require the datum */
-EXIM_DATUM_INIT(value_datum);       /* to be cleared before use. */
-EXIM_DATUM_DATA(key_datum) = CS key_copy;
-EXIM_DATUM_SIZE(key_datum) = klen;
-EXIM_DATUM_DATA(value_datum) = CS ptr;
-EXIM_DATUM_SIZE(value_datum) = length;
-return EXIM_DBPUT(dbblock->dbptr, key_datum, value_datum);
+exim_datum_init(&key_datum);         /* Some DBM libraries require the datum */
+exim_datum_init(&value_datum);       /* to be cleared before use. */
+exim_datum_data_set(&key_datum, key_copy);
+exim_datum_size_set(&key_datum, klen);
+exim_datum_data_set(&value_datum, ptr);
+exim_datum_size_set(&value_datum, length);
+return exim_dbput(dbblock->dbptr, &key_datum, &value_datum);
 }
 
 
@@ -400,19 +412,24 @@ int
 dbfn_delete(open_db *dbblock, const uschar *key)
 {
 int klen = Ustrlen(key) + 1;
-uschar * key_copy = store_get(klen);
+uschar * key_copy = store_get(klen, key);
+EXIM_DATUM key_datum;
 
 DEBUG(D_hints_lookup) debug_printf_indent("dbfn_delete: key=%s\n", key);
 
 memcpy(key_copy, key, klen);
-EXIM_DATUM key_datum;
-EXIM_DATUM_INIT(key_datum);         /* Some DBM libraries require clearing */
-EXIM_DATUM_DATA(key_datum) = CS key_copy;
-EXIM_DATUM_SIZE(key_datum) = klen;
-return EXIM_DBDEL(dbblock->dbptr, key_datum);
+exim_datum_init(&key_datum);         /* Some DBM libraries require clearing */
+exim_datum_data_set(&key_datum, key_copy);
+exim_datum_size_set(&key_datum, klen);
+return exim_dbdel(dbblock->dbptr, &key_datum);
 }
 
 
+
+#ifdef notdef
+/* XXX This appears to be unused.  There's a separate implementation
+in dbutils.c for dumpdb and fixdb, using the same underlying support.
+*/
 
 /*************************************************
 *         Scan the keys of a database file       *
@@ -435,25 +452,25 @@ dbfn_scan(open_db *dbblock, BOOL start, EXIM_CURSOR **cursor)
 {
 EXIM_DATUM key_datum, value_datum;
 uschar *yield;
-value_datum = value_datum;    /* dummy; not all db libraries use this */
 
 DEBUG(D_hints_lookup) debug_printf_indent("dbfn_scan\n");
 
 /* Some dbm require an initialization */
 
-if (start) EXIM_DBCREATE_CURSOR(dbblock->dbptr, cursor);
+if (start) *cursor = exim_dbcreate_cursor(dbblock->dbptr);
 
-EXIM_DATUM_INIT(key_datum);         /* Some DBM libraries require the datum */
-EXIM_DATUM_INIT(value_datum);       /* to be cleared before use. */
+exim_datum_init(&key_datum);         /* Some DBM libraries require the datum */
+exim_datum_init(&value_datum);       /* to be cleared before use. */
 
-yield = (EXIM_DBSCAN(dbblock->dbptr, key_datum, value_datum, start, *cursor))?
-  US EXIM_DATUM_DATA(key_datum) : NULL;
+yield = exim_dbscan(dbblock->dbptr, &key_datum, &value_datum, start, *cursor)
+  ? US exim_datum_data_get(&key_datum) : NULL;
 
 /* Some dbm require a termination */
 
-if (!yield) EXIM_DBDELETE_CURSOR(*cursor);
+if (!yield) exim_dbdelete_cursor(*cursor);
 return yield;
 }
+#endif
 
 
 
@@ -536,7 +553,7 @@ while (Ufgets(buffer, 256, stdin) != NULL)
     {
     count = Uatoi(cmd);
     while (isdigit((uschar)*cmd)) cmd++;
-    while (isspace((uschar)*cmd)) cmd++;
+    Uskip_whitespace(&cmd);
     }
 
   if (Ustrncmp(cmd, "open", 4) == 0)
@@ -544,7 +561,7 @@ while (Ufgets(buffer, 256, stdin) != NULL)
     int i;
     open_db *odb;
     uschar *s = cmd + 4;
-    while (isspace((uschar)*s)) s++;
+    Uskip_whitespace(&s);
 
     for (i = 0; i < max_db; i++)
       if (dbblock[i].dbptr == NULL) break;
@@ -556,7 +573,7 @@ while (Ufgets(buffer, 256, stdin) != NULL)
       }
 
     start = clock();
-    odb = dbfn_open(s, O_RDWR, dbblock + i, TRUE);
+    odb = dbfn_open(s, O_RDWR, dbblock + i, TRUE, TRUE);
     stop = clock();
 
     if (odb)
@@ -580,8 +597,7 @@ while (Ufgets(buffer, 256, stdin) != NULL)
   else if (Ustrncmp(cmd, "write", 5) == 0)
     {
     int rc = 0;
-    uschar *key = cmd + 5;
-    uschar *data;
+    uschar * key = cmd + 5, * data;
 
     if (current < 0)
       {
@@ -589,11 +605,11 @@ while (Ufgets(buffer, 256, stdin) != NULL)
       continue;
       }
 
-    while (isspace((uschar)*key)) key++;
+    Uskip_whitespace(&key);
     data = key;
-    while (*data != 0 && !isspace((uschar)*data)) data++;
-    *data++ = 0;
-    while (isspace((uschar)*data)) data++;
+    Uskip_nonwhite(&data);
+    *data++ = '\0';
+    Uskip_whitespace(&data);
 
     dbwait = (dbdata_wait *)(&structbuffer);
     Ustrcpy(dbwait->text, data);
@@ -608,13 +624,13 @@ while (Ufgets(buffer, 256, stdin) != NULL)
 
   else if (Ustrncmp(cmd, "read", 4) == 0)
     {
-    uschar *key = cmd + 4;
+    uschar * key = cmd + 4;
     if (current < 0)
       {
       printf("No current database\n");
       continue;
       }
-    while (isspace((uschar)*key)) key++;
+    Uskip_whitespace(&key);
     start = clock();
     while (count-- > 0)
       dbwait = (dbdata_wait *)dbfn_read_with_length(dbblock+ current, key, NULL);
@@ -624,13 +640,13 @@ while (Ufgets(buffer, 256, stdin) != NULL)
 
   else if (Ustrncmp(cmd, "delete", 6) == 0)
     {
-    uschar *key = cmd + 6;
+    uschar * key = cmd + 6;
     if (current < 0)
       {
       printf("No current database\n");
       continue;
       }
-    while (isspace((uschar)*key)) key++;
+    Uskip_whitespace(&key);
     dbfn_delete(dbblock + current, key);
     }
 
@@ -660,8 +676,8 @@ while (Ufgets(buffer, 256, stdin) != NULL)
 
   else if (Ustrncmp(cmd, "close", 5) == 0)
     {
-    uschar *s = cmd + 5;
-    while (isspace((uschar)*s)) s++;
+    uschar * s = cmd + 5;
+    Uskip_whitespace(&s);
     i = Uatoi(s);
     if (i >= max_db || dbblock[i].dbptr == NULL) printf("Not open\n"); else
       {
@@ -675,8 +691,8 @@ while (Ufgets(buffer, 256, stdin) != NULL)
 
   else if (Ustrncmp(cmd, "file", 4) == 0)
     {
-    uschar *s = cmd + 4;
-    while (isspace((uschar)*s)) s++;
+    uschar * s = cmd + 4;
+    Uskip_whitespace(&s);
     i = Uatoi(s);
     if (i >= max_db || dbblock[i].dbptr == NULL) printf("Not open\n");
       else current = i;
@@ -728,3 +744,5 @@ return 0;
 #endif
 
 /* End of dbfn.c */
+/* vi: aw ai sw=2
+*/

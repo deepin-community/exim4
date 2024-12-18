@@ -3,7 +3,9 @@
 *************************************************/
 
 /* Copyright (c) University of Cambridge 1995 - 2018 */
+/* Copyright (c) The Exim Maintainers 2021 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Private structure for the private options. */
 
@@ -94,6 +96,6 @@ extern void appendfile_transport_init(transport_instance *);
 
 /* Function that is shared with tf_maildir.c */
 
-extern off_t  check_dir_size(uschar *, int *, const pcre *);
+extern off_t  check_dir_size(const uschar *, int *, const pcre2_code *);
 
 /* End of transports/appendfile.h */

@@ -4,6 +4,7 @@
 
 /* Copyright (c) Jeremy Harris 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Signing and hashing routine selection for PDKIM */
 
@@ -22,12 +23,12 @@
 # else
 #  define SIGN_GCRYPT
 # endif
+#endif
 
-#else
+#ifdef USE_OPENSSL
 # define SIGN_OPENSSL
-#  if !defined(LIBRESSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10101000L
-#   define SIGN_HAVE_ED25519
-#  endif
-
+# if !defined(LIBRESSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10101000L
+#  define SIGN_HAVE_ED25519
+# endif
 #endif
 

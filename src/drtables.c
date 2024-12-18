@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2023 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "exim.h"
@@ -33,6 +35,10 @@ set to NULL for those that are not compiled into the binary. */
 
 #ifdef AUTH_DOVECOT
 #include "auths/dovecot.h"
+#endif
+
+#ifdef AUTH_EXTERNAL
+#include "auths/external.h"
 #endif
 
 #ifdef AUTH_GSASL
@@ -69,7 +75,8 @@ auth_info auths_available[] = {
   .init =		auth_cram_md5_init,
   .servercode =		auth_cram_md5_server,
   .clientcode =		auth_cram_md5_client,
-  .version_report =	NULL
+  .version_report =	NULL,
+  .macros_create =	NULL,
   },
 #endif
 
@@ -83,7 +90,8 @@ auth_info auths_available[] = {
   .init =		auth_cyrus_sasl_init,
   .servercode =		auth_cyrus_sasl_server,
   .clientcode =		NULL,
-  .version_report =	auth_cyrus_sasl_version_report
+  .version_report =	auth_cyrus_sasl_version_report,
+  .macros_create =	NULL,
   },
 #endif
 
@@ -97,7 +105,23 @@ auth_info auths_available[] = {
   .init =		auth_dovecot_init,
   .servercode =		auth_dovecot_server,
   .clientcode =		NULL,
-  .version_report =	NULL
+  .version_report =	NULL,
+  .macros_create =	NULL,
+  },
+#endif
+
+#ifdef AUTH_EXTERNAL
+  {
+  .driver_name =	US"external",
+  .options =		auth_external_options,
+  .options_count =	&auth_external_options_count,
+  .options_block =	&auth_external_option_defaults,
+  .options_len =	sizeof(auth_external_options_block),
+  .init =		auth_external_init,
+  .servercode =		auth_external_server,
+  .clientcode =		auth_external_client,
+  .version_report =	NULL,
+  .macros_create =	NULL,
   },
 #endif
 
@@ -110,8 +134,9 @@ auth_info auths_available[] = {
   .options_len =	sizeof(auth_gsasl_options_block),
   .init =		auth_gsasl_init,
   .servercode =		auth_gsasl_server,
-  .clientcode =		NULL,
-  .version_report =	auth_gsasl_version_report
+  .clientcode =		auth_gsasl_client,
+  .version_report =	auth_gsasl_version_report,
+  .macros_create =	auth_gsasl_macros,
   },
 #endif
 
@@ -125,7 +150,8 @@ auth_info auths_available[] = {
   .init =		auth_heimdal_gssapi_init,
   .servercode =		auth_heimdal_gssapi_server,
   .clientcode =		NULL,
-  .version_report =	auth_heimdal_gssapi_version_report
+  .version_report =	auth_heimdal_gssapi_version_report,
+  .macros_create =	NULL,
   },
 #endif
 
@@ -139,7 +165,8 @@ auth_info auths_available[] = {
   .init =		auth_plaintext_init,
   .servercode =		auth_plaintext_server,
   .clientcode =		auth_plaintext_client,
-  .version_report =	NULL
+  .version_report =	NULL,
+  .macros_create =	NULL,
   },
 #endif
 
@@ -153,7 +180,8 @@ auth_info auths_available[] = {
   .init =		auth_spa_init,
   .servercode =		auth_spa_server,
   .clientcode =		auth_spa_client,
-  .version_report =	NULL
+  .version_report =	NULL,
+  .macros_create =	NULL,
   },
 #endif
 
@@ -167,22 +195,13 @@ auth_info auths_available[] = {
   .init =		auth_tls_init,
   .servercode =		auth_tls_server,
   .clientcode =		NULL,
-  .version_report =	NULL
+  .version_report =	NULL,
+  .macros_create =	NULL,
   },
 #endif
 
   { .driver_name = US"" }		/* end marker */
 };
-
-void
-auth_show_supported(FILE * f)
-{
-auth_info * ai;
-fprintf(f, "Authenticators:");
-for (ai = auths_available; ai->driver_name[0]; ai++)
-       	fprintf(f, " %s", ai->driver_name);
-fprintf(f, "\n");
-}
 
 
 /* Tables of information about which routers and transports are included in the
@@ -343,18 +362,6 @@ router_info routers_available[] = {
 };
 
 
-void
-route_show_supported(FILE * f)
-{
-router_info * rr;
-fprintf(f, "Routers:");
-for (rr = routers_available; rr->driver_name[0]; rr++)
-       	fprintf(f, " %s", rr->driver_name);
-fprintf(f, "\n");
-}
-
-
-
 
 transport_info transports_available[] = {
 #ifdef TRANSPORT_APPENDFILE
@@ -444,42 +451,61 @@ transport_info transports_available[] = {
   { US"" }
 };
 
-void
-transport_show_supported(FILE * f)
+#ifndef MACRO_PREDEF
+
+gstring *
+auth_show_supported(gstring * g)
 {
-fprintf(f, "Transports:");
+g = string_cat(g, US"Authenticators:");
+for (auth_info * ai = auths_available; ai->driver_name[0]; ai++)
+       	g = string_fmt_append(g, " %s", ai->driver_name);
+return string_cat(g, US"\n");
+}
+
+gstring *
+route_show_supported(gstring * g)
+{
+g = string_cat(g, US"Routers:");
+for (router_info * rr = routers_available; rr->driver_name[0]; rr++)
+       	g = string_fmt_append(g, " %s", rr->driver_name);
+return string_cat(g, US"\n");
+}
+
+gstring *
+transport_show_supported(gstring * g)
+{
+g = string_cat(g, US"Transports:");
 #ifdef TRANSPORT_APPENDFILE
-  fprintf(f, " appendfile");
+  g = string_cat(g, US" appendfile");
   #ifdef SUPPORT_MAILDIR
-    fprintf(f, "/maildir");	/* damn these subclasses */
+    g = string_cat(g, US"/maildir");	/* damn these subclasses */
   #endif
   #ifdef SUPPORT_MAILSTORE
-    fprintf(f, "/mailstore");
+    g = string_cat(g, US"/mailstore");
   #endif
   #ifdef SUPPORT_MBX
-    fprintf(f, "/mbx");
+    g = string_cat(g, US"/mbx");
   #endif
 #endif
 #ifdef TRANSPORT_AUTOREPLY
-  fprintf(f, " autoreply");
+  g = string_cat(g, US" autoreply");
 #endif
 #ifdef TRANSPORT_LMTP
-  fprintf(f, " lmtp");
+  g = string_cat(g, US" lmtp");
 #endif
 #ifdef TRANSPORT_PIPE
-  fprintf(f, " pipe");
+  g = string_cat(g, US" pipe");
 #endif
 #ifdef EXPERIMENTAL_QUEUEFILE
-  fprintf(f, " queuefile");
+  g = string_cat(g, US" queuefile");
 #endif
 #ifdef TRANSPORT_SMTP
-  fprintf(f, " smtp");
+  g = string_cat(g, US" smtp");
 #endif
-fprintf(f, "\n");
+return string_cat(g, US"\n");
 }
 
 
-#ifndef MACRO_PREDEF
 
 struct lookupmodulestr
 {
@@ -493,7 +519,7 @@ static struct lookupmodulestr *lookupmodules = NULL;
 static void
 addlookupmodule(void *dl, struct lookup_module_info *info)
 {
-struct lookupmodulestr *p = store_malloc(sizeof(struct lookupmodulestr));
+struct lookupmodulestr *p = store_get(sizeof(struct lookupmodulestr), GET_UNTAINTED);
 
 p->dl = dl;
 p->info = info;
@@ -521,8 +547,7 @@ if (lookup_list[pos])
   /* need to insert it, so move all the other items up
   (last slot is still empty, of course) */
 
-  memmove(&lookup_list[pos+1],
-	  &lookup_list[pos],
+  memmove(&lookup_list[pos+1], &lookup_list[pos],
 	  sizeof(lookup_info *) * (lookup_list_count-pos-1));
   }
 lookup_list[pos] = info;
@@ -547,6 +572,9 @@ extern lookup_module_info dsearch_lookup_module_info;
 #endif
 #if defined(LOOKUP_IBASE) && LOOKUP_IBASE!=2
 extern lookup_module_info ibase_lookup_module_info;
+#endif
+#if defined(LOOKUP_JSON)
+extern lookup_module_info json_lookup_module_info;
 #endif
 #if defined(LOOKUP_LDAP)
 extern lookup_module_info ldap_lookup_module_info;
@@ -575,7 +603,7 @@ extern lookup_module_info pgsql_lookup_module_info;
 #if defined(LOOKUP_REDIS) && LOOKUP_REDIS!=2
 extern lookup_module_info redis_lookup_module_info;
 #endif
-#if defined(EXPERIMENTAL_LMDB)
+#if defined(LOOKUP_LMDB)
 extern lookup_module_info lmdb_lookup_module_info;
 #endif
 #if defined(SUPPORT_SPF)
@@ -591,193 +619,200 @@ extern lookup_module_info testdb_lookup_module_info;
 extern lookup_module_info whoson_lookup_module_info;
 #endif
 
+extern lookup_module_info readsock_lookup_module_info;
+
 
 void
 init_lookup_list(void)
 {
 #ifdef LOOKUP_MODULE_DIR
-  DIR *dd;
-  struct dirent *ent;
-  int countmodules = 0;
-  int moduleerrors = 0;
+DIR *dd;
+struct dirent *ent;
+int countmodules = 0;
+int moduleerrors = 0;
 #endif
-  struct lookupmodulestr *p;
-  static BOOL lookup_list_init_done = FALSE;
+static BOOL lookup_list_init_done = FALSE;
+rmark reset_point;
 
-
-  if (lookup_list_init_done)
-    return;
-  lookup_list_init_done = TRUE;
+if (lookup_list_init_done)
+  return;
+reset_point = store_mark();
+lookup_list_init_done = TRUE;
 
 #if defined(LOOKUP_CDB) && LOOKUP_CDB!=2
-  addlookupmodule(NULL, &cdb_lookup_module_info);
+addlookupmodule(NULL, &cdb_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_DBM) && LOOKUP_DBM!=2
-  addlookupmodule(NULL, &dbmdb_lookup_module_info);
+addlookupmodule(NULL, &dbmdb_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_DNSDB) && LOOKUP_DNSDB!=2
-  addlookupmodule(NULL, &dnsdb_lookup_module_info);
+addlookupmodule(NULL, &dnsdb_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_DSEARCH) && LOOKUP_DSEARCH!=2
-  addlookupmodule(NULL, &dsearch_lookup_module_info);
+addlookupmodule(NULL, &dsearch_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_IBASE) && LOOKUP_IBASE!=2
-  addlookupmodule(NULL, &ibase_lookup_module_info);
+addlookupmodule(NULL, &ibase_lookup_module_info);
 #endif
 
 #ifdef LOOKUP_LDAP
-  addlookupmodule(NULL, &ldap_lookup_module_info);
+addlookupmodule(NULL, &ldap_lookup_module_info);
+#endif
+
+#ifdef LOOKUP_JSON
+addlookupmodule(NULL, &json_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_LSEARCH) && LOOKUP_LSEARCH!=2
-  addlookupmodule(NULL, &lsearch_lookup_module_info);
+addlookupmodule(NULL, &lsearch_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_MYSQL) && LOOKUP_MYSQL!=2
-  addlookupmodule(NULL, &mysql_lookup_module_info);
+addlookupmodule(NULL, &mysql_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_NIS) && LOOKUP_NIS!=2
-  addlookupmodule(NULL, &nis_lookup_module_info);
+addlookupmodule(NULL, &nis_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_NISPLUS) && LOOKUP_NISPLUS!=2
-  addlookupmodule(NULL, &nisplus_lookup_module_info);
+addlookupmodule(NULL, &nisplus_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_ORACLE) && LOOKUP_ORACLE!=2
-  addlookupmodule(NULL, &oracle_lookup_module_info);
+addlookupmodule(NULL, &oracle_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_PASSWD) && LOOKUP_PASSWD!=2
-  addlookupmodule(NULL, &passwd_lookup_module_info);
+addlookupmodule(NULL, &passwd_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_PGSQL) && LOOKUP_PGSQL!=2
-  addlookupmodule(NULL, &pgsql_lookup_module_info);
+addlookupmodule(NULL, &pgsql_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_REDIS) && LOOKUP_REDIS!=2
-  addlookupmodule(NULL, &redis_lookup_module_info);
+addlookupmodule(NULL, &redis_lookup_module_info);
 #endif
 
-#ifdef EXPERIMENTAL_LMDB
-  addlookupmodule(NULL, &lmdb_lookup_module_info);
+#ifdef LOOKUP_LMDB
+addlookupmodule(NULL, &lmdb_lookup_module_info);
 #endif
 
 #ifdef SUPPORT_SPF
-  addlookupmodule(NULL, &spf_lookup_module_info);
+addlookupmodule(NULL, &spf_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_SQLITE) && LOOKUP_SQLITE!=2
-  addlookupmodule(NULL, &sqlite_lookup_module_info);
+addlookupmodule(NULL, &sqlite_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_TESTDB) && LOOKUP_TESTDB!=2
-  addlookupmodule(NULL, &testdb_lookup_module_info);
+addlookupmodule(NULL, &testdb_lookup_module_info);
 #endif
 
 #if defined(LOOKUP_WHOSON) && LOOKUP_WHOSON!=2
-  addlookupmodule(NULL, &whoson_lookup_module_info);
+addlookupmodule(NULL, &whoson_lookup_module_info);
 #endif
+
+addlookupmodule(NULL, &readsock_lookup_module_info);
 
 #ifdef LOOKUP_MODULE_DIR
-  dd = opendir(LOOKUP_MODULE_DIR);
-  if (dd == NULL) {
-    DEBUG(D_lookup) debug_printf("Couldn't open %s: not loading lookup modules\n", LOOKUP_MODULE_DIR);
-    log_write(0, LOG_MAIN, "Couldn't open %s: not loading lookup modules\n", LOOKUP_MODULE_DIR);
+if (!(dd = exim_opendir(LOOKUP_MODULE_DIR)))
+  {
+  DEBUG(D_lookup) debug_printf("Couldn't open %s: not loading lookup modules\n", LOOKUP_MODULE_DIR);
+  log_write(0, LOG_MAIN, "Couldn't open %s: not loading lookup modules\n", LOOKUP_MODULE_DIR);
   }
-  else {
-    const pcre *regex_islookupmod = regex_must_compile(
-      US"\\." DYNLIB_FN_EXT "$", FALSE, TRUE);
+else
+  {
+  const pcre2_code * regex_islookupmod = regex_must_compile(
+    US"\\." DYNLIB_FN_EXT "$", MCS_NOFLAGS, TRUE);
 
-    DEBUG(D_lookup) debug_printf("Loading lookup modules from %s\n", LOOKUP_MODULE_DIR);
-    while ((ent = readdir(dd)) != NULL) {
-      char *name = ent->d_name;
-      int len = (int)strlen(name);
-      if (pcre_exec(regex_islookupmod, NULL, name, len, 0, PCRE_EOPT, NULL, 0) >= 0) {
-        int pathnamelen = len + (int)strlen(LOOKUP_MODULE_DIR) + 2;
-        void *dl;
-        struct lookup_module_info *info;
-        const char *errormsg;
+  DEBUG(D_lookup) debug_printf("Loading lookup modules from %s\n", LOOKUP_MODULE_DIR);
+  while ((ent = readdir(dd)))
+    {
+    char * name = ent->d_name;
+    int len = (int)strlen(name);
+    if (regex_match(regex_islookupmod, US name, len, NULL))
+      {
+      int pathnamelen = len + (int)strlen(LOOKUP_MODULE_DIR) + 2;
+      void *dl;
+      struct lookup_module_info *info;
+      const char *errormsg;
 
-        /* SRH: am I being paranoid here or what? */
-        if (pathnamelen > big_buffer_size) {
-          fprintf(stderr, "Loading lookup modules: %s/%s: name too long\n", LOOKUP_MODULE_DIR, name);
-          log_write(0, LOG_MAIN|LOG_PANIC, "%s/%s: name too long\n", LOOKUP_MODULE_DIR, name);
-          continue;
-        }
+      /* SRH: am I being paranoid here or what? */
+      if (pathnamelen > big_buffer_size)
+	{
+	fprintf(stderr, "Loading lookup modules: %s/%s: name too long\n", LOOKUP_MODULE_DIR, name);
+	log_write(0, LOG_MAIN|LOG_PANIC, "%s/%s: name too long\n", LOOKUP_MODULE_DIR, name);
+	continue;
+	}
 
-        /* SRH: snprintf here? */
-        sprintf(CS big_buffer, "%s/%s", LOOKUP_MODULE_DIR, name);
+      /* SRH: snprintf here? */
+      sprintf(CS big_buffer, "%s/%s", LOOKUP_MODULE_DIR, name);
 
-        dl = dlopen(CS big_buffer, RTLD_NOW);// TJ was LAZY
-        if (dl == NULL) {
-          fprintf(stderr, "Error loading %s: %s\n", name, dlerror());
-          moduleerrors++;
-          log_write(0, LOG_MAIN|LOG_PANIC, "Error loading lookup module %s: %s\n", name, dlerror());
-          continue;
-        }
+      if (!(dl = dlopen(CS big_buffer, RTLD_NOW)))
+	{
+	errormsg = dlerror();
+	fprintf(stderr, "Error loading %s: %s\n", name, errormsg);
+	log_write(0, LOG_MAIN|LOG_PANIC, "Error loading lookup module %s: %s\n", name, errormsg);
+	moduleerrors++;
+	continue;
+	}
 
-        /* FreeBSD nsdispatch() can trigger dlerror() errors about
-         * _nss_cache_cycle_prevention_function; we need to clear the dlerror()
-         * state before calling dlsym(), so that any error afterwards only
-         * comes from dlsym().
-         */
-        errormsg = dlerror();
+      /* FreeBSD nsdispatch() can trigger dlerror() errors about
+      _nss_cache_cycle_prevention_function; we need to clear the dlerror()
+      state before calling dlsym(), so that any error afterwards only comes
+      from dlsym().  */
 
-        info = (struct lookup_module_info*) dlsym(dl, "_lookup_module_info");
-        if ((errormsg = dlerror()) != NULL) {
-          fprintf(stderr, "%s does not appear to be a lookup module (%s)\n", name, errormsg);
-          dlclose(dl);
-          moduleerrors++;
-          log_write(0, LOG_MAIN|LOG_PANIC, "%s does not appear to be a lookup module (%s)\n", name, errormsg);
-          continue;
-        }
-        if (info->magic != LOOKUP_MODULE_INFO_MAGIC) {
-          fprintf(stderr, "Lookup module %s is not compatible with this version of Exim\n", name);
-          dlclose(dl);
-          moduleerrors++;
-          log_write(0, LOG_MAIN|LOG_PANIC, "Lookup module %s is not compatible with this version of Exim\n", name);
-          continue;
-        }
+      errormsg = dlerror();
 
-        addlookupmodule(dl, info);
-        DEBUG(D_lookup) debug_printf("Loaded \"%s\" (%d lookup types)\n", name, info->lookupcount);
-        countmodules++;
+      info = (struct lookup_module_info*) dlsym(dl, "_lookup_module_info");
+      if ((errormsg = dlerror()))
+	{
+	fprintf(stderr, "%s does not appear to be a lookup module (%s)\n", name, errormsg);
+	log_write(0, LOG_MAIN|LOG_PANIC, "%s does not appear to be a lookup module (%s)\n", name, errormsg);
+	dlclose(dl);
+	moduleerrors++;
+	continue;
+	}
+      if (info->magic != LOOKUP_MODULE_INFO_MAGIC)
+	{
+	fprintf(stderr, "Lookup module %s is not compatible with this version of Exim\n", name);
+	log_write(0, LOG_MAIN|LOG_PANIC, "Lookup module %s is not compatible with this version of Exim\n", name);
+	dlclose(dl);
+	moduleerrors++;
+	continue;
+	}
+
+      addlookupmodule(dl, info);
+      DEBUG(D_lookup) debug_printf("Loaded \"%s\" (%d lookup types)\n", name, info->lookupcount);
+      countmodules++;
       }
     }
-    store_free((void*)regex_islookupmod);
-    closedir(dd);
+  store_free((void*)regex_islookupmod);
+  closedir(dd);
   }
 
-  DEBUG(D_lookup) debug_printf("Loaded %d lookup modules\n", countmodules);
+DEBUG(D_lookup) debug_printf("Loaded %d lookup modules\n", countmodules);
 #endif
 
-  DEBUG(D_lookup) debug_printf("Total %d lookups\n", lookup_list_count);
+DEBUG(D_lookup) debug_printf("Total %d lookups\n", lookup_list_count);
 
-  lookup_list = store_malloc(sizeof(lookup_info *) * lookup_list_count);
-  memset(lookup_list, 0, sizeof(lookup_info *) * lookup_list_count);
+lookup_list = store_malloc(sizeof(lookup_info *) * lookup_list_count);
+memset(lookup_list, 0, sizeof(lookup_info *) * lookup_list_count);
 
-  /* now add all lookups to the real list */
-  p = lookupmodules;
-  while (p) {
-    int j;
-    struct lookupmodulestr *pnext;
-
-    for (j = 0; j < p->info->lookupcount; j++)
-      add_lookup_to_list(p->info->lookups[j]);
-
-    pnext = p->next;
-    store_free(p);
-    p = pnext;
-  }
-  /* just to be sure */
-  lookupmodules = NULL;
+/* now add all lookups to the real list */
+for (struct lookupmodulestr * p = lookupmodules; p; p = p->next)
+  for (int j = 0; j < p->info->lookupcount; j++)
+    add_lookup_to_list(p->info->lookups[j]);
+store_reset(reset_point);
+/* just to be sure */
+lookupmodules = NULL;
 }
 
 #endif	/*!MACRO_PREDEF*/

@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 /* The main function: entry point, initialization, and high-level control.
@@ -14,6 +16,13 @@ Also a few functions that don't naturally fit elsewhere. */
 
 #if defined(__GLIBC__) && !defined(__UCLIBC__)
 # include <gnu/libc-version.h>
+#endif
+
+#ifndef _TIME_H
+# include <time.h>
+#endif
+#ifndef NO_EXECINFO
+# include <execinfo.h>
 #endif
 
 #ifdef USE_GNUTLS
@@ -35,29 +44,36 @@ extern void init_lookup_list(void);
 for store allocation via Exim's store manager. The normal calls are actually
 macros that pass over location information to make tracing easier. These
 functions just interface to the standard macro calls. A good compiler will
-optimize out the tail recursion and so not make them too expensive. There
-are two sets of functions; one for use when we want to retain the compiled
-regular expression for a long time; the other for short-term use. */
+optimize out the tail recursion and so not make them too expensive. */
 
 static void *
-function_store_get(size_t size)
+function_store_malloc(PCRE2_SIZE size, void * tag)
 {
-return store_get((int)size);
-}
-
-static void
-function_dummy_free(void *block) { block = block; }
-
-static void *
-function_store_malloc(size_t size)
-{
+if (size > INT_MAX)
+  log_write(0, LOG_MAIN|LOG_PANIC_DIE, "excessive memory alloc request");
 return store_malloc((int)size);
 }
 
 static void
-function_store_free(void *block)
+function_store_free(void * block, void * tag)
 {
-store_free(block);
+/* At least some version of pcre2 pass a null pointer */
+if (block) store_free(block);
+}
+
+
+static void *
+function_store_get(PCRE2_SIZE size, void * tag)
+{
+if (size > INT_MAX)
+  log_write(0, LOG_MAIN|LOG_PANIC_DIE, "excessive memory alloc request");
+return store_get((int)size, GET_UNTAINTED);	/* loses track of taint */
+}
+
+static void
+function_store_nullfree(void * block, void * tag)
+{
+/* We cannot free memory allocated using store_get() */
 }
 
 
@@ -73,44 +89,16 @@ enum commandline_info { CMDINFO_NONE=0,
 
 
 
-/*************************************************
-*  Compile regular expression and panic on fail  *
-*************************************************/
-
-/* This function is called when failure to compile a regular expression leads
-to a panic exit. In other cases, pcre_compile() is called directly. In many
-cases where this function is used, the results of the compilation are to be
-placed in long-lived store, so we temporarily reset the store management
-functions that PCRE uses if the use_malloc flag is set.
-
-Argument:
-  pattern     the pattern to compile
-  caseless    TRUE if caseless matching is required
-  use_malloc  TRUE if compile into malloc store
-
-Returns:      pointer to the compiled pattern
-*/
-
-const pcre *
-regex_must_compile(const uschar *pattern, BOOL caseless, BOOL use_malloc)
+static void
+pcre_init(void)
 {
-int offset;
-int options = PCRE_COPT;
-const pcre *yield;
-const uschar *error;
-if (use_malloc)
-  {
-  pcre_malloc = function_store_malloc;
-  pcre_free = function_store_free;
-  }
-if (caseless) options |= PCRE_CASELESS;
-yield = pcre_compile(CCS pattern, options, (const char **)&error, &offset, NULL);
-pcre_malloc = function_store_get;
-pcre_free = function_dummy_free;
-if (yield == NULL)
-  log_write(0, LOG_MAIN|LOG_PANIC_DIE, "regular expression error: "
-    "%s at offset %d while compiling %s", error, offset, pattern);
-return yield;
+pcre_mlc_ctx = pcre2_general_context_create(function_store_malloc, function_store_free, NULL);
+pcre_gen_ctx = pcre2_general_context_create(function_store_get, function_store_nullfree, NULL);
+
+pcre_mlc_cmp_ctx = pcre2_compile_context_create(pcre_mlc_ctx);
+pcre_gen_cmp_ctx = pcre2_compile_context_create(pcre_gen_ctx);
+
+pcre_gen_mtc_ctx = pcre2_match_context_create(pcre_gen_ctx);
 }
 
 
@@ -121,7 +109,10 @@ return yield;
 *************************************************/
 
 /* This function runs a regular expression match, and sets up the pointers to
-the matched substrings.
+the matched substrings.  The matched strings are copied so the lifetime of
+the subject is not a problem.  Matched strings will have the same taint status
+as the subject string (this is not a de-taint method, and must not be made so
+given the support for wildcards in REs).
 
 Arguments:
   re          the compiled expression
@@ -131,32 +122,77 @@ Arguments:
               if >= 0 setup from setup+1 onwards,
                 excluding the full matched string
 
-Returns:      TRUE or FALSE
+Returns:      TRUE if matched, or FALSE
 */
 
 BOOL
-regex_match_and_setup(const pcre *re, const uschar *subject, int options, int setup)
+regex_match_and_setup(const pcre2_code * re, const uschar * subject, int options, int setup)
 {
-int ovector[3*(EXPAND_MAXN+1)];
-uschar * s = string_copy(subject);	/* de-constifying */
-int n = pcre_exec(re, NULL, CS s, Ustrlen(s), 0,
-  PCRE_EOPT | options, ovector, nelem(ovector));
-BOOL yield = n >= 0;
-if (n == 0) n = EXPAND_MAXN + 1;
-if (yield)
+pcre2_match_data * md = pcre2_match_data_create_from_pattern(re, pcre_gen_ctx);
+int res = pcre2_match(re, (PCRE2_SPTR)subject, PCRE2_ZERO_TERMINATED, 0,
+			PCRE_EOPT | options, md, pcre_gen_mtc_ctx);
+BOOL yield;
+
+if ((yield = (res >= 0)))
   {
-  int nn;
+  PCRE2_SIZE * ovec = pcre2_get_ovector_pointer(md);
+  res = pcre2_get_ovector_count(md);
   expand_nmax = setup < 0 ? 0 : setup + 1;
-  for (nn = setup < 0 ? 0 : 2; nn < n*2; nn += 2)
+  for (int matchnum = setup < 0 ? 0 : 1; matchnum < res; matchnum++)
     {
-    expand_nstring[expand_nmax] = s + ovector[nn];
-    expand_nlength[expand_nmax++] = ovector[nn+1] - ovector[nn];
+    /* Although PCRE2 has a pcre2_substring_get_bynumber() conveneience, it
+    seems to return a bad pointer when a capture group had no data, eg. (.*)
+    matching zero letters.  So use the underlying ovec and hope (!) that the
+    offsets are sane (including that case).  Should we go further and range-
+    check each one vs. the subject string length? */
+    int off = matchnum * 2;
+    int len = ovec[off + 1] - ovec[off];
+    expand_nstring[expand_nmax] = string_copyn(subject + ovec[off], len);
+    expand_nlength[expand_nmax++] = len;
     }
   expand_nmax--;
   }
+else if (res != PCRE2_ERROR_NOMATCH) DEBUG(D_any)
+  {
+  uschar errbuf[128];
+  pcre2_get_error_message(res, errbuf, sizeof(errbuf));
+  debug_printf_indent("pcre2: %s\n", errbuf);
+  }
+/* pcre2_match_data_free(md);	gen ctx needs no free */
 return yield;
 }
 
+
+/* Check just for match with regex.  Uses the common memory-handling.
+
+Arguments:
+	re	compiled regex
+	subject	string to be checked
+	slen	length of subject; -1 for nul-terminated
+	rptr	pointer for matched string, copied, or NULL
+
+Return: TRUE for a match.
+*/
+
+BOOL
+regex_match(const pcre2_code * re, const uschar * subject, int slen, uschar ** rptr)
+{
+pcre2_match_data * md = pcre2_match_data_create(1, pcre_gen_ctx);
+int rc = pcre2_match(re, (PCRE2_SPTR)subject,
+		      slen >= 0 ? slen : PCRE2_ZERO_TERMINATED,
+		      0, PCRE_EOPT, md, pcre_gen_mtc_ctx);
+PCRE2_SIZE * ovec = pcre2_get_ovector_pointer(md);
+BOOL ret = FALSE;
+
+if (rc >= 0)
+  {
+  if (rptr)
+    *rptr = string_copyn(subject + ovec[0], ovec[1] - ovec[0]);
+  ret = TRUE;
+  }
+/* pcre2_match_data_free(md);	gen ctx needs no free */
+return ret;
+}
 
 
 
@@ -172,24 +208,24 @@ Returns:   nothing
 */
 
 void
-set_process_info(const char *format, ...)
+set_process_info(const char * format, ...)
 {
 gstring gs = { .size = PROCESS_INFO_SIZE - 2, .ptr = 0, .s = process_info };
 gstring * g;
 int len;
+uschar * s;
 va_list ap;
 
 g = string_fmt_append(&gs, "%5d ", (int)getpid());
-len = g->ptr;
+len = gstring_length(g);
 va_start(ap, format);
-if (!string_vformat(g, FALSE, format, ap))
+if (!string_vformat(g, 0, format, ap))
   {
   gs.ptr = len;
   g = string_cat(&gs, US"**** string overflowed buffer ****");
   }
 g = string_catn(g, US"\n", 1);
-string_from_gstring(g);
-process_info_len = g->ptr;
+process_info_len = len_string_from_gstring(g, &s);
 DEBUG(D_process_info) debug_printf("set_process_info: %s", process_info);
 va_end(ap);
 }
@@ -201,8 +237,75 @@ va_end(ap);
 static void
 term_handler(int sig)
 {
-  exit(1);
+exim_exit(EXIT_FAILURE);
 }
+
+
+/***********************************************
+*            Handler for SIGSEGV               *
+***********************************************/
+
+#define STACKDUMP_MAX 24
+void
+stackdump(void)
+{
+#ifndef NO_EXECINFO
+void * buf[STACKDUMP_MAX];
+char ** ss;
+int nptrs = backtrace(buf, STACKDUMP_MAX);
+
+log_write(0, LOG_MAIN|LOG_PANIC, "backtrace");
+log_write(0, LOG_MAIN|LOG_PANIC, "---");
+if ((ss = backtrace_symbols(buf, nptrs)))
+  {
+  for (int i = 0; i < nptrs; i++)
+    log_write(0, LOG_MAIN|LOG_PANIC, "\t%s", ss[i]);
+  free(ss);
+  }
+else
+  log_write(0, LOG_MAIN|LOG_PANIC, "backtrace_symbols: %s", strerror(errno));
+log_write(0, LOG_MAIN|LOG_PANIC, "---");
+#endif
+}
+#undef STACKDUMP_MAX
+
+
+static void
+#ifdef SA_SIGINFO
+segv_handler(int sig, siginfo_t * info, void * uctx)
+{
+log_write(0, LOG_MAIN|LOG_PANIC, "SIGSEGV (fault address: %p)", info->si_addr);
+# if defined(SEGV_MAPERR) && defined(SEGV_ACCERR) && defined(SEGV_BNDERR) && defined(SEGV_PKUERR)
+switch (info->si_code)
+  {
+  case SEGV_MAPERR: log_write(0, LOG_MAIN|LOG_PANIC, "SEGV_MAPERR"); break;
+  case SEGV_ACCERR: log_write(0, LOG_MAIN|LOG_PANIC, "SEGV_ACCERR"); break;
+  case SEGV_BNDERR: log_write(0, LOG_MAIN|LOG_PANIC, "SEGV_BNDERR"); break;
+  case SEGV_PKUERR: log_write(0, LOG_MAIN|LOG_PANIC, "SEGV_PKUERR"); break;
+  }
+# endif
+if (US info->si_addr < US 4096)
+  log_write(0, LOG_MAIN|LOG_PANIC, "SIGSEGV (null pointer indirection)");
+else
+  log_write(0, LOG_MAIN|LOG_PANIC, "SIGSEGV (maybe attempt to write to immutable memory)");
+if (process_info_len > 0)
+  log_write(0, LOG_MAIN|LOG_PANIC, "SIGSEGV (%.*s)", process_info_len, process_info);
+stackdump();
+signal(SIGSEGV, SIG_DFL);
+kill(getpid(), sig);
+}
+
+#else
+segv_handler(int sig)
+{
+log_write(0, LOG_MAIN|LOG_PANIC, "SIGSEGV (maybe attempt to write to immutable memory)");
+if (process_info_len > 0)
+  log_write(0, LOG_MAIN|LOG_PANIC, "SIGSEGV (%.*s)", process_info_len, process_info);
+stackdump();
+signal(SIGSEGV, SIG_DFL);
+kill(getpid(), sig);
+}
+#endif
 
 
 /*************************************************
@@ -263,7 +366,6 @@ Returns:  nothing
 void
 sigalrm_handler(int sig)
 {
-sig = sig;      /* Keep picky compilers happy */
 sigalrm_seen = TRUE;
 os_non_restarting_signal(SIGALRM, sigalrm_handler);
 }
@@ -281,7 +383,7 @@ will wait for ever, so we panic in this instance. (There was a case of this
 when a bug in a function that calls milliwait() caused it to pass invalid data.
 That's when I added the check. :-)
 
-We assume it to be not worth sleeping for under 100us; this value will
+We assume it to be not worth sleeping for under 50us; this value will
 require revisiting as hardware advances.  This avoids the issue of
 a zero-valued timer setting meaning "never fire".
 
@@ -294,8 +396,9 @@ milliwait(struct itimerval *itval)
 {
 sigset_t sigmask;
 sigset_t old_sigmask;
+int save_errno = errno;
 
-if (itval->it_value.tv_usec < 100 && itval->it_value.tv_sec == 0)
+if (itval->it_value.tv_usec < 50 && itval->it_value.tv_sec == 0)
   return;
 (void)sigemptyset(&sigmask);                           /* Empty mask */
 (void)sigaddset(&sigmask, SIGALRM);                    /* Add SIGALRM */
@@ -307,6 +410,8 @@ if (setitimer(ITIMER_REAL, itval, NULL) < 0)           /* Start timer */
 (void)sigdelset(&sigmask, SIGALRM);                    /* Remove SIGALRM */
 (void)sigsuspend(&sigmask);                            /* Until SIGALRM */
 (void)sigprocmask(SIG_SETMASK, &old_sigmask, NULL);    /* Restore mask */
+errno = save_errno;
+sigalrm_seen = FALSE;
 }
 
 
@@ -327,11 +432,9 @@ Returns:     nothing
 void
 millisleep(int msec)
 {
-struct itimerval itval;
-itval.it_interval.tv_sec = 0;
-itval.it_interval.tv_usec = 0;
-itval.it_value.tv_sec = msec/1000;
-itval.it_value.tv_usec = (msec % 1000) * 1000;
+struct itimerval itval = {.it_interval = {.tv_sec = 0, .tv_usec = 0},
+			  .it_value = {.tv_sec = msec/1000,
+				       .tv_usec = (msec % 1000) * 1000}};
 milliwait(&itval);
 }
 
@@ -366,6 +469,54 @@ return 0;
 *          Clock tick wait function              *
 *************************************************/
 
+#ifdef _POSIX_MONOTONIC_CLOCK
+# ifdef CLOCK_BOOTTIME
+#  define EXIM_CLOCKTYPE CLOCK_BOOTTIME
+# else
+#  define EXIM_CLOCKTYPE CLOCK_MONOTONIC
+# endif
+
+/* Amount EXIM_CLOCK is behind realtime, at startup. */
+static struct timespec offset_ts;
+
+static void
+exim_clock_init(void)
+{
+struct timeval tv;
+if (clock_gettime(EXIM_CLOCKTYPE, &offset_ts) != 0) return;
+(void)gettimeofday(&tv, NULL);
+offset_ts.tv_sec = tv.tv_sec - offset_ts.tv_sec;
+offset_ts.tv_nsec = tv.tv_usec * 1000 - offset_ts.tv_nsec;
+if (offset_ts.tv_nsec >= 0) return;
+offset_ts.tv_sec--;
+offset_ts.tv_nsec += 1000*1000*1000;
+}
+#endif
+
+
+void
+exim_gettime(struct timeval * tv)
+{
+#ifdef _POSIX_MONOTONIC_CLOCK
+struct timespec now_ts;
+
+if (clock_gettime(EXIM_CLOCKTYPE, &now_ts) == 0)
+  {
+  now_ts.tv_sec += offset_ts.tv_sec;
+  if ((now_ts.tv_nsec += offset_ts.tv_nsec) >= 1000*1000*1000)
+    {
+    now_ts.tv_sec++;
+    now_ts.tv_nsec -= 1000*1000*1000;
+    }
+  tv->tv_sec = now_ts.tv_sec;
+  tv->tv_usec = now_ts.tv_nsec / 1000;
+  }
+else
+#endif
+  (void)gettimeofday(tv, NULL);
+}
+
+
 /* Exim uses a time + a pid to generate a unique identifier in two places: its
 message IDs, and in file names for maildir deliveries. Because some OS now
 re-use pids within the same second, sub-second times are now being used.
@@ -377,9 +528,10 @@ function prepares for the time when things are faster - and it also copes with
 clocks that go backwards.
 
 Arguments:
-  then_tv      A timeval which was used to create uniqueness; its usec field
+  prev_tv      A timeval which was used to create uniqueness; its usec field
                  has been rounded down to the value of the resolution.
                  We want to be sure the current time is greater than this.
+		 On return, updated to current (rounded down).
   resolution   The resolution that was used to divide the microseconds
                  (1 for maildir, larger for message ids)
 
@@ -387,26 +539,26 @@ Returns:       nothing
 */
 
 void
-exim_wait_tick(struct timeval *then_tv, int resolution)
+exim_wait_tick(struct timeval * prev_tv, int resolution)
 {
 struct timeval now_tv;
 long int now_true_usec;
 
-(void)gettimeofday(&now_tv, NULL);
+exim_gettime(&now_tv);
 now_true_usec = now_tv.tv_usec;
 now_tv.tv_usec = (now_true_usec/resolution) * resolution;
 
-if (exim_tvcmp(&now_tv, then_tv) <= 0)
+while (exim_tvcmp(&now_tv, prev_tv) <= 0)
   {
   struct itimerval itval;
   itval.it_interval.tv_sec = 0;
   itval.it_interval.tv_usec = 0;
-  itval.it_value.tv_sec = then_tv->tv_sec - now_tv.tv_sec;
-  itval.it_value.tv_usec = then_tv->tv_usec + resolution - now_true_usec;
+  itval.it_value.tv_sec = prev_tv->tv_sec - now_tv.tv_sec;
+  itval.it_value.tv_usec = prev_tv->tv_usec + resolution - now_true_usec;
 
   /* We know that, overall, "now" is less than or equal to "then". Therefore, a
   negative value for the microseconds is possible only in the case when "now"
-  is more than a second less than "then". That means that itval.it_value.tv_sec
+  is more than a second less than "tgt". That means that itval.it_value.tv_sec
   is greater than zero. The following correction is therefore safe. */
 
   if (itval.it_value.tv_usec < 0)
@@ -420,15 +572,23 @@ if (exim_tvcmp(&now_tv, then_tv) <= 0)
     if (!f.running_in_test_harness)
       {
       debug_printf("tick check: " TIME_T_FMT ".%06lu " TIME_T_FMT ".%06lu\n",
-        then_tv->tv_sec, (long) then_tv->tv_usec,
+        prev_tv->tv_sec, (long) prev_tv->tv_usec,
        	now_tv.tv_sec, (long) now_tv.tv_usec);
-      debug_printf("waiting " TIME_T_FMT ".%06lu\n",
+      debug_printf("waiting " TIME_T_FMT ".%06lu sec\n",
         itval.it_value.tv_sec, (long) itval.it_value.tv_usec);
       }
     }
 
   milliwait(&itval);
+
+  /* Be prapared to go around if the kernel does not implement subtick
+  granularity (GNU Hurd) */
+
+  exim_gettime(&now_tv);
+  now_true_usec = now_tv.tv_usec;
+  now_tv.tv_usec = (now_true_usec/resolution) * resolution;
   }
+*prev_tv = now_tv;
 }
 
 
@@ -464,8 +624,6 @@ return f;
 }
 
 
-
-
 /*************************************************
 *   Ensure stdin, stdout, and stderr exist       *
 *************************************************/
@@ -487,16 +645,15 @@ Returns:    Nothing
 void
 exim_nullstd(void)
 {
-int i;
 int devnull = -1;
 struct stat statbuf;
-for (i = 0; i <= 2; i++)
+for (int i = 0; i <= 2; i++)
   {
   if (fstat(i, &statbuf) < 0 && errno == EBADF)
     {
     if (devnull < 0) devnull = open("/dev/null", O_RDWR);
     if (devnull < 0) log_write(0, LOG_MAIN|LOG_PANIC_DIE, "%s",
-      string_open_failed(errno, "/dev/null"));
+      string_open_failed("/dev/null", NULL));
     if (devnull != i) (void)dup2(devnull, i);
     }
   }
@@ -547,7 +704,7 @@ close_unwanted(void)
 {
 if (smtp_input)
   {
-#ifdef SUPPORT_TLS
+#ifndef DISABLE_TLS
   tls_close(NULL, TLS_NO_SHUTDOWN);      /* Shut down the TLS library */
 #endif
   (void)close(fileno(smtp_in));
@@ -593,7 +750,7 @@ Returns:     nothing; bombs out on failure
 */
 
 void
-exim_setugid(uid_t uid, gid_t gid, BOOL igflag, uschar *msg)
+exim_setugid(uid_t uid, gid_t gid, BOOL igflag, const uschar * msg)
 {
 uid_t euid = geteuid();
 gid_t egid = getegid();
@@ -632,10 +789,7 @@ DEBUG(D_uid)
   save_errno = errno;
   debug_printf("  auxiliary group list:");
   if (group_count > 0)
-    {
-    int i;
-    for (i = 0; i < group_count; i++) debug_printf(" %d", (int)group_list[i]);
-    }
+    for (int i = 0; i < group_count; i++) debug_printf(" %d", (int)group_list[i]);
   else if (group_count < 0)
     debug_printf(" <error: %s>", strerror(save_errno));
   else debug_printf(" <none>");
@@ -660,14 +814,27 @@ Returns:     does not return
 */
 
 void
-exim_exit(int rc, const uschar * process)
+exim_exit(int rc)
 {
 search_tidyup();
+store_exit();
 DEBUG(D_any)
-  debug_printf(">>>>>>>>>>>>>>>> Exim pid=%d %s%s%sterminating with rc=%d "
-    ">>>>>>>>>>>>>>>>\n", (int)getpid(),
-    process ? "(" : "", process, process ? ") " : "", rc);
+  debug_printf(">>>>>>>>>>>>>>>> Exim pid=%d (%s) terminating with rc=%d "
+    ">>>>>>>>>>>>>>>>\n",
+    (int)getpid(), process_purpose, rc);
 exit(rc);
+}
+
+
+void
+exim_underbar_exit(int rc)
+{
+store_exit();
+DEBUG(D_any)
+  debug_printf(">>>>>>>>>>>>>>>> Exim pid=%d (%s) terminating with rc=%d "
+    ">>>>>>>>>>>>>>>>\n",
+    (int)getpid(), process_purpose, rc);
+_exit(rc);
 }
 
 
@@ -679,9 +846,73 @@ exim_fail(const char * fmt, ...)
 va_list ap;
 va_start(ap, fmt);
 vfprintf(stderr, fmt, ap);
+va_end(ap);
 exit(EXIT_FAILURE);
 }
 
+/* fail if a length is too long */
+static inline void
+exim_len_fail_toolong(int itemlen, int maxlen, const char * description)
+{
+if (itemlen <= maxlen)
+  return;
+fprintf(stderr, "exim: length limit exceeded (%d > %d) for: %s\n",
+        itemlen, maxlen, description);
+exit(EXIT_FAILURE);
+}
+
+/* only pass through the string item back to the caller if it's short enough */
+static inline const uschar *
+exim_str_fail_toolong(const uschar * item, int maxlen, const char * description)
+{
+if (!item)
+  exim_fail("exim: bad item for: %s\n", description);
+exim_len_fail_toolong(Ustrlen(item), maxlen, description);
+return item;
+}
+
+/* exim_chown_failure() called from exim_chown()/exim_fchown() on failure
+of chown()/fchown().  See src/functions.h for more explanation */
+int
+exim_chown_failure(int fd, const uschar *name, uid_t owner, gid_t group)
+{
+int saved_errno = errno;  /* from the preceeding chown call */
+#if 1
+log_write(0, LOG_MAIN|LOG_PANIC,
+  __FILE__ ":%d: chown(%s, %d:%d) failed (%s)."
+  " Please contact the authors and refer to https://bugs.exim.org/show_bug.cgi?id=2391",
+  __LINE__, name?name:US"<unknown>", owner, group, strerror(errno));
+#else
+/* I leave this here, commented, in case the "bug"(?) comes up again.
+   It is not an Exim bug, but we can provide a workaround.
+   See Bug 2391
+   HS 2019-04-18 */
+
+struct stat buf;
+
+if (0 == (fd < 0 ? stat(name, &buf) : fstat(fd, &buf)))
+  {
+  if (buf.st_uid == owner && buf.st_gid == group) return 0;
+  log_write(0, LOG_MAIN|LOG_PANIC, "Wrong ownership on %s", name);
+  }
+else log_write(0, LOG_MAIN|LOG_PANIC, "Stat failed on %s: %s", name, strerror(errno));
+
+#endif
+errno = saved_errno;
+return -1;
+}
+
+
+/* Bump the index for argv, checking for overflow,
+and return the argument. */
+
+static const uschar *
+next_argv(const uschar ** argv, int * pi, int argc, const uschar * where)
+{
+int i = *pi;
+if (++i >= argc) exim_fail("exim: bad item for: %s\n", where);
+return argv[*pi = i];
+}
 
 
 /*************************************************
@@ -733,7 +964,7 @@ int start, end, domain;
 uschar *parse_error = NULL;
 uschar *address = parse_extract_address(s, &parse_error, &start, &end, &domain,
   FALSE);
-if (address == NULL)
+if (!address)
   {
   fprintf(stdout, "syntax error: %s\n", parse_error);
   *exit_value = 2;
@@ -743,7 +974,7 @@ else
   int rc = verify_address(deliver_make_addr(address,TRUE), stdout, flags, -1,
     -1, -1, NULL, NULL, NULL);
   if (rc == FAIL) *exit_value = 2;
-    else if (rc == DEFER && *exit_value == 0) *exit_value = 1;
+  else if (rc == DEFER && *exit_value == 0) *exit_value = 1;
   }
 }
 
@@ -754,279 +985,318 @@ else
 *************************************************/
 
 static void
-show_db_version(FILE * f)
+show_string(BOOL is_stdout, gstring * g)
 {
+const uschar * s = string_from_gstring(g);
+if (s)
+  if (is_stdout) fputs(CCS s, stdout);
+  else debug_printf("%s", s);
+}
+
+
+static gstring *
+show_db_version(gstring * g)
+{
+g = string_cat(g, US"Hints DB:\n");
 #ifdef DB_VERSION_STRING
 DEBUG(D_any)
   {
-  fprintf(f, "Library version: BDB: Compile: %s\n", DB_VERSION_STRING);
-  fprintf(f, "                      Runtime: %s\n",
+  g = string_fmt_append(g, " Library version: BDB: Compile: %s\n", DB_VERSION_STRING);
+  g = string_fmt_append(g, "                       Runtime: %s\n",
     db_version(NULL, NULL, NULL));
   }
 else
-  fprintf(f, "Berkeley DB: %s\n", DB_VERSION_STRING);
+  g = string_fmt_append(g, " Berkeley DB: %s\n", DB_VERSION_STRING);
 
 #elif defined(BTREEVERSION) && defined(HASHVERSION)
-  #ifdef USE_DB
-  fprintf(f, "Probably Berkeley DB version 1.8x (native mode)\n");
-  #else
-  fprintf(f, "Probably Berkeley DB version 1.8x (compatibility mode)\n");
-  #endif
+# ifdef USE_DB
+  g = string_cat(g, US" Probably Berkeley DB version 1.8x (native mode)\n");
+# else
+  g = string_cat(g, US" Probably Berkeley DB version 1.8x (compatibility mode)\n");
+# endif
 
 #elif defined(_DBM_RDONLY) || defined(dbm_dirfno)
-fprintf(f, "Probably ndbm\n");
+g = string_cat(g, US" Probably ndbm\n");
+#elif defined(USE_SQLITE)
+g = string_cat(g, US" Using sqlite3\n");
 #elif defined(USE_TDB)
-fprintf(f, "Using tdb\n");
+g = string_cat(g, US" Using tdb\n");
 #else
-  #ifdef USE_GDBM
-  fprintf(f, "Probably GDBM (native mode)\n");
-  #else
-  fprintf(f, "Probably GDBM (compatibility mode)\n");
-  #endif
+# ifdef USE_GDBM
+g = string_cat(g, US" Probably GDBM (native mode)\n");
+# else
+g = string_cat(g, US" Probably GDBM (compatibility mode)\n");
+# endif
 #endif
+return g;
 }
 
 
 /* This function is called for -bV/--version and for -d to output the optional
 features of the current Exim binary.
 
-Arguments:  a FILE for printing
+Arguments:  BOOL, true for stdout else debug channel
 Returns:    nothing
 */
 
 static void
-show_whats_supported(FILE * fp)
+show_whats_supported(BOOL is_stdout)
 {
-auth_info * authi;
+rmark reset_point = store_mark();
+gstring * g = NULL;
 
-DEBUG(D_any) {} else show_db_version(fp);
+DEBUG(D_any) {} else g = show_db_version(g);
 
-fprintf(fp, "Support for:");
+g = string_cat(g, US"Support for:");
+#ifdef WITH_CONTENT_SCAN
+  g = string_cat(g, US" Content_Scanning");
+#endif
 #ifdef SUPPORT_CRYPTEQ
-  fprintf(fp, " crypteq");
-#endif
-#if HAVE_ICONV
-  fprintf(fp, " iconv()");
-#endif
-#if HAVE_IPV6
-  fprintf(fp, " IPv6");
-#endif
-#ifdef HAVE_SETCLASSRESOURCES
-  fprintf(fp, " use_setclassresources");
-#endif
-#ifdef SUPPORT_PAM
-  fprintf(fp, " PAM");
-#endif
-#ifdef EXIM_PERL
-  fprintf(fp, " Perl");
+  g = string_cat(g, US" crypteq");
 #endif
 #ifdef EXPAND_DLFUNC
-  fprintf(fp, " Expand_dlfunc");
+  g = string_cat(g, US" Expand_dlfunc");
 #endif
-#ifdef USE_TCP_WRAPPERS
-  fprintf(fp, " TCPwrappers");
+#if HAVE_ICONV
+  g = string_cat(g, US" iconv()");
 #endif
-#ifdef SUPPORT_TLS
-# ifdef USE_GNUTLS
-  fprintf(fp, " GnuTLS");
-# else
-  fprintf(fp, " OpenSSL");
-# endif
+#if HAVE_IPV6
+  g = string_cat(g, US" IPv6");
 #endif
-#ifdef SUPPORT_TRANSLATE_IP_ADDRESS
-  fprintf(fp, " translate_ip_address");
+#ifdef SUPPORT_PAM
+  g = string_cat(g, US" PAM");
+#endif
+#ifdef EXIM_PERL
+  g = string_cat(g, US" Perl");
+#endif
+#ifdef USE_GNUTLS
+  g = string_cat(g, US" GnuTLS");
 #endif
 #ifdef SUPPORT_MOVE_FROZEN_MESSAGES
-  fprintf(fp, " move_frozen_messages");
+  g = string_cat(g, US" move_frozen_messages");
 #endif
-#ifdef WITH_CONTENT_SCAN
-  fprintf(fp, " Content_Scanning");
+#ifdef USE_OPENSSL
+  g = string_cat(g, US" OpenSSL");
+#endif
+#if defined(CYRUS_PWCHECK_SOCKET)
+  g = string_cat(g, US" pwcheck");
+#endif
+#if defined(RADIUS_CONFIG_FILE)
+  g = string_cat(g, US" radius");
+#endif
+#ifndef DISABLE_TLS_RESUME
+  g = string_cat(g, US" TLS_resume");
+#endif
+#ifdef SUPPORT_TRANSLATE_IP_ADDRESS
+  g = string_cat(g, US" translate_ip_address");
+#endif
+#ifdef USE_TCP_WRAPPERS
+  g = string_cat(g, US" TCPwrappers");
+#endif
+#ifdef HAVE_SETCLASSRESOURCES
+  g = string_cat(g, US" use_setclassresources");
 #endif
 #ifdef SUPPORT_DANE
-  fprintf(fp, " DANE");
+  g = string_cat(g, US" DANE");
 #endif
 #ifndef DISABLE_DKIM
-  fprintf(fp, " DKIM");
+  g = string_cat(g, US" DKIM");
+#endif
+#ifdef SUPPORT_DMARC
+  g = string_cat(g, US" DMARC");
 #endif
 #ifndef DISABLE_DNSSEC
-  fprintf(fp, " DNSSEC");
+  g = string_cat(g, US" DNSSEC");
+#endif
+#ifndef DISABLE_ESMTP_LIMITS
+  g = string_cat(g, US" ESMTP_Limits");
+#endif
+#ifndef DISABLE_WELLKNOWN
+  g = string_cat(g, US" ESMTP_Wellknown");
 #endif
 #ifndef DISABLE_EVENT
-  fprintf(fp, " Event");
+  g = string_cat(g, US" Event");
 #endif
 #ifdef SUPPORT_I18N
-  fprintf(fp, " I18N");
+  g = string_cat(g, US" I18N");
 #endif
 #ifndef DISABLE_OCSP
-  fprintf(fp, " OCSP");
+  g = string_cat(g, US" OCSP");
+#endif
+#ifndef DISABLE_PIPE_CONNECT
+  g = string_cat(g, US" PIPECONNECT");
 #endif
 #ifndef DISABLE_PRDR
-  fprintf(fp, " PRDR");
+  g = string_cat(g, US" PRDR");
 #endif
 #ifdef SUPPORT_PROXY
-  fprintf(fp, " PROXY");
+  g = string_cat(g, US" PROXY");
+#endif
+#ifndef DISABLE_QUEUE_RAMP
+  g = string_cat(g, US" Queue_Ramp");
 #endif
 #ifdef SUPPORT_SOCKS
-  fprintf(fp, " SOCKS");
+  g = string_cat(g, US" SOCKS");
 #endif
 #ifdef SUPPORT_SPF
-  fprintf(fp, " SPF");
+  g = string_cat(g, US" SPF");
+#endif
+#if defined(SUPPORT_SRS)
+  g = string_cat(g, US" SRS");
 #endif
 #ifdef TCP_FASTOPEN
-  deliver_init();
-  if (f.tcp_fastopen_ok) fprintf(fp, " TCP_Fast_Open");
-#endif
-#ifdef EXPERIMENTAL_LMDB
-  fprintf(fp, " Experimental_LMDB");
-#endif
-#ifdef EXPERIMENTAL_QUEUEFILE
-  fprintf(fp, " Experimental_QUEUEFILE");
-#endif
-#ifdef EXPERIMENTAL_SRS
-  fprintf(fp, " Experimental_SRS");
+  tcp_init();
+  if (f.tcp_fastopen_ok) g = string_cat(g, US" TCP_Fast_Open");
 #endif
 #ifdef EXPERIMENTAL_ARC
-  fprintf(fp, " Experimental_ARC");
+  g = string_cat(g, US" Experimental_ARC");
 #endif
 #ifdef EXPERIMENTAL_BRIGHTMAIL
-  fprintf(fp, " Experimental_Brightmail");
+  g = string_cat(g, US" Experimental_Brightmail");
 #endif
 #ifdef EXPERIMENTAL_DCC
-  fprintf(fp, " Experimental_DCC");
-#endif
-#ifdef EXPERIMENTAL_DMARC
-  fprintf(fp, " Experimental_DMARC");
+  g = string_cat(g, US" Experimental_DCC");
 #endif
 #ifdef EXPERIMENTAL_DSN_INFO
-  fprintf(fp, " Experimental_DSN_info");
+  g = string_cat(g, US" Experimental_DSN_info");
 #endif
-#ifdef EXPERIMENTAL_REQUIRETLS
-  fprintf(fp, " Experimental_REQUIRETLS");
+#ifdef EXPERIMENTAL_QUEUEFILE
+  g = string_cat(g, US" Experimental_QUEUEFILE");
 #endif
-#ifdef EXPERIMENTAL_PIPE_CONNECT
-  fprintf(fp, " Experimental_PIPE_CONNECT");
+#ifdef EXPERIMENTAL_XCLIENT
+  g = string_cat(g, US" Experimental_XCLIENT");
 #endif
-fprintf(fp, "\n");
+g = string_cat(g, US"\n");
 
-fprintf(fp, "Lookups (built-in):");
+g = string_cat(g, US"Lookups (built-in):");
 #if defined(LOOKUP_LSEARCH) && LOOKUP_LSEARCH!=2
-  fprintf(fp, " lsearch wildlsearch nwildlsearch iplsearch");
+  g = string_cat(g, US" lsearch wildlsearch nwildlsearch iplsearch");
 #endif
 #if defined(LOOKUP_CDB) && LOOKUP_CDB!=2
-  fprintf(fp, " cdb");
+  g = string_cat(g, US" cdb");
 #endif
 #if defined(LOOKUP_DBM) && LOOKUP_DBM!=2
-  fprintf(fp, " dbm dbmjz dbmnz");
+  g = string_cat(g, US" dbm dbmjz dbmnz");
 #endif
 #if defined(LOOKUP_DNSDB) && LOOKUP_DNSDB!=2
-  fprintf(fp, " dnsdb");
+  g = string_cat(g, US" dnsdb");
 #endif
 #if defined(LOOKUP_DSEARCH) && LOOKUP_DSEARCH!=2
-  fprintf(fp, " dsearch");
+  g = string_cat(g, US" dsearch");
 #endif
 #if defined(LOOKUP_IBASE) && LOOKUP_IBASE!=2
-  fprintf(fp, " ibase");
+  g = string_cat(g, US" ibase");
+#endif
+#if defined(LOOKUP_JSON) && LOOKUP_JSON!=2
+  g = string_cat(g, US" json");
 #endif
 #if defined(LOOKUP_LDAP) && LOOKUP_LDAP!=2
-  fprintf(fp, " ldap ldapdn ldapm");
+  g = string_cat(g, US" ldap ldapdn ldapm");
 #endif
-#ifdef EXPERIMENTAL_LMDB
-  fprintf(fp, " lmdb");
+#ifdef LOOKUP_LMDB
+  g = string_cat(g, US" lmdb");
 #endif
 #if defined(LOOKUP_MYSQL) && LOOKUP_MYSQL!=2
-  fprintf(fp, " mysql");
+  g = string_cat(g, US" mysql");
 #endif
 #if defined(LOOKUP_NIS) && LOOKUP_NIS!=2
-  fprintf(fp, " nis nis0");
+  g = string_cat(g, US" nis nis0");
 #endif
 #if defined(LOOKUP_NISPLUS) && LOOKUP_NISPLUS!=2
-  fprintf(fp, " nisplus");
+  g = string_cat(g, US" nisplus");
 #endif
 #if defined(LOOKUP_ORACLE) && LOOKUP_ORACLE!=2
-  fprintf(fp, " oracle");
+  g = string_cat(g, US" oracle");
 #endif
 #if defined(LOOKUP_PASSWD) && LOOKUP_PASSWD!=2
-  fprintf(fp, " passwd");
+  g = string_cat(g, US" passwd");
 #endif
 #if defined(LOOKUP_PGSQL) && LOOKUP_PGSQL!=2
-  fprintf(fp, " pgsql");
+  g = string_cat(g, US" pgsql");
 #endif
 #if defined(LOOKUP_REDIS) && LOOKUP_REDIS!=2
-  fprintf(fp, " redis");
+  g = string_cat(g, US" redis");
 #endif
 #if defined(LOOKUP_SQLITE) && LOOKUP_SQLITE!=2
-  fprintf(fp, " sqlite");
+  g = string_cat(g, US" sqlite");
 #endif
 #if defined(LOOKUP_TESTDB) && LOOKUP_TESTDB!=2
-  fprintf(fp, " testdb");
+  g = string_cat(g, US" testdb");
 #endif
 #if defined(LOOKUP_WHOSON) && LOOKUP_WHOSON!=2
-  fprintf(fp, " whoson");
+  g = string_cat(g, US" whoson");
 #endif
-fprintf(fp, "\n");
+g = string_cat(g, US"\n");
 
-auth_show_supported(fp);
-route_show_supported(fp);
-transport_show_supported(fp);
+g = auth_show_supported(g);
+g = route_show_supported(g);
+g = transport_show_supported(g);
 
 #ifdef WITH_CONTENT_SCAN
-malware_show_supported(fp);
+g = malware_show_supported(g);
 #endif
+show_string(is_stdout, g); g = NULL;
 
 if (fixed_never_users[0] > 0)
   {
   int i;
-  fprintf(fp, "Fixed never_users: ");
+  g = string_cat(g, US"Fixed never_users: ");
   for (i = 1; i <= (int)fixed_never_users[0] - 1; i++)
-    fprintf(fp, "%d:", (unsigned int)fixed_never_users[i]);
-  fprintf(fp, "%d\n", (unsigned int)fixed_never_users[i]);
+    string_fmt_append(g, "%u:", (unsigned)fixed_never_users[i]);
+  g = string_fmt_append(g, "%u\n", (unsigned)fixed_never_users[i]);
   }
 
-fprintf(fp, "Configure owner: %d:%d\n", config_uid, config_gid);
+g = string_fmt_append(g, "Configure owner: %d:%d\n", config_uid, config_gid);
 
-fprintf(fp, "Size of off_t: " SIZE_T_FMT "\n", sizeof(off_t));
+g = string_fmt_append(g, "Size of off_t: " SIZE_T_FMT "\n", sizeof(off_t));
 
 /* Everything else is details which are only worth reporting when debugging.
 Perhaps the tls_version_report should move into this too. */
-DEBUG(D_any) do {
-
-  int i;
+DEBUG(D_any)
+  {
 
 /* clang defines __GNUC__ (at least, for me) so test for it first */
 #if defined(__clang__)
-  fprintf(fp, "Compiler: CLang [%s]\n", __clang_version__);
+  g = string_fmt_append(g, "Compiler: CLang [%s]\n", __clang_version__);
 #elif defined(__GNUC__)
-  fprintf(fp, "Compiler: GCC [%s]\n",
 # ifdef __VERSION__
-      __VERSION__
+  g = string_fmt_append(g, "Compiler: GCC [%s]\n", __VERSION__);
 # else
-      "? unknown version ?"
+  g = string_fmt_append(g, "Compiler: GCC [%s]\n", "? unknown version ?";
 # endif
-      );
 #else
-  fprintf(fp, "Compiler: <unknown>\n");
+  g = string_cat(g, US"Compiler: <unknown>\n");
 #endif
 
 #if defined(__GLIBC__) && !defined(__UCLIBC__)
-  fprintf(fp, "Library version: Glibc: Compile: %d.%d\n",
+  g = string_fmt_append(g, "Library version: Glibc: Compile: %d.%d\n",
 	       	__GLIBC__, __GLIBC_MINOR__);
   if (__GLIBC_PREREQ(2, 1))
-    fprintf(fp, "                        Runtime: %s\n",
+    g = string_fmt_append(g, "                        Runtime: %s\n",
 	       	gnu_get_libc_version());
 #endif
 
-show_db_version(fp);
+g = show_db_version(g);
 
-#ifdef SUPPORT_TLS
-  tls_version_report(fp);
+#ifndef DISABLE_TLS
+  g = tls_version_report(g);
 #endif
 #ifdef SUPPORT_I18N
-  utf8_version_report(fp);
+  g = utf8_version_report(g);
+#endif
+#ifdef SUPPORT_DMARC
+  g = dmarc_version_report(g);
+#endif
+#ifdef SUPPORT_SPF
+  g = spf_lib_version_report(g);
 #endif
 
-  for (authi = auths_available; *authi->driver_name != '\0'; ++authi)
-    if (authi->version_report)
-      (*authi->version_report)(fp);
+show_string(is_stdout, g);
+g = NULL;
+
+for (auth_info * authi = auths_available; *authi->driver_name != '\0'; ++authi)
+  if (authi->version_report)
+    g = (*authi->version_report)(g);
 
   /* PCRE_PRERELEASE is either defined and empty or a bare sequence of
   characters; unless it's an ancient version of PCRE in which case it
@@ -1036,31 +1306,42 @@ show_db_version(fp);
 #endif
 #define QUOTE(X) #X
 #define EXPAND_AND_QUOTE(X) QUOTE(X)
-  fprintf(fp, "Library version: PCRE: Compile: %d.%d%s\n"
-             "                       Runtime: %s\n",
-          PCRE_MAJOR, PCRE_MINOR,
-          EXPAND_AND_QUOTE(PCRE_PRERELEASE) "",
-          pcre_version());
+  {
+  uschar buf[24];
+  pcre2_config(PCRE2_CONFIG_VERSION, buf);
+  g = string_fmt_append(g, "Library version: PCRE2: Compile: %d.%d%s\n"
+              "                        Runtime: %s\n",
+          PCRE2_MAJOR, PCRE2_MINOR,
+          EXPAND_AND_QUOTE(PCRE2_PRERELEASE) "",
+          buf);
+  }
 #undef QUOTE
 #undef EXPAND_AND_QUOTE
 
-  init_lookup_list();
-  for (i = 0; i < lookup_list_count; i++)
-    if (lookup_list[i]->version_report)
-      lookup_list[i]->version_report(fp);
+show_string(is_stdout, g);
+g = NULL;
+
+init_lookup_list();
+for (int i = 0; i < lookup_list_count; i++)
+  if (lookup_list[i]->version_report)
+    g = lookup_list[i]->version_report(g);
+show_string(is_stdout, g);
+g = NULL;
 
 #ifdef WHITELIST_D_MACROS
-  fprintf(fp, "WHITELIST_D_MACROS: \"%s\"\n", WHITELIST_D_MACROS);
+  g = string_fmt_append(g, "WHITELIST_D_MACROS: \"%s\"\n", WHITELIST_D_MACROS);
 #else
-  fprintf(fp, "WHITELIST_D_MACROS unset\n");
+  g = string_cat(g, US"WHITELIST_D_MACROS unset\n");
 #endif
 #ifdef TRUSTED_CONFIG_LIST
-  fprintf(fp, "TRUSTED_CONFIG_LIST: \"%s\"\n", TRUSTED_CONFIG_LIST);
+  g = string_fmt_append(g, "TRUSTED_CONFIG_LIST: \"%s\"\n", TRUSTED_CONFIG_LIST);
 #else
-  fprintf(fp, "TRUSTED_CONFIG_LIST unset\n");
+  g = string_cat(g, US"TRUSTED_CONFIG_LIST unset\n");
 #endif
+  }
 
-} while (0);
+show_string(is_stdout, g);
+store_reset(reset_point);
 }
 
 
@@ -1071,8 +1352,6 @@ show_db_version(fp);
 static void
 show_exim_information(enum commandline_info request, FILE *stream)
 {
-const uschar **pp;
-
 switch(request)
   {
   case CMDINFO_NONE:
@@ -1089,7 +1368,7 @@ switch(request)
 );
     return;
   case CMDINFO_SIEVE:
-    for (pp = exim_sieve_extension_list; *pp; ++pp)
+    for (const uschar ** pp = exim_sieve_extension_list; *pp; ++pp)
       fprintf(stream, "%s\n", *pp);
     return;
   case CMDINFO_DSCP:
@@ -1111,18 +1390,15 @@ Argument:    the local part
 Returns:     the local part, quoted if necessary
 */
 
-uschar *
-local_part_quote(uschar *lpart)
+const uschar *
+local_part_quote(const uschar * lpart)
 {
 BOOL needs_quote = FALSE;
 gstring * g;
-uschar *t;
 
-for (t = lpart; !needs_quote && *t != 0; t++)
-  {
+for (const uschar * t = lpart; !needs_quote && *t; t++)
   needs_quote = !isalnum(*t) && strchr("!#$%&'*+-/=?^_`{|}~", *t) == NULL &&
     (*t != '.' || t == lpart || t[1] == 0);
-  }
 
 if (!needs_quote) return lpart;
 
@@ -1130,8 +1406,8 @@ g = string_catn(NULL, US"\"", 1);
 
 for (;;)
   {
-  uschar *nq = US Ustrpbrk(lpart, "\\\"");
-  if (nq == NULL)
+  uschar * nq = US Ustrpbrk(lpart, "\\\"");
+  if (!nq)
     {
     g = string_cat(g, lpart);
     break;
@@ -1174,9 +1450,9 @@ void *dlhandle;
 void *dlhandle_curses = dlopen("libcurses." DYNLIB_FN_EXT, RTLD_GLOBAL|RTLD_LAZY);
 
 dlhandle = dlopen("libreadline." DYNLIB_FN_EXT, RTLD_GLOBAL|RTLD_NOW);
-if (dlhandle_curses != NULL) dlclose(dlhandle_curses);
+if (dlhandle_curses) dlclose(dlhandle_curses);
 
-if (dlhandle != NULL)
+if (dlhandle)
   {
   /* Checked manual pages; at least in GNU Readline 6.1, the prototypes are:
    *   char * readline (const char *prompt);
@@ -1186,9 +1462,7 @@ if (dlhandle != NULL)
   *fn_addhist_ptr = (void(*)(const char*))dlsym(dlhandle, "add_history");
   }
 else
-  {
   DEBUG(D_any) debug_printf("failed to load readline: %s\n", dlerror());
-  }
 
 return dlhandle;
 }
@@ -1215,60 +1489,59 @@ Returns:        pointer to dynamic memory, or NULL at end of file
 static uschar *
 get_stdinput(char *(*fn_readline)(const char *), void(*fn_addhist)(const char *))
 {
-int i;
 gstring * g = NULL;
+BOOL had_input = FALSE;
 
 if (!fn_readline) { printf("> "); fflush(stdout); }
 
-for (i = 0;; i++)
+for (int i = 0;; i++)
   {
   uschar buffer[1024];
-  uschar *p, *ss;
+  uschar * p, * ss;
 
-  #ifdef USE_READLINE
+#ifdef USE_READLINE
   char *readline_line = NULL;
-  if (fn_readline != NULL)
+  if (fn_readline)
     {
-    if ((readline_line = fn_readline((i > 0)? "":"> ")) == NULL) break;
-    if (*readline_line != 0 && fn_addhist != NULL) fn_addhist(readline_line);
+    if (!(readline_line = fn_readline((i > 0)? "":"> "))) break;
+    if (*readline_line && fn_addhist) fn_addhist(readline_line);
     p = US readline_line;
     }
   else
-  #endif
+#endif
 
   /* readline() not in use */
 
     {
-    if (Ufgets(buffer, sizeof(buffer), stdin) == NULL) break;
+    if (Ufgets(buffer, sizeof(buffer), stdin) == NULL) break;	/*EOF*/
     p = buffer;
     }
 
   /* Handle the line */
 
-  ss = p + (int)Ustrlen(p);
-  while (ss > p && isspace(ss[-1])) ss--;
+  had_input = TRUE;
+  ss = p + Ustrlen(p);
+  while (ss > p && isspace(ss[-1])) ss--; /* strip trailing newline (and spaces) */
 
   if (i > 0)
-    {
-    while (p < ss && isspace(*p)) p++;   /* leading space after cont */
-    }
+    while (p < ss && isspace(*p)) p++;   /* strip leading space after cont */
 
   g = string_catn(g, p, ss - p);
 
-  #ifdef USE_READLINE
+#ifdef USE_READLINE
   if (fn_readline) free(readline_line);
-  #endif
+#endif
 
   /* g can only be NULL if ss==p */
-  if (ss == p || g->s[g->ptr-1] != '\\')
+  if (ss == p || gstring_last_char(g) != '\\') /* not continuation; done */
     break;
 
-  --g->ptr;
-  (void) string_from_gstring(g);
+  gstring_trim(g, 1);				/* drop the \ */
   }
 
-if (!g) printf("\n");
-return string_from_gstring(g);
+if (had_input) return g ? string_from_gstring(g) : US"";
+printf("\n");
+return NULL;
 }
 
 
@@ -1287,7 +1560,7 @@ Returns:        DOES NOT RETURN
 */
 
 static void
-exim_usage(uschar *progname)
+exim_usage(const uschar * progname)
 {
 
 /* Handle specific program invocation variants */
@@ -1320,8 +1593,7 @@ static BOOL
 macros_trusted(BOOL opt_D_used)
 {
 #ifdef WHITELIST_D_MACROS
-macro_item *m;
-uschar *whitelisted, *end, *p, **whites, **w;
+uschar *whitelisted, *end, *p, **whites;
 int white_count, i, n;
 size_t len;
 BOOL prev_char_item, found;
@@ -1349,7 +1621,7 @@ if ( ! ((real_uid == root_uid)
   }
 
 /* Get a list of macros which are whitelisted */
-whitelisted = string_copy_malloc(US WHITELIST_D_MACROS);
+whitelisted = string_copy_perm(US WHITELIST_D_MACROS, FALSE);
 prev_char_item = FALSE;
 white_count = 0;
 for (p = whitelisted; *p != '\0'; ++p)
@@ -1386,10 +1658,10 @@ whites[i] = NULL;
 
 /* The list of commandline macros should be very short.
 Accept the N*M complexity. */
-for (m = macros_user; m; m = m->next) if (m->command_line)
+for (macro_item * m = macros_user; m; m = m->next) if (m->command_line)
   {
   found = FALSE;
-  for (w = whites; *w; ++w)
+  for (uschar ** w = whites; *w; ++w)
     if (Ustrcmp(*w, m->name) == 0)
       {
       found = TRUE;
@@ -1401,14 +1673,8 @@ for (m = macros_user; m; m = m->next) if (m->command_line)
     continue;
   if ((len = m->replen) == 0)
     continue;
-  n = pcre_exec(regex_whitelisted_macro, NULL, CS m->replacement, len,
-   0, PCRE_EOPT, NULL, 0);
-  if (n < 0)
-    {
-    if (n != PCRE_ERROR_NOMATCH)
-      debug_printf("macros_trusted checking %s returned %d\n", m->name, n);
+  if (!regex_match(regex_whitelisted_macro, m->replacement, len, NULL))
     return FALSE;
-    }
   }
 DEBUG(D_any) debug_printf("macros_trusted overridden to true by whitelisting\n");
 return TRUE;
@@ -1427,10 +1693,11 @@ Arguments:
 */
 
 static void
-expansion_test_line(uschar * line)
+expansion_test_line(const uschar * line)
 {
 int len;
 BOOL dummy_macexp;
+uschar * s;
 
 Ustrncpy(big_buffer, line, big_buffer_size);
 big_buffer[big_buffer_size-1] = '\0';
@@ -1443,11 +1710,43 @@ if (isupper(big_buffer[0]))
   if (macro_read_assignment(big_buffer))
     printf("Defined macro '%s'\n", mlast->name);
   }
+else if (Ustrncmp(big_buffer, "set,t ", 6) == 0)
+  printf("%s\n", acl_standalone_setvar(big_buffer+6, TRUE));
+else if (Ustrncmp(big_buffer, "set ", 4) == 0)
+  printf("%s\n", acl_standalone_setvar(big_buffer+4, FALSE));
 else
-  if ((line = expand_string(big_buffer))) printf("%s\n", CS line);
+  if ((s = expand_string(big_buffer))) printf("%s\n", CS s);
   else printf("Failed: %s\n", expand_string_message);
 }
 
+
+
+/*************************************************
+*          Queue-runner operations               *
+*************************************************/
+
+/* Prefix a new qrunner descriptor to the qrunners list */
+
+static qrunner *
+alloc_qrunner(void)
+{
+qrunner * q = qrunners;
+qrunners = store_get(sizeof(qrunner), GET_UNTAINTED);
+memset(qrunners, 0, sizeof(qrunner));		/* default queue, zero interval */
+qrunners->next = q;
+qrunners->next_tick = time(NULL);		/* run right away */
+return qrunners;
+}
+
+static qrunner *
+alloc_onetime_qrunner(void)
+{
+qrunners = store_get_perm(sizeof(qrunner), GET_UNTAINTED);
+memset(qrunners, 0, sizeof(qrunner));		/* default queue, zero interval */
+qrunners->next_tick = time(NULL);		/* run right away */
+qrunners->run_max = 1;
+return qrunners;
+}
 
 
 /*************************************************
@@ -1470,9 +1769,9 @@ Returns:    EXIT_SUCCESS if terminated successfully
 */
 
 int
-main(int argc, char **cargv)
+main(int argc, char ** cargv)
 {
-uschar **argv = USS cargv;
+const uschar ** argv = CUSS cargv;
 int  arg_receive_timeout = -1;
 int  arg_smtp_receive_timeout = -1;
 int  arg_error_handling = error_handling;
@@ -1480,10 +1779,10 @@ int  filter_sfd = -1;
 int  filter_ufd = -1;
 int  group_count;
 int  i, rv;
-int  list_queue_option = 0;
+int  list_queue_option = QL_BASIC;
 int  msg_action = 0;
 int  msg_action_arg = -1;
-int  namelen = (argv[0] == NULL)? 0 : Ustrlen(argv[0]);
+int  namelen = argv[0] ? Ustrlen(argv[0]) : 0;
 int  queue_only_reason = 0;
 #ifdef EXIM_PERL
 int  perl_start_option = 0;
@@ -1508,7 +1807,6 @@ BOOL list_queue = FALSE;
 BOOL list_options = FALSE;
 BOOL list_config = FALSE;
 BOOL local_queue_only;
-BOOL more = TRUE;
 BOOL one_msg_action = FALSE;
 BOOL opt_D_used = FALSE;
 BOOL queue_only_set = FALSE;
@@ -1520,23 +1818,23 @@ BOOL removed_privilege = FALSE;
 BOOL usage_wanted = FALSE;
 BOOL verify_address_mode = FALSE;
 BOOL verify_as_sender = FALSE;
+BOOL rcpt_verify_quota = FALSE;
 BOOL version_printed = FALSE;
-uschar *alias_arg = NULL;
-uschar *called_as = US"";
-uschar *cmdline_syslog_name = NULL;
-uschar *start_queue_run_id = NULL;
-uschar *stop_queue_run_id = NULL;
-uschar *expansion_test_message = NULL;
-uschar *ftest_domain = NULL;
-uschar *ftest_localpart = NULL;
-uschar *ftest_prefix = NULL;
-uschar *ftest_suffix = NULL;
-uschar *log_oneline = NULL;
-uschar *malware_test_file = NULL;
-uschar *real_sender_address;
-uschar *originator_home = US"/";
+const uschar * alias_arg = NULL;
+const uschar * called_as = US"";
+const uschar * cmdline_syslog_name = NULL;
+const uschar * start_queue_run_id = NULL;
+const uschar * stop_queue_run_id = NULL;
+const uschar * expansion_test_message = NULL;
+const uschar * ftest_domain = NULL;
+const uschar * ftest_localpart = NULL;
+const uschar * ftest_prefix = NULL;
+const uschar * ftest_suffix = NULL;
+uschar * log_oneline = NULL;
+const uschar * malware_test_file = NULL;
+const uschar * real_sender_address;
+uschar * originator_home = US"/";
 size_t sz;
-void *reset_point;
 
 struct passwd *pw;
 struct stat statbuf;
@@ -1557,6 +1855,13 @@ to get rid of a bogus time zone. We have to make it char rather than uschar
 because some OS define it in /usr/include/unistd.h. */
 
 extern char **environ;
+
+#ifdef MEASURE_TIMING
+(void)gettimeofday(&timestamp_startup, NULL);
+#endif
+
+store_init();	/* Initialise the memory allocation susbsystem */
+pcre_init();	/* Set up memory handling for pcre */
 
 /* If the Exim user and/or group and/or the configuration file owner/group were
 defined by ref:name at build time, we must now find the actual uid/gid values.
@@ -1620,12 +1925,22 @@ f.running_in_test_harness =
 if (f.running_in_test_harness)
   debug_store = TRUE;
 
+/* Protect against abusive argv[0] */
+if (!argv[0] || !argc) exim_fail("exim: executable name required\n");
+exim_str_fail_toolong(argv[0], PATH_MAX, "argv[0]");
+
 /* The C standard says that the equivalent of setlocale(LC_ALL, "C") is obeyed
 at the start of a program; however, it seems that some environments do not
 follow this. A "strange" locale can affect the formatting of timestamps, so we
 make quite sure. */
 
 setlocale(LC_ALL, "C");
+
+/* Get the offset between CLOCK_MONOTONIC/CLOCK_BOOTTIME and wallclock */
+
+#ifdef _POSIX_MONOTONIC_CLOCK
+exim_clock_init();
+#endif
 
 /* Set up the default handler for timing using alarm(). */
 
@@ -1648,15 +1963,6 @@ indirection, because some systems don't allow writing to the variable "stderr".
 
 if (fstat(fileno(stderr), &statbuf) >= 0) log_stderr = stderr;
 
-/* Arrange for the PCRE regex library to use our store functions. Note that
-the normal calls are actually macros that add additional arguments for
-debugging purposes so we have to assign specially constructed functions here.
-The default is to use store in the stacking pool, but this is overridden in the
-regex_must_compile() function. */
-
-pcre_malloc = function_store_get;
-pcre_free = function_dummy_free;
-
 /* Ensure there is a big buffer for temporary use in several places. It is put
 in malloc store so that it can be freed for enlargement if necessary. */
 
@@ -1665,11 +1971,21 @@ big_buffer = store_malloc(big_buffer_size);
 /* Set up the handler for the data request signal, and set the initial
 descriptive text. */
 
+process_info = store_get(PROCESS_INFO_SIZE, GET_TAINTED);
 set_process_info("initializing");
-os_restarting_signal(SIGUSR1, usr1_handler);
+os_restarting_signal(SIGUSR1, usr1_handler);		/* exiwhat */
+#ifdef SA_SIGINFO
+  {
+  struct sigaction act = { .sa_sigaction = segv_handler, .sa_flags = SA_RESETHAND | SA_SIGINFO };
+  sigaction(SIGSEGV, &act, NULL);
+  }
+#else
+signal(SIGSEGV, segv_handler);				/* log faults */
+#endif
 
 /* If running in a dockerized environment, the TERM signal is only
 delegated to the PID 1 if we request it by setting an signal handler */
+
 if (getpid() == 1) signal(SIGTERM, term_handler);
 
 /* SIGHUP is used to get the daemon to reconfigure. It gets set as appropriate
@@ -1737,7 +2053,14 @@ this here, because the -M options check their arguments for syntactic validity
 using mac_ismsgid, which uses this. */
 
 regex_ismsgid =
-  regex_must_compile(US"^(?:[^\\W_]{6}-){2}[^\\W_]{2}$", FALSE, TRUE);
+  regex_must_compile(US"^(?:"
+	  "[^\\W_]{" str(MESSAGE_ID_TIME_LEN) "}"
+	  "-[^\\W_]{" str(MESSAGE_ID_PID_LEN) "}"
+	  "-[^\\W_]{" str(MESSAGE_ID_SUBTIME_LEN) "}"
+	"|"
+	  "(?:[^\\W_]{6}-){2}[^\\W_]{2}"		/* old ID format */
+	")$",
+    MCS_NOFLAGS, TRUE);
 
 /* Precompile the regular expression that is used for matching an SMTP error
 code, possibly extended, at the start of an error message. Note that the
@@ -1745,17 +2068,15 @@ terminating whitespace character is included. */
 
 regex_smtp_code =
   regex_must_compile(US"^\\d\\d\\d\\s(?:\\d\\.\\d\\d?\\d?\\.\\d\\d?\\d?\\s)?",
-    FALSE, TRUE);
+    MCS_NOFLAGS, TRUE);
 
 #ifdef WHITELIST_D_MACROS
 /* Precompile the regular expression used to filter the content of macros
 given to -D for permissibility. */
 
 regex_whitelisted_macro =
-  regex_must_compile(US"^[A-Za-z0-9_/.-]*$", FALSE, TRUE);
+  regex_must_compile(US"^[A-Za-z0-9_/.-]*$", MCS_NOFLAGS, TRUE);
 #endif
-
-for (i = 0; i < REGEX_VARS; i++) regex_vars[i] = NULL;
 
 /* If the program is called as "mailq" treat it as equivalent to "exim -bp";
 this seems to be a generally accepted convention, since one finds symbolic
@@ -1799,7 +2120,7 @@ this is a smail convention. */
 if ((namelen == 4 && Ustrcmp(argv[0], "runq") == 0) ||
     (namelen  > 4 && Ustrncmp(argv[0] + namelen - 5, "/runq", 5) == 0))
   {
-  queue_interval = 0;
+  alloc_onetime_qrunner();
   receiving_message = FALSE;
   called_as = US"-runq";
   }
@@ -1844,16 +2165,21 @@ running in an unprivileged state. */
 
 unprivileged = (real_uid != root_uid && original_euid != root_uid);
 
+/* For most of the args-parsing we need to use permanent pool memory */
+ {
+ int old_pool = store_pool;
+ store_pool = POOL_PERM;
+
 /* Scan the program's arguments. Some can be dealt with right away; others are
 simply recorded for checking and handling afterwards. Do a high-level switch
 on the second character (the one after '-'), to save some effort. */
 
-for (i = 1; i < argc; i++)
+ for (i = 1; i < argc; i++)
   {
   BOOL badarg = FALSE;
-  uschar *arg = argv[i];
-  uschar *argrest;
-  int switchchar;
+  const uschar * arg = argv[i];
+  const uschar * argrest;
+  uschar switchchar;
 
   /* An argument not starting with '-' is the start of a recipients list;
   break out of the options-scanning loop. */
@@ -1931,7 +2257,7 @@ for (i = 1; i < argc; i++)
     /* sendmail uses -Ac and -Am to control which .cf file is used;
     we ignore them. */
     case 'A':
-    if (*argrest == '\0') { badarg = TRUE; break; }
+    if (!*argrest) { badarg = TRUE; break; }
     else
       {
       BOOL ignore = FALSE;
@@ -1943,7 +2269,7 @@ for (i = 1; i < argc; i++)
             ignore = TRUE;
           break;
         }
-      if (!ignore) { badarg = TRUE; break; }
+      if (!ignore) badarg = TRUE;
       }
     break;
 
@@ -1951,293 +2277,303 @@ for (i = 1; i < argc; i++)
     so has no need of it. */
 
     case 'B':
-    if (*argrest == 0) i++;       /* Skip over the type */
+    if (!*argrest) i++;       /* Skip over the type */
     break;
 
 
     case 'b':
-    receiving_message = FALSE;    /* Reset TRUE for -bm, -bS, -bs below */
-
-    /* -bd:  Run in daemon mode, awaiting SMTP connections.
-       -bdf: Ditto, but in the foreground.
-    */
-
-    if (*argrest == 'd')
       {
-      f.daemon_listen = TRUE;
-      if (*(++argrest) == 'f') f.background_daemon = FALSE;
-        else if (*argrest != 0) { badarg = TRUE; break; }
+      receiving_message = FALSE;    /* Reset TRUE for -bm, -bS, -bs below */
+
+      switch (*argrest++)
+	{
+	/* -bd:  Run in daemon mode, awaiting SMTP connections.
+	   -bdf: Ditto, but in the foreground.
+	*/
+	case 'd':
+	  f.daemon_listen = f.daemon_scion = TRUE;
+	  if (*argrest == 'f') f.background_daemon = FALSE;
+	  else if (*argrest) badarg = TRUE;
+	  break;
+
+	/* -be:  Run in expansion test mode
+	   -bem: Ditto, but read a message from a file first
+	*/
+	case 'e':
+	  expansion_test = checking = TRUE;
+	  if (*argrest == 'm')
+	    {
+	    if (++i >= argc) { badarg = TRUE; break; }
+	    expansion_test_message = argv[i];
+	    argrest++;
+	    }
+	  if (*argrest) badarg = TRUE;
+	  break;
+
+	/* -bF:  Run system filter test */
+	case 'F':
+	  filter_test |= checking = FTEST_SYSTEM;
+	  if (*argrest) badarg = TRUE;
+	  else if (++i < argc) filter_test_sfile = argv[i];
+	  else exim_fail("exim: file name expected after %s\n", argv[i-1]);
+	  break;
+
+	/* -bf:  Run user filter test
+	   -bfd: Set domain for filter testing
+	   -bfl: Set local part for filter testing
+	   -bfp: Set prefix for filter testing
+	   -bfs: Set suffix for filter testing
+	*/
+	case 'f':
+	  if (!*argrest)
+	    {
+	    filter_test |= checking = FTEST_USER;
+	    if (++i < argc) filter_test_ufile = argv[i];
+	    else exim_fail("exim: file name expected after %s\n", argv[i-1]);
+	    }
+	  else
+	    {
+	    if (++i >= argc)
+	      exim_fail("exim: string expected after %s\n", arg);
+	    if (Ustrcmp(argrest, "d") == 0) ftest_domain = exim_str_fail_toolong(argv[i], EXIM_DOMAINNAME_MAX, "-bfd");
+	    else if (Ustrcmp(argrest, "l") == 0) ftest_localpart = exim_str_fail_toolong(argv[i], EXIM_LOCALPART_MAX, "-bfl");
+	    else if (Ustrcmp(argrest, "p") == 0) ftest_prefix = exim_str_fail_toolong(argv[i], EXIM_LOCALPART_MAX, "-bfp");
+	    else if (Ustrcmp(argrest, "s") == 0) ftest_suffix = exim_str_fail_toolong(argv[i], EXIM_LOCALPART_MAX, "-bfs");
+	    else badarg = TRUE;
+	    }
+	  break;
+
+	/* -bh: Host checking - an IP address must follow. */
+	case 'h':
+	  if (  (!*argrest || Ustrcmp(argrest, "c") == 0)
+	     && ++i < argc)
+	    {
+	    sender_host_address = string_copy_taint(
+		  exim_str_fail_toolong(argv[i], EXIM_IPADDR_MAX, "-bh"),
+		  GET_TAINTED);
+	    host_checking = checking = f.log_testing_mode = TRUE;
+	    f.host_checking_callout = *argrest == 'c';
+	    message_logs = FALSE;
+	    }
+	  else
+	    badarg = TRUE;
+	  break;
+
+	/* -bi: This option is used by sendmail to initialize *the* alias file,
+	though it has the -oA option to specify a different file. Exim has no
+	concept of *the* alias file, but since Sun's YP make script calls
+	sendmail this way, some support must be provided. */
+	case 'i':
+	  if (!*argrest) bi_option = TRUE;
+	  else badarg = TRUE;
+	  break;
+
+	/* -bI: provide information, of the type to follow after a colon.
+	This is an Exim flag. */
+	case 'I':
+	  if (Ustrlen(argrest) >= 1 && *argrest == ':')
+	    {
+	    const uschar * p = argrest+1;
+	    info_flag = CMDINFO_HELP;
+	    if (Ustrlen(p))
+	      if (strcmpic(p, CUS"sieve") == 0)
+		{
+		info_flag = CMDINFO_SIEVE;
+		info_stdout = TRUE;
+		}
+	      else if (strcmpic(p, CUS"dscp") == 0)
+		{
+		info_flag = CMDINFO_DSCP;
+		info_stdout = TRUE;
+		}
+	      else if (strcmpic(p, CUS"help") == 0)
+		info_stdout = TRUE;
+	    }
+	  else badarg = TRUE;
+	  break;
+
+	/* -bm: Accept and deliver message - the default option. Reinstate
+	receiving_message, which got turned off for all -b options.
+	   -bmalware: test the filename given for malware */
+	case 'm':
+	  if (!*argrest) receiving_message = TRUE;
+	  else if (Ustrcmp(argrest, "alware") == 0)
+	    {
+	    if (++i >= argc) { badarg = TRUE; break; }
+	    checking = TRUE;
+	    malware_test_file = argv[i];
+	    }
+	  else badarg = TRUE;
+	  break;
+
+	/* -bnq: For locally originating messages, do not qualify unqualified
+	addresses. In the envelope, this causes errors; in header lines they
+	just get left. */
+	case 'n':
+	  if (Ustrcmp(argrest, "q") == 0)
+	    {
+	    f.allow_unqualified_sender = FALSE;
+	    f.allow_unqualified_recipient = FALSE;
+	    }
+	  else badarg = TRUE;
+	  break;
+
+	/* -bpxx: List the contents of the mail queue, in various forms. If
+	the option is -bpc, just a queue count is needed. Otherwise, if the
+	first letter after p is r, then order is random. */
+	case 'p':
+	  if (*argrest == 'c')
+	    {
+	    count_queue = TRUE;
+	    if (*++argrest) badarg = TRUE;
+	    break;
+	    }
+
+	  if (*argrest == 'r')
+	    list_queue_option = QL_UNSORTED, argrest++;
+	  else
+	    list_queue_option = QL_BASIC;
+
+	  list_queue = TRUE;
+
+	  /* -bp: List the contents of the mail queue, top-level only */
+
+	  if (!*argrest) {}
+
+	  /* -bpu: List the contents of the mail queue, top-level undelivered */
+
+	  else if (Ustrcmp(argrest, "u") == 0) list_queue_option |= QL_UNDELIVERED_ONLY;
+
+	  /* -bpa: List the contents of the mail queue, including all delivered */
+
+	  else if (Ustrcmp(argrest, "a") == 0) list_queue_option |= QL_PLUS_GENERATED;
+
+	  /* -bpi: List only message IDs */
+
+	  else if (Ustrcmp(argrest, "i") == 0) list_queue_option |= QL_MSGID_ONLY;
+
+	  /* Unknown after -bp[r] */
+
+	  else badarg = TRUE;
+	  break;
+
+
+	/* -bP: List the configuration variables given as the address list.
+	Force -v, so configuration errors get displayed. */
+	case 'P':
+
+	  /* -bP config: we need to setup here, because later,
+	  when list_options is checked, the config is read already */
+	  if (*argrest)
+	    badarg = TRUE;
+	  else if (argv[i+1] && Ustrcmp(argv[i+1], "config") == 0)
+	    {
+	    list_config = TRUE;
+	    readconf_save_config(version_string);
+	    }
+	  else
+	    {
+	    list_options = TRUE;
+	    debug_selector |= D_v;
+	    debug_file = stderr;
+	    }
+	  break;
+
+	/* -brt: Test retry configuration lookup */
+	case 'r':
+	  if (Ustrcmp(argrest, "t") == 0)
+	    {
+	    checking = TRUE;
+	    test_retry_arg = i + 1;
+	    goto END_ARG;
+	    }
+
+	  /* -brw: Test rewrite configuration */
+
+	  else if (Ustrcmp(argrest, "w") == 0)
+	    {
+	    checking = TRUE;
+	    test_rewrite_arg = i + 1;
+	    goto END_ARG;
+	    }
+	  else badarg = TRUE;
+	  break;
+
+	/* -bS: Read SMTP commands on standard input, but produce no replies -
+	all errors are reported by sending messages. */
+	case 'S':
+	  if (!*argrest)
+	    smtp_input = smtp_batched_input = receiving_message = TRUE;
+	  else badarg = TRUE;
+	  break;
+
+	/* -bs: Read SMTP commands on standard input and produce SMTP replies
+	on standard output. */
+	case 's':
+	  if (!*argrest) smtp_input = receiving_message = TRUE;
+	  else badarg = TRUE;
+	  break;
+
+	/* -bt: address testing mode */
+	case 't':
+	  if (!*argrest)
+	    f.address_test_mode = checking = f.log_testing_mode = TRUE;
+	  else badarg = TRUE;
+	  break;
+
+	/* -bv: verify addresses */
+	case 'v':
+	  if (!*argrest)
+	    verify_address_mode = checking = f.log_testing_mode = TRUE;
+
+	/* -bvs: verify sender addresses */
+
+	  else if (Ustrcmp(argrest, "s") == 0)
+	    {
+	    verify_address_mode = checking = f.log_testing_mode = TRUE;
+	    verify_as_sender = TRUE;
+	    }
+	  else badarg = TRUE;
+	  break;
+
+	/* -bV: Print version string and support details */
+	case 'V':
+	  if (!*argrest)
+	    {
+	    printf("Exim version %s #%s built %s\n", version_string,
+	      version_cnumber, version_date);
+	    printf("%s\n", CS version_copyright);
+	    version_printed = TRUE;
+	    show_whats_supported(TRUE);
+	    f.log_testing_mode = TRUE;
+	    }
+	  else badarg = TRUE;
+	  break;
+
+	/* -bw: inetd wait mode, accept a listening socket as stdin */
+	case 'w':
+	  f.inetd_wait_mode = TRUE;
+	  f.background_daemon = FALSE;
+	  f.daemon_listen = f.daemon_scion = TRUE;
+	  if (*argrest)
+	    if ((inetd_wait_timeout = readconf_readtime(argrest, 0, FALSE)) <= 0)
+	      exim_fail("exim: bad time value %s: abandoned\n", argv[i]);
+	  break;
+
+	default:
+	  badarg = TRUE;
+	  break;
+	}
+      break;
       }
-
-    /* -be:  Run in expansion test mode
-       -bem: Ditto, but read a message from a file first
-    */
-
-    else if (*argrest == 'e')
-      {
-      expansion_test = checking = TRUE;
-      if (argrest[1] == 'm')
-        {
-        if (++i >= argc) { badarg = TRUE; break; }
-        expansion_test_message = argv[i];
-        argrest++;
-        }
-      if (argrest[1] != 0) { badarg = TRUE; break; }
-      }
-
-    /* -bF:  Run system filter test */
-
-    else if (*argrest == 'F')
-      {
-      filter_test |= checking = FTEST_SYSTEM;
-      if (*(++argrest) != 0) { badarg = TRUE; break; }
-      if (++i < argc) filter_test_sfile = argv[i]; else
-        exim_fail("exim: file name expected after %s\n", argv[i-1]);
-      }
-
-    /* -bf:  Run user filter test
-       -bfd: Set domain for filter testing
-       -bfl: Set local part for filter testing
-       -bfp: Set prefix for filter testing
-       -bfs: Set suffix for filter testing
-    */
-
-    else if (*argrest == 'f')
-      {
-      if (*(++argrest) == 0)
-        {
-        filter_test |= checking = FTEST_USER;
-        if (++i < argc) filter_test_ufile = argv[i]; else
-          exim_fail("exim: file name expected after %s\n", argv[i-1]);
-        }
-      else
-        {
-        if (++i >= argc)
-          exim_fail("exim: string expected after %s\n", arg);
-        if (Ustrcmp(argrest, "d") == 0) ftest_domain = argv[i];
-        else if (Ustrcmp(argrest, "l") == 0) ftest_localpart = argv[i];
-        else if (Ustrcmp(argrest, "p") == 0) ftest_prefix = argv[i];
-        else if (Ustrcmp(argrest, "s") == 0) ftest_suffix = argv[i];
-        else { badarg = TRUE; break; }
-        }
-      }
-
-    /* -bh: Host checking - an IP address must follow. */
-
-    else if (Ustrcmp(argrest, "h") == 0 || Ustrcmp(argrest, "hc") == 0)
-      {
-      if (++i >= argc) { badarg = TRUE; break; }
-      sender_host_address = argv[i];
-      host_checking = checking = f.log_testing_mode = TRUE;
-      f.host_checking_callout = argrest[1] == 'c';
-      message_logs = FALSE;
-      }
-
-    /* -bi: This option is used by sendmail to initialize *the* alias file,
-    though it has the -oA option to specify a different file. Exim has no
-    concept of *the* alias file, but since Sun's YP make script calls
-    sendmail this way, some support must be provided. */
-
-    else if (Ustrcmp(argrest, "i") == 0) bi_option = TRUE;
-
-    /* -bI: provide information, of the type to follow after a colon.
-    This is an Exim flag. */
-
-    else if (argrest[0] == 'I' && Ustrlen(argrest) >= 2 && argrest[1] == ':')
-      {
-      uschar *p = &argrest[2];
-      info_flag = CMDINFO_HELP;
-      if (Ustrlen(p))
-        {
-        if (strcmpic(p, CUS"sieve") == 0)
-          {
-          info_flag = CMDINFO_SIEVE;
-          info_stdout = TRUE;
-          }
-        else if (strcmpic(p, CUS"dscp") == 0)
-          {
-          info_flag = CMDINFO_DSCP;
-          info_stdout = TRUE;
-          }
-        else if (strcmpic(p, CUS"help") == 0)
-          {
-          info_stdout = TRUE;
-          }
-        }
-      }
-
-    /* -bm: Accept and deliver message - the default option. Reinstate
-    receiving_message, which got turned off for all -b options. */
-
-    else if (Ustrcmp(argrest, "m") == 0) receiving_message = TRUE;
-
-    /* -bmalware: test the filename given for malware */
-
-    else if (Ustrcmp(argrest, "malware") == 0)
-      {
-      if (++i >= argc) { badarg = TRUE; break; }
-      checking = TRUE;
-      malware_test_file = argv[i];
-      }
-
-    /* -bnq: For locally originating messages, do not qualify unqualified
-    addresses. In the envelope, this causes errors; in header lines they
-    just get left. */
-
-    else if (Ustrcmp(argrest, "nq") == 0)
-      {
-      f.allow_unqualified_sender = FALSE;
-      f.allow_unqualified_recipient = FALSE;
-      }
-
-    /* -bpxx: List the contents of the mail queue, in various forms. If
-    the option is -bpc, just a queue count is needed. Otherwise, if the
-    first letter after p is r, then order is random. */
-
-    else if (*argrest == 'p')
-      {
-      if (*(++argrest) == 'c')
-        {
-        count_queue = TRUE;
-        if (*(++argrest) != 0) badarg = TRUE;
-        break;
-        }
-
-      if (*argrest == 'r')
-        {
-        list_queue_option = 8;
-        argrest++;
-        }
-      else list_queue_option = 0;
-
-      list_queue = TRUE;
-
-      /* -bp: List the contents of the mail queue, top-level only */
-
-      if (*argrest == 0) {}
-
-      /* -bpu: List the contents of the mail queue, top-level undelivered */
-
-      else if (Ustrcmp(argrest, "u") == 0) list_queue_option += 1;
-
-      /* -bpa: List the contents of the mail queue, including all delivered */
-
-      else if (Ustrcmp(argrest, "a") == 0) list_queue_option += 2;
-
-      /* Unknown after -bp[r] */
-
-      else
-        {
-        badarg = TRUE;
-        break;
-        }
-      }
-
-
-    /* -bP: List the configuration variables given as the address list.
-    Force -v, so configuration errors get displayed. */
-
-    else if (Ustrcmp(argrest, "P") == 0)
-      {
-      /* -bP config: we need to setup here, because later,
-       * when list_options is checked, the config is read already */
-      if (argv[i+1] && Ustrcmp(argv[i+1], "config") == 0)
-        {
-        list_config = TRUE;
-        readconf_save_config(version_string);
-        }
-      else
-        {
-        list_options = TRUE;
-        debug_selector |= D_v;
-        debug_file = stderr;
-        }
-      }
-
-    /* -brt: Test retry configuration lookup */
-
-    else if (Ustrcmp(argrest, "rt") == 0)
-      {
-      checking = TRUE;
-      test_retry_arg = i + 1;
-      goto END_ARG;
-      }
-
-    /* -brw: Test rewrite configuration */
-
-    else if (Ustrcmp(argrest, "rw") == 0)
-      {
-      checking = TRUE;
-      test_rewrite_arg = i + 1;
-      goto END_ARG;
-      }
-
-    /* -bS: Read SMTP commands on standard input, but produce no replies -
-    all errors are reported by sending messages. */
-
-    else if (Ustrcmp(argrest, "S") == 0)
-      smtp_input = smtp_batched_input = receiving_message = TRUE;
-
-    /* -bs: Read SMTP commands on standard input and produce SMTP replies
-    on standard output. */
-
-    else if (Ustrcmp(argrest, "s") == 0) smtp_input = receiving_message = TRUE;
-
-    /* -bt: address testing mode */
-
-    else if (Ustrcmp(argrest, "t") == 0)
-      f.address_test_mode = checking = f.log_testing_mode = TRUE;
-
-    /* -bv: verify addresses */
-
-    else if (Ustrcmp(argrest, "v") == 0)
-      verify_address_mode = checking = f.log_testing_mode = TRUE;
-
-    /* -bvs: verify sender addresses */
-
-    else if (Ustrcmp(argrest, "vs") == 0)
-      {
-      verify_address_mode = checking = f.log_testing_mode = TRUE;
-      verify_as_sender = TRUE;
-      }
-
-    /* -bV: Print version string and support details */
-
-    else if (Ustrcmp(argrest, "V") == 0)
-      {
-      printf("Exim version %s #%s built %s\n", version_string,
-        version_cnumber, version_date);
-      printf("%s\n", CS version_copyright);
-      version_printed = TRUE;
-      show_whats_supported(stdout);
-      f.log_testing_mode = TRUE;
-      }
-
-    /* -bw: inetd wait mode, accept a listening socket as stdin */
-
-    else if (*argrest == 'w')
-      {
-      f.inetd_wait_mode = TRUE;
-      f.background_daemon = FALSE;
-      f.daemon_listen = TRUE;
-      if (*(++argrest) != '\0')
-        if ((inetd_wait_timeout = readconf_readtime(argrest, 0, FALSE)) <= 0)
-          exim_fail("exim: bad time value %s: abandoned\n", argv[i]);
-      }
-
-    else badarg = TRUE;
-    break;
 
 
     /* -C: change configuration file list; ignore if it isn't really
     a change! Enforce a prefix check if required. */
 
     case 'C':
-    if (*argrest == 0)
-      {
-      if(++i < argc) argrest = argv[i]; else
-        { badarg = TRUE; break; }
-      }
+    if (!*argrest)
+      if (++i < argc) argrest = argv[i]; else { badarg = TRUE; break; }
     if (Ustrcmp(config_main_filelist, argrest) != 0)
       {
       #ifdef ALT_CONFIG_PREFIX
@@ -2245,15 +2581,16 @@ for (i = 1; i < argc; i++)
       int len = Ustrlen(ALT_CONFIG_PREFIX);
       const uschar *list = argrest;
       uschar *filename;
+      /* The argv is untainted, so big_buffer (also untainted) is ok to use */
       while((filename = string_nextinlist(&list, &sep, big_buffer,
-             big_buffer_size)) != NULL)
-        {
-        if ((Ustrlen(filename) < len ||
-             Ustrncmp(filename, ALT_CONFIG_PREFIX, len) != 0 ||
-             Ustrstr(filename, "/../") != NULL) &&
-             (Ustrcmp(filename, "/dev/null") != 0 || real_uid != root_uid))
+             big_buffer_size)))
+        if (  (  Ustrlen(filename) < len
+	      || Ustrncmp(filename, ALT_CONFIG_PREFIX, len) != 0
+	      || Ustrstr(filename, "/../") != NULL
+	      )
+	   && (Ustrcmp(filename, "/dev/null") != 0 || real_uid != root_uid)
+	   )
           exim_fail("-C Permission denied\n");
-        }
       #endif
       if (real_uid != root_uid)
         {
@@ -2292,23 +2629,23 @@ for (i = 1; i < argc; i++)
 	    else
               {
               /* Well, the trust list at least is up to scratch... */
-              void *reset_point = store_get(0);
+              rmark reset_point;
               uschar *trusted_configs[32];
               int nr_configs = 0;
               int i = 0;
+	      int old_pool = store_pool;
+	      store_pool = POOL_MAIN;
 
+              reset_point = store_mark();
               while (Ufgets(big_buffer, big_buffer_size, trust_list))
                 {
-                uschar *start = big_buffer, *nl;
-                while (*start && isspace(*start))
-                start++;
-                if (*start != '/')
+                uschar * start = big_buffer, * nl;
+                if (Uskip_whitespace(&start) != '/')
                   continue;
-                nl = Ustrchr(start, '\n');
-                if (nl)
-                  *nl = 0;
+                if ((nl = Ustrchr(start, '\n')))
+                  *nl = '\0';
                 trusted_configs[nr_configs++] = string_copy(start);
-                if (nr_configs == 32)
+                if (nr_configs == nelem(trusted_configs))
                   break;
                 }
               fclose(trust_list);
@@ -2319,33 +2656,26 @@ for (i = 1; i < argc; i++)
                 const uschar *list = argrest;
                 uschar *filename;
                 while (f.trusted_config && (filename = string_nextinlist(&list,
-                        &sep, big_buffer, big_buffer_size)) != NULL)
+                        &sep, big_buffer, big_buffer_size)))
                   {
                   for (i=0; i < nr_configs; i++)
-                    {
                     if (Ustrcmp(filename, trusted_configs[i]) == 0)
                       break;
-                    }
                   if (i == nr_configs)
                     {
                     f.trusted_config = FALSE;
                     break;
                     }
                   }
-                store_reset(reset_point);
                 }
-              else
-                {
-                /* No valid prefixes found in trust_list file. */
+              else	/* No valid prefixes found in trust_list file. */
                 f.trusted_config = FALSE;
-                }
+              store_reset(reset_point);
+	      store_pool = old_pool;
               }
 	    }
-          else
-            {
-            /* Could not open trust_list file. */
+          else		/* Could not open trust_list file. */
             f.trusted_config = FALSE;
-            }
           }
       #else
         /* Not root; don't trust config */
@@ -2367,12 +2697,12 @@ for (i = 1; i < argc; i++)
 #else
       {
       int ptr = 0;
-      macro_item *m;
+      macro_item * m;
       uschar name[24];
-      uschar *s = argrest;
+      const uschar * s = argrest;
 
       opt_D_used = TRUE;
-      while (isspace(*s)) s++;
+      Uskip_whitespace(&s);
 
       if (*s < 'A' || *s > 'Z')
         exim_fail("exim: macro name set by -D must start with "
@@ -2385,11 +2715,10 @@ for (i = 1; i < argc; i++)
         }
       name[ptr] = 0;
       if (ptr == 0) { badarg = TRUE; break; }
-      while (isspace(*s)) s++;
-      if (*s != 0)
+      if (Uskip_whitespace(&s))
         {
         if (*s++ != '=') { badarg = TRUE; break; }
-        while (isspace(*s)) s++;
+        Uskip_whitespace(&s);
         }
 
       for (m = macros_user; m; m = m->next)
@@ -2400,27 +2729,42 @@ for (i = 1; i < argc; i++)
 
       if (clmacro_count >= MAX_CLMACROS)
         exim_fail("exim: too many -D options on command line\n");
-      clmacros[clmacro_count++] = string_sprintf("-D%s=%s", m->name,
-        m->replacement);
+      clmacros[clmacro_count++] =
+	string_sprintf("-D%s=%s", m->name, m->replacement);
       }
     #endif
     break;
 
-    /* -d: Set debug level (see also -v below) or set the drop_cr option.
-    The latter is now a no-op, retained for compatibility only. If -dd is used,
-    debugging subprocesses of the daemon is disabled. */
-
     case 'd':
+
+    /* -dropcr: Set this option.  Now a no-op, retained for compatibility only. */
+
     if (Ustrcmp(argrest, "ropcr") == 0)
       {
       /* drop_cr = TRUE; */
       }
 
-    /* Use an intermediate variable so that we don't set debugging while
-    decoding the debugging bits. */
+    /* -dp: Set up a debug pretrigger buffer with given size. */
+
+    else if (Ustrcmp(argrest, "p") == 0)
+      if (++i >= argc)
+	badarg = TRUE;
+      else
+	debug_pretrigger_setup(argv[i]);
+
+    /* -dt: Set a debug trigger selector */
+
+    else if (Ustrncmp(argrest, "t=", 2) == 0)
+      dtrigger_selector = (unsigned int) Ustrtol(argrest + 2, NULL, 0);
+
+    /* -d: Set debug level (see also -v below).
+    If -dd is used, debugging subprocesses of the daemon is disabled. */
 
     else
       {
+      /* Use an intermediate variable so that we don't set debugging while
+      decoding the debugging bits. */
+
       unsigned int selector = D_default;
       debug_selector = 0;
       debug_file = NULL;
@@ -2429,7 +2773,7 @@ for (i = 1; i < argc; i++)
         f.debug_daemon = TRUE;
         argrest++;
         }
-      if (*argrest != 0)
+      if (*argrest)
         decode_bits(&selector, 1, debug_notall, argrest,
           debug_options, debug_options_count, US"debug", 0);
       debug_selector = selector;
@@ -2476,12 +2820,11 @@ for (i = 1; i < argc; i++)
     the -F or be in the next argument. */
 
     case 'F':
-    if (*argrest == 0)
-      {
-      if(++i < argc) argrest = argv[i]; else
-        { badarg = TRUE; break; }
-      }
-    originator_name = argrest;
+    if (!*argrest)
+      if (++i < argc) argrest = argv[i]; else { badarg = TRUE; break; }
+    originator_name = string_copy_taint(
+		  exim_str_fail_toolong(argrest, EXIM_HUMANNAME_MAX, "-F"),
+		  GET_TAINTED);
     f.sender_name_forced = TRUE;
     break;
 
@@ -2505,16 +2848,18 @@ for (i = 1; i < argc; i++)
       {
       int dummy_start, dummy_end;
       uschar *errmess;
-      if (*argrest == 0)
-        {
-        if (i+1 < argc) argrest = argv[++i]; else
-          { badarg = TRUE; break; }
-        }
-      if (*argrest == 0)
-        sender_address = string_sprintf("");  /* Ensure writeable memory */
+      if (!*argrest)
+        if (i+1 < argc) argrest = argv[++i]; else { badarg = TRUE; break; }
+      (void) exim_str_fail_toolong(argrest, EXIM_DISPLAYMAIL_MAX, "-f");
+      if (!*argrest)
+	{
+        uschar * s = store_get(1, GET_UNTAINTED);	/* Ensure writeable memory */
+        *s = '\0';
+        sender_address = s;
+	}
       else
         {
-        uschar *temp = argrest + Ustrlen(argrest) - 1;
+        const uschar * temp = argrest + Ustrlen(argrest) - 1;
         while (temp >= argrest && isspace(*temp)) temp--;
         if (temp >= argrest && *temp == '.') f_end_dot = TRUE;
         allow_domain_literals = TRUE;
@@ -2522,16 +2867,17 @@ for (i = 1; i < argc; i++)
 #ifdef SUPPORT_I18N
 	allow_utf8_domains = TRUE;
 #endif
-        sender_address = parse_extract_address(argrest, &errmess,
-          &dummy_start, &dummy_end, &sender_address_domain, TRUE);
+        if (!(sender_address = parse_extract_address(argrest, &errmess,
+		  &dummy_start, &dummy_end, &sender_address_domain, TRUE)))
+          exim_fail("exim: bad -f address \"%s\": %s\n", argrest, errmess);
+
+	sender_address = string_copy_taint(sender_address, GET_TAINTED);
 #ifdef SUPPORT_I18N
 	message_smtputf8 =  string_is_utf8(sender_address);
 	allow_utf8_domains = FALSE;
 #endif
         allow_domain_literals = FALSE;
         strip_trailing_dot = FALSE;
-        if (!sender_address)
-          exim_fail("exim: bad -f address \"%s\": %s\n", argrest, errmess);
         }
       f.sender_address_forced = TRUE;
       }
@@ -2551,11 +2897,8 @@ for (i = 1; i < argc; i++)
     To put it in will require a change to the spool header file format. */
 
     case 'h':
-    if (*argrest == 0)
-      {
-      if(++i < argc) argrest = argv[i]; else
-        { badarg = TRUE; break; }
-      }
+    if (!*argrest)
+      if (++i < argc) argrest = argv[i]; else { badarg = TRUE; break; }
     if (!isdigit(*argrest)) badarg = TRUE;
     break;
 
@@ -2564,7 +2907,7 @@ for (i = 1; i < argc; i++)
     not to be documented for sendmail but mailx (at least) uses it) */
 
     case 'i':
-    if (*argrest == 0) f.dot_ends = FALSE; else badarg = TRUE;
+    if (!*argrest) f.dot_ends = FALSE; else badarg = TRUE;
     break;
 
 
@@ -2572,16 +2915,13 @@ for (i = 1; i < argc; i++)
     syslog_processname in the config file, but needs to be an admin option. */
 
     case 'L':
-    if (*argrest == '\0')
-      {
-      if(++i < argc) argrest = argv[i]; else
-        { badarg = TRUE; break; }
-      }
+    if (!*argrest)
+      if (++i < argc) argrest = argv[i]; else { badarg = TRUE; break; }
     if ((sz = Ustrlen(argrest)) > 32)
       exim_fail("exim: the -L syslog name is too long: \"%s\"\n", argrest);
     if (sz < 1)
       exim_fail("exim: the -L syslog name is too short\n");
-    cmdline_syslog_name = argrest;
+    cmdline_syslog_name = string_copy_taint(argrest, GET_TAINTED);
     break;
 
     case 'M':
@@ -2611,9 +2951,15 @@ for (i = 1; i < argc; i++)
       if (msg_action_arg >= 0)
         exim_fail("exim: incompatible arguments\n");
 
-      continue_transport = argv[++i];
-      continue_hostname = argv[++i];
-      continue_host_address = argv[++i];
+      continue_transport = string_copy_taint(
+	exim_str_fail_toolong(argv[++i], EXIM_DRIVERNAME_MAX, "-C internal transport"),
+	GET_TAINTED);
+      continue_hostname = string_copy_taint(
+	exim_str_fail_toolong(argv[++i], EXIM_HOSTNAME_MAX, "-C internal hostname"),
+	GET_TAINTED);
+      continue_host_address = string_copy_taint(
+	exim_str_fail_toolong(argv[++i], EXIM_IPADDR_MAX, "-C internal hostaddr"),
+	GET_TAINTED);
       continue_sequence = Uatoi(argv[++i]);
       msg_action = MSG_DELIVER;
       msg_action_arg = ++i;
@@ -2636,7 +2982,7 @@ for (i = 1; i < argc; i++)
 	  exim_fail("exim: getsockname() failed after -MC option: %s\n",
 	    strerror(errno));
 
-      if (f.running_in_test_harness) millisleep(500);
+      testharness_pause_ms(500);
       break;
       }
 
@@ -2655,9 +3001,22 @@ for (i = 1; i < argc; i++)
 
 	case 'D': smtp_peer_options |= OPTION_DSN; break;
 
-    /* -MCG: set the queue name, to a non-default value */
+    /* -MCd: for debug, set a process-purpose string */
 
-	case 'G': if (++i < argc) queue_name = string_copy(argv[i]);
+	case 'd': if (++i < argc)
+		    process_purpose = string_copy_taint(
+		      exim_str_fail_toolong(argv[i], EXIM_DRIVERNAME_MAX, "-MCd"),
+		      GET_TAINTED);
+		  else badarg = TRUE;
+		  break;
+
+    /* -MCG: set the queue name, to a non-default value. Arguably, anything
+       from the commandline should be tainted - but we will need an untainted
+       value for the spoolfile when doing a -odi delivery process. */
+
+	case 'G': if (++i < argc) queue_name = string_copy_taint(
+		      exim_str_fail_toolong(argv[i], EXIM_DRIVERNAME_MAX, "-MCG"),
+		      GET_UNTAINTED);
 		  else badarg = TRUE;
 		  break;
 
@@ -2665,11 +3024,42 @@ for (i = 1; i < argc; i++)
 
 	case 'K': smtp_peer_options |= OPTION_CHUNKING; break;
 
+#ifndef DISABLE_ESMTP_LIMITS
+    /* -MCL: peer used LIMITS RCPTMAX and/or RCPTDOMAINMAX */
+	case 'L': if (++i < argc) continue_limit_mail = Uatoi(argv[i]);
+		  else badarg = TRUE;
+		  if (++i < argc) continue_limit_rcpt = Uatoi(argv[i]);
+		  else badarg = TRUE;
+		  if (++i < argc) continue_limit_rcptdom = Uatoi(argv[i]);
+		  else badarg = TRUE;
+		  break;
+#endif
+
     /* -MCP: set the smtp_use_pipelining flag; this is useful only when
     it preceded -MC (see above) */
 
 	case 'P': smtp_peer_options |= OPTION_PIPE; break;
 
+#ifdef SUPPORT_SOCKS
+    /* -MCp: Socks proxy in use; nearside IP, port, external IP, port */
+	case 'p': proxy_session = TRUE;
+		  if (++i < argc)
+		    {
+		    proxy_local_address = string_copy_taint(argv[i], GET_TAINTED);
+		    if (++i < argc)
+		      {
+		      proxy_local_port = Uatoi(argv[i]);
+		      if (++i < argc)
+			{
+			proxy_external_address = string_copy_taint(argv[i], GET_TAINTED);
+			if (++i < argc)
+			  {
+			  proxy_external_port = Uatoi(argv[i]);
+			  break;
+		    } } } }
+		  badarg = TRUE;
+		  break;
+#endif
     /* -MCQ: pass on the pid of the queue-running process that started
     this chain of deliveries and the fd of its synchronizing pipe; this
     is useful only when it precedes -MC (see above) */
@@ -2680,22 +3070,50 @@ for (i = 1; i < argc; i++)
 		  else badarg = TRUE;
 		  break;
 
+    /* -MCq: do a quota check on the given recipient for the given size
+    of message.  Separate from -MC. */
+	case 'q': rcpt_verify_quota = TRUE;
+		  if (++i < argc) message_size = Uatoi(argv[i]);
+		  else badarg = TRUE;
+		  break;
+
     /* -MCS: set the smtp_use_size flag; this is useful only when it
     precedes -MC (see above) */
 
 	case 'S': smtp_peer_options |= OPTION_SIZE; break;
 
-#ifdef SUPPORT_TLS
+#ifndef DISABLE_TLS
+    /* -MCs: used with -MCt; SNI was sent */
+    /* -MCr: ditto, DANE */
+
+	case 'r':
+	case 's': if (++i < argc)
+		    {
+		    continue_proxy_sni = string_copy_taint(
+		      exim_str_fail_toolong(argv[i], EXIM_HOSTNAME_MAX, "-MCr/-MCs"),
+		      GET_TAINTED);
+		    if (argrest[1] == 'r') continue_proxy_dane = TRUE;
+		    }
+		  else badarg = TRUE;
+		  break;
+
     /* -MCt: similar to -MCT below but the connection is still open
     via a proxy process which handles the TLS context and coding.
     Require three arguments for the proxied local address and port,
-    and the TLS cipher.  */
+    and the TLS cipher. */
 
-	case 't': if (++i < argc) sending_ip_address = argv[i];
+	case 't': if (++i < argc)
+		    sending_ip_address = string_copy_taint(
+		      exim_str_fail_toolong(argv[i], EXIM_IPADDR_MAX, "-MCt IP"),
+		      GET_TAINTED);
 		  else badarg = TRUE;
-		  if (++i < argc) sending_port = (int)(Uatol(argv[i]));
+		  if (++i < argc)
+		    sending_port = (int)(Uatol(argv[i]));
 		  else badarg = TRUE;
-		  if (++i < argc) continue_proxy_cipher = argv[i];
+		  if (++i < argc)
+		    continue_proxy_cipher = string_copy_taint(
+		      exim_str_fail_toolong(argv[i], EXIM_CIPHERNAME_MAX, "-MCt cipher"),
+		      GET_TAINTED);
 		  else badarg = TRUE;
 		  /*FALLTHROUGH*/
 
@@ -2711,16 +3129,6 @@ for (i = 1; i < argc; i++)
       break;
       }
 
-#if defined(SUPPORT_TLS) && defined(EXPERIMENTAL_REQUIRETLS)
-    /* -MS   set REQUIRETLS on (new) message */
-
-    else if (*argrest == 'S')
-      {
-      tls_requiretls |= REQUIRETLS_MSG;
-      break;
-      }
-#endif
-
     /* -M[x]: various operations on the following list of message ids:
        -M    deliver the messages, ignoring next retry times and thawing
        -Mc   deliver the messages, checking next retry times, no thawing
@@ -2732,6 +3140,7 @@ for (i = 1; i < argc; i++)
     following options which are followed by a single message id, and which
     act on that message. Some of them use the "recipient" addresses as well.
        -Mar  add recipient(s)
+       -MG   move to a different queue
        -Mmad mark all recipients delivered
        -Mmd  mark recipients(s) delivered
        -Mes  edit sender
@@ -2742,7 +3151,7 @@ for (i = 1; i < argc; i++)
        -Mvl  show log
     */
 
-    else if (*argrest == 0)
+    else if (!*argrest)
       {
       msg_action = MSG_DELIVER;
       forced_delivery = f.deliver_force_thaw = TRUE;
@@ -2764,10 +3173,15 @@ for (i = 1; i < argc; i++)
       msg_action = MSG_DELIVER;
       deliver_give_up = TRUE;
       }
-    else if (Ustrcmp(argrest, "mad") == 0)
+   else if (Ustrcmp(argrest, "G") == 0)
       {
-      msg_action = MSG_MARK_ALL_DELIVERED;
+      msg_action = MSG_SETQUEUE;
+      queue_name_dest = string_copy_taint(
+	exim_str_fail_toolong(next_argv(argv, &i, argc, arg),
+			      EXIM_DRIVERNAME_MAX, "-MG"),
+	GET_TAINTED);
       }
+    else if (Ustrcmp(argrest, "mad") == 0) msg_action = MSG_MARK_ALL_DELIVERED;
     else if (Ustrcmp(argrest, "md") == 0)
       {
       msg_action = MSG_MARK_DELIVERED;
@@ -2812,8 +3226,7 @@ for (i = 1; i < argc; i++)
 
     if (!one_msg_action)
       {
-      int j;
-      for (j = msg_action_arg; j < argc; j++) if (!mac_ismsgid(argv[j]))
+      for (int j = msg_action_arg; j < argc; j++) if (!mac_ismsgid(argv[j]))
         exim_fail("exim: malformed message id %s after %s option\n",
           argv[j], arg);
       goto END_ARG;   /* Remaining args are ids */
@@ -2836,7 +3249,7 @@ for (i = 1; i < argc; i++)
     for sendmail it askes for "me too". Exim always does this. */
 
     case 'm':
-    if (*argrest != 0) badarg = TRUE;
+    if (*argrest) badarg = TRUE;
     break;
 
 
@@ -2844,7 +3257,7 @@ for (i = 1; i < argc; i++)
     their thing. It implies debugging at the D_v level. */
 
     case 'N':
-    if (*argrest == 0)
+    if (!*argrest)
       {
       f.dont_deliver = TRUE;
       debug_selector |= D_v;
@@ -2867,218 +3280,265 @@ for (i = 1; i < argc; i++)
     -O option=value and -Ooption=value. */
 
     case 'O':
-    if (*argrest == 0)
-      {
+    if (!*argrest)
       if (++i >= argc)
         exim_fail("exim: string expected after -O\n");
-      }
     break;
 
     case 'o':
-
-    /* -oA: Set an argument for the bi command (sendmail's "alternate alias
-    file" option). */
-
-    if (*argrest == 'A')
+    switch (*argrest++)
       {
-      alias_arg = argrest + 1;
-      if (alias_arg[0] == 0)
-        {
-        if (i+1 < argc) alias_arg = argv[++i]; else
-          exim_fail("exim: string expected after -oA\n");
-        }
-      }
+      /* -oA: Set an argument for the bi command (sendmail's "alternate alias
+      file" option). */
+      case 'A':
+	if (!*(alias_arg = argrest))
+	  if (i+1 < argc) alias_arg = argv[++i];
+	  else exim_fail("exim: string expected after -oA\n");
+	break;
 
-    /* -oB: Set a connection message max value for remote deliveries */
+      /* -oB: Set a connection message max value for remote deliveries */
+      case 'B':
+	{
+	const uschar * p = argrest;
+	if (!*p)
+	  if (i+1 < argc && isdigit((argv[i+1][0])))
+	    p = argv[++i];
+	  else
+	    {
+	    connection_max_messages = 1;
+	    p = NULL;
+	    }
 
-    else if (*argrest == 'B')
-      {
-      uschar *p = argrest + 1;
-      if (p[0] == 0)
-        {
-        if (i+1 < argc && isdigit((argv[i+1][0]))) p = argv[++i]; else
-          {
-          connection_max_messages = 1;
-          p = NULL;
-          }
-        }
+	if (p)
+	  {
+	  if (!isdigit(*p))
+	    exim_fail("exim: number expected after -oB\n");
+	  connection_max_messages = Uatoi(p);
+	  }
+	}
+	break;
 
-      if (p != NULL)
-        {
-        if (!isdigit(*p))
-          exim_fail("exim: number expected after -oB\n");
-        connection_max_messages = Uatoi(p);
-        }
-      }
+      /* -odb: background delivery */
 
-    /* -odb: background delivery */
+      case 'd':
+	if (Ustrcmp(argrest, "b") == 0)
+	  {
+	  f.synchronous_delivery = FALSE;
+	  arg_queue_only = FALSE;
+	  queue_only_set = TRUE;
+	  }
 
-    else if (Ustrcmp(argrest, "db") == 0)
-      {
-      f.synchronous_delivery = FALSE;
-      arg_queue_only = FALSE;
-      queue_only_set = TRUE;
-      }
+      /* -odd: testsuite-only: add no inter-process delays */
 
-    /* -odf: foreground delivery (smail-compatible option); same effect as
-       -odi: interactive (synchronous) delivery (sendmail-compatible option)
-    */
+	else if (Ustrcmp(argrest, "d") == 0)
+	  f.testsuite_delays = FALSE;
 
-    else if (Ustrcmp(argrest, "df") == 0 || Ustrcmp(argrest, "di") == 0)
-      {
-      f.synchronous_delivery = TRUE;
-      arg_queue_only = FALSE;
-      queue_only_set = TRUE;
-      }
+      /* -odf: foreground delivery (smail-compatible option); same effect as
+	 -odi: interactive (synchronous) delivery (sendmail-compatible option)
+      */
 
-    /* -odq: queue only */
+	else if (Ustrcmp(argrest, "f") == 0 || Ustrcmp(argrest, "i") == 0)
+	  {
+	  f.synchronous_delivery = TRUE;
+	  arg_queue_only = FALSE;
+	  queue_only_set = TRUE;
+	  }
 
-    else if (Ustrcmp(argrest, "dq") == 0)
-      {
-      f.synchronous_delivery = FALSE;
-      arg_queue_only = TRUE;
-      queue_only_set = TRUE;
-      }
+      /* -odq: queue only */
 
-    /* -odqs: queue SMTP only - do local deliveries and remote routing,
-    but no remote delivery */
+	else if (Ustrcmp(argrest, "q") == 0)
+	  {
+	  f.synchronous_delivery = FALSE;
+	  arg_queue_only = TRUE;
+	  queue_only_set = TRUE;
+	  }
 
-    else if (Ustrcmp(argrest, "dqs") == 0)
-      {
-      f.queue_smtp = TRUE;
-      arg_queue_only = FALSE;
-      queue_only_set = TRUE;
-      }
+      /* -odqs: queue SMTP only - do local deliveries and remote routing,
+      but no remote delivery */
 
-    /* -oex: Sendmail error flags. As these are also accepted without the
-    leading -o prefix, for compatibility with vacation and other callers,
-    they are handled with -e above. */
+	else if (Ustrcmp(argrest, "qs") == 0)
+	  {
+	  f.queue_smtp = TRUE;
+	  arg_queue_only = FALSE;
+	  queue_only_set = TRUE;
+	  }
+	else badarg = TRUE;
+	break;
 
-    /* -oi:     Set flag so dot doesn't end non-SMTP input (same as -i)
-       -oitrue: Another sendmail syntax for the same */
+      /* -oex: Sendmail error flags. As these are also accepted without the
+      leading -o prefix, for compatibility with vacation and other callers,
+      they are handled with -e above. */
 
-    else if (Ustrcmp(argrest, "i") == 0 ||
-             Ustrcmp(argrest, "itrue") == 0)
-      f.dot_ends = FALSE;
+      /* -oi:     Set flag so dot doesn't end non-SMTP input (same as -i)
+	 -oitrue: Another sendmail syntax for the same */
+
+      case 'i':
+	if (!*argrest || Ustrcmp(argrest, "true") == 0)
+	  f.dot_ends = FALSE;
+	else badarg = TRUE;
+	break;
 
     /* -oM*: Set various characteristics for an incoming message; actually
     acted on for trusted callers only. */
 
-    else if (*argrest == 'M')
-      {
-      if (i+1 >= argc)
-        exim_fail("exim: data expected after -o%s\n", argrest);
+      case 'M':
+	{
+	if (i+1 >= argc)
+	  exim_fail("exim: data expected after -oM%s\n", argrest);
 
-      /* -oMa: Set sender host address */
+	/* -oMa: Set sender host address */
 
-      if (Ustrcmp(argrest, "Ma") == 0) sender_host_address = argv[++i];
+	if (Ustrcmp(argrest, "a") == 0)
+	  sender_host_address = string_copy_taint(
+	    exim_str_fail_toolong(next_argv(argv, &i, argc, arg),
+				  EXIM_IPADDR_MAX, "-oMa"), GET_TAINTED);
 
-      /* -oMaa: Set authenticator name */
+	/* -oMaa: Set authenticator name */
 
-      else if (Ustrcmp(argrest, "Maa") == 0)
-        sender_host_authenticated = argv[++i];
+	else if (Ustrcmp(argrest, "aa") == 0)
+	  sender_host_authenticated = string_copy_taint(
+	    exim_str_fail_toolong(next_argv(argv, &i, argc, arg),
+				  EXIM_DRIVERNAME_MAX, "-oMaa"), GET_TAINTED);
 
-      /* -oMas: setting authenticated sender */
+	/* -oMas: setting authenticated sender */
 
-      else if (Ustrcmp(argrest, "Mas") == 0) authenticated_sender = argv[++i];
+	else if (Ustrcmp(argrest, "as") == 0)
+	  authenticated_sender = string_copy_taint(
+	    exim_str_fail_toolong(next_argv(argv, &i, argc, arg),
+				  EXIM_EMAILADDR_MAX, "-oMas"), GET_TAINTED);
 
-      /* -oMai: setting authenticated id */
+	/* -oMai: setting authenticated id */
 
-      else if (Ustrcmp(argrest, "Mai") == 0) authenticated_id = argv[++i];
+	else if (Ustrcmp(argrest, "ai") == 0)
+	  authenticated_id = string_copy_taint(
+	    exim_str_fail_toolong(next_argv(argv, &i, argc, arg),
+				  EXIM_EMAILADDR_MAX, "-oMai"), GET_TAINTED);
 
-      /* -oMi: Set incoming interface address */
+	/* -oMi: Set incoming interface address */
 
-      else if (Ustrcmp(argrest, "Mi") == 0) interface_address = argv[++i];
+	else if (Ustrcmp(argrest, "i") == 0)
+	  interface_address = string_copy_taint(
+	    exim_str_fail_toolong(next_argv(argv, &i, argc, arg),
+				  EXIM_IPADDR_MAX, "-oMi"), GET_TAINTED);
 
-      /* -oMm: Message reference */
+	/* -oMm: Message reference */
 
-      else if (Ustrcmp(argrest, "Mm") == 0)
-        {
-        if (!mac_ismsgid(argv[i+1]))
-            exim_fail("-oMm must be a valid message ID\n");
-        if (!f.trusted_config)
-            exim_fail("-oMm must be called by a trusted user/config\n");
-          message_reference = argv[++i];
-        }
+	else if (Ustrcmp(argrest, "m") == 0)
+	  {
+	  if (!mac_ismsgid(argv[i+1]))
+	      exim_fail("-oMm must be a valid message ID\n");
+	  if (!f.trusted_config)
+	      exim_fail("-oMm must be called by a trusted user/config\n");
+	    message_reference = next_argv(argv, &i, argc, arg);
+	  }
 
-      /* -oMr: Received protocol */
+	/* -oMr: Received protocol */
 
-      else if (Ustrcmp(argrest, "Mr") == 0)
+	else if (Ustrcmp(argrest, "r") == 0)
 
-        if (received_protocol)
-          exim_fail("received_protocol is set already\n");
-        else
-	  received_protocol = argv[++i];
+	  if (received_protocol)
+	    exim_fail("received_protocol is set already\n");
+	  else
+	    if (++i >= argc) badarg = TRUE;
+	    else
+	      received_protocol = string_copy_taint(
+		exim_str_fail_toolong(argv[i], EXIM_DRIVERNAME_MAX, "-oMr"),
+		GET_TAINTED);
 
-      /* -oMs: Set sender host name */
+	/* -oMs: Set sender host name */
 
-      else if (Ustrcmp(argrest, "Ms") == 0) sender_host_name = argv[++i];
+	else if (Ustrcmp(argrest, "s") == 0)
+	  if (++i >= argc) badarg = TRUE;
+	  else
+	    sender_host_name = string_copy_taint(
+	      exim_str_fail_toolong(argv[i], EXIM_HOSTNAME_MAX, "-oMs"),
+	      GET_TAINTED);
 
-      /* -oMt: Set sender ident */
+	/* -oMt: Set sender ident */
 
-      else if (Ustrcmp(argrest, "Mt") == 0)
-        {
-        sender_ident_set = TRUE;
-        sender_ident = argv[++i];
-        }
+	else if (Ustrcmp(argrest, "t") == 0)
+	  if (++i >= argc) badarg = TRUE;
+	  else
+	    {
+	    sender_ident_set = TRUE;
+	    sender_ident = string_copy_taint(
+	      exim_str_fail_toolong(argv[i], EXIM_IDENTUSER_MAX, "-oMt"),
+	      GET_TAINTED);
+	    }
 
-      /* Else a bad argument */
+	/* Else a bad argument */
 
-      else
-        {
-        badarg = TRUE;
-        break;
-        }
-      }
+	else
+	  badarg = TRUE;
+	}
+	break;
 
-    /* -om: Me-too flag for aliases. Exim always does this. Some programs
-    seem to call this as -m (undocumented), so that is also accepted (see
-    above). */
+      /* -om: Me-too flag for aliases. Exim always does this. Some programs
+      seem to call this as -m (undocumented), so that is also accepted (see
+      above). */
+      /* -oo: An ancient flag for old-style addresses which still seems to
+      crop up in some calls (see in SCO). */
 
-    else if (Ustrcmp(argrest, "m") == 0) {}
+      case 'm':
+      case 'o':
+	if (*argrest) badarg = TRUE;
+	break;
 
-    /* -oo: An ancient flag for old-style addresses which still seems to
-    crop up in some calls (see in SCO). */
+      /* -oP <name>: set pid file path for daemon
+	 -oPX:       delete pid file of daemon */
 
-    else if (Ustrcmp(argrest, "o") == 0) {}
-
-    /* -oP <name>: set pid file path for daemon */
-
-    else if (*argrest == 'P')
-      {
+      case 'P':
 	if (!f.running_in_test_harness && real_uid != root_uid && real_uid != exim_uid)
 	  exim_fail("exim: only uid=%d or uid=%d can use -oP and -oPX "
                     "(uid=%d euid=%d | %d)\n",
                     root_uid, exim_uid, getuid(), geteuid(), real_uid);
-	if (Ustrcmp(argrest, "P") == 0) override_pid_file_path = argv[++i];
-	else if (Ustrcmp(argrest, "PX") == 0) delete_pid_file();
+	if (!*argrest)
+	  if (++i < argc) override_pid_file_path = argv[i];
+	  else badarg = TRUE;
+	else if (Ustrcmp(argrest, "X") == 0) delete_pid_file();
 	else badarg = TRUE;
+	break;
+
+
+      /* -or <n>: set timeout for non-SMTP acceptance
+	 -os <n>: set timeout for SMTP acceptance */
+
+      case 'r':
+      case 's':
+	{
+	int * tp = argrest[-1] == 'r'
+	  ? &arg_receive_timeout : &arg_smtp_receive_timeout;
+	if (*argrest)
+	  *tp = readconf_readtime(argrest, 0, FALSE);
+	else if (i+1 < argc)
+	  *tp = readconf_readtime(argv[++i], 0, FALSE);
+
+	if (*tp < 0)
+	  exim_fail("exim: bad time value %s: abandoned\n", argv[i]);
+	}
+	break;
+
+      /* -oX <list>: Override local_interfaces and/or default daemon ports */
+      /* Limits: Is there a real limit we want here?  1024 is very arbitrary. */
+
+      case 'X':
+	if (*argrest || ++i >= argc) badarg = TRUE;
+	else override_local_interfaces = string_copy_taint(
+	  exim_str_fail_toolong(argv[i], 1024, "-oX"), GET_TAINTED);
+	break;
+
+      /* -oY: Override creation of daemon notifier socket */
+
+      case 'Y':
+	if (*argrest) badarg = TRUE;
+	else f.notifier_socket_en = FALSE;
+	break;
+
+      /* Unknown -o argument */
+
+      default:
+	badarg = TRUE;
       }
-
-    /* -or <n>: set timeout for non-SMTP acceptance
-       -os <n>: set timeout for SMTP acceptance */
-
-    else if (*argrest == 'r' || *argrest == 's')
-      {
-      int *tp = (*argrest == 'r')?
-        &arg_receive_timeout : &arg_smtp_receive_timeout;
-      if (argrest[1] == 0)
-        {
-        if (i+1 < argc) *tp= readconf_readtime(argv[++i], 0, FALSE);
-        }
-      else *tp = readconf_readtime(argrest + 1, 0, FALSE);
-      if (*tp < 0)
-        exim_fail("exim: bad time value %s: abandoned\n", argv[i]);
-      }
-
-    /* -oX <list>: Override local_interfaces and/or default daemon ports */
-
-    else if (Ustrcmp(argrest, "X") == 0)
-      override_local_interfaces = argv[++i];
-
-    /* Unknown -o argument */
-
-    else badarg = TRUE;
     break;
 
 
@@ -3101,111 +3561,131 @@ for (i = 1; i < argc; i++)
     /* -panythingelse is taken as the Sendmail-compatible argument -prval:sval,
     which sets the host protocol and host name */
 
-    if (*argrest == 0)
-      if (i+1 < argc)
-	argrest = argv[++i];
-      else
-        { badarg = TRUE; break; }
+    if (!*argrest)
+      argrest = next_argv(argv, &i, argc, arg);
 
-    if (*argrest != 0)
+    if (*argrest)
       {
-      uschar *hn;
+      uschar * hn = Ustrchr(argrest, ':');
 
       if (received_protocol)
         exim_fail("received_protocol is set already\n");
 
-      hn = Ustrchr(argrest, ':');
-      if (hn == NULL)
-        received_protocol = argrest;
+      if (!hn)
+        received_protocol = string_copy_taint(
+	  exim_str_fail_toolong(argrest, EXIM_DRIVERNAME_MAX, "-p<protocol>"),
+	  GET_TAINTED);
       else
         {
-	int old_pool = store_pool;
-	store_pool = POOL_PERM;
-        received_protocol = string_copyn(argrest, hn - argrest);
-	store_pool = old_pool;
-        sender_host_name = hn + 1;
+        (void) exim_str_fail_toolong(argrest, (EXIM_DRIVERNAME_MAX+1+EXIM_HOSTNAME_MAX), "-p<protocol>:<host>");
+        received_protocol = string_copyn_taint(argrest, hn - argrest, GET_TAINTED);
+        sender_host_name = string_copy_taint(hn + 1, GET_TAINTED);
         }
       }
     break;
 
+    /* -q:  set up queue runs */
 
     case 'q':
-    receiving_message = FALSE;
-    if (queue_interval >= 0)
-      exim_fail("exim: -q specified more than once\n");
-
-    /* -qq...: Do queue runs in a 2-stage manner */
-
-    if (*argrest == 'q')
       {
-      f.queue_2stage = TRUE;
-      argrest++;
+      BOOL two_stage, first_del, force, thaw = FALSE, local;
+
+      receiving_message = FALSE;
+
+      /* -qq...: Do queue runs in a 2-stage manner */
+
+      if ((two_stage = *argrest == 'q'))
+	argrest++;
+
+      /* -qi...: Do only first (initial) deliveries */
+
+      if ((first_del = *argrest == 'i'))
+	argrest++;
+
+      /* -qf...: Run the queue, forcing deliveries
+	 -qff..: Ditto, forcing thawing as well */
+
+      if ((force = *argrest == 'f'))
+	if ((thaw = *++argrest == 'f'))
+	  argrest++;
+
+      /* -q[f][f]l...: Run the queue only on local deliveries */
+
+      if ((local = *argrest == 'l'))
+	argrest++;
+
+      /* -q[f][f][l][G<name>]... Work on the named queue */
+
+      if (*argrest == 'G')
+	{
+	int i;
+	for (argrest++, i = 0; argrest[i] && argrest[i] != '/'; ) i++;
+	exim_len_fail_toolong(i, EXIM_DRIVERNAME_MAX, "-q*G<name>");
+	queue_name = string_copyn(argrest, i);
+	argrest += i;
+	if (*argrest == '/') argrest++;
+	}
+
+      /* -q[f][f][l][G<name>]: Run the queue, optionally forced, optionally local
+      only, optionally named, optionally starting from a given message id. */
+
+      if (!(list_queue || count_queue))
+	{
+	qrunner * q;
+
+	if (  !*argrest
+	   && (i + 1 >= argc || argv[i+1][0] == '-' || mac_ismsgid(argv[i+1])))
+	  {
+	  q = alloc_onetime_qrunner();
+	  if (i+1 < argc && mac_ismsgid(argv[i+1]))
+	    start_queue_run_id = string_copy_taint(argv[++i], GET_TAINTED);
+	  if (i+1 < argc && mac_ismsgid(argv[i+1]))
+	    stop_queue_run_id = string_copy_taint(argv[++i], GET_TAINTED);
+	  }
+
+      /* -q[f][f][l][G<name>/]<n>: Run the queue at regular intervals, optionally
+      forced, optionally local only, optionally named. */
+
+	else
+	  {
+	  int intvl;
+	  const uschar * s;
+
+	  if (*argrest) s = argrest;
+	  else if (++i < argc) { badarg = TRUE; break; }
+	  else s = argv[i];
+
+	  if ((intvl = readconf_readtime(s, 0, FALSE)) <= 0)
+	    exim_fail("exim: bad time value %s: abandoned\n", argv[i]);
+
+	  for (qrunner * qq = qrunners; qq; qq = qq->next)
+	    if (  queue_name && qq->name && Ustrcmp(queue_name, qq->name) == 0
+	       || !queue_name && !qq->name)
+	      exim_fail("exim: queue-runner specified more than once\n");
+
+	  q = alloc_qrunner();
+	  q->interval = intvl;
+	  }
+
+	q->name = *queue_name ? queue_name : NULL;	/* will be NULL for the default queue */
+	q->queue_run_force = force;
+	q->deliver_force_thaw = thaw;
+	q->queue_run_first_delivery = first_del;
+	q->queue_run_local = local;
+	q->queue_2stage = two_stage;
+	}
+
+      break;
       }
-
-    /* -qi...: Do only first (initial) deliveries */
-
-    if (*argrest == 'i')
-      {
-      f.queue_run_first_delivery = TRUE;
-      argrest++;
-      }
-
-    /* -qf...: Run the queue, forcing deliveries
-       -qff..: Ditto, forcing thawing as well */
-
-    if (*argrest == 'f')
-      {
-      f.queue_run_force = TRUE;
-      if (*++argrest == 'f')
-        {
-        f.deliver_force_thaw = TRUE;
-        argrest++;
-        }
-      }
-
-    /* -q[f][f]l...: Run the queue only on local deliveries */
-
-    if (*argrest == 'l')
-      {
-      f.queue_run_local = TRUE;
-      argrest++;
-      }
-
-    /* -q[f][f][l][G<name>]... Work on the named queue */
-
-    if (*argrest == 'G')
-      {
-      int i;
-      for (argrest++, i = 0; argrest[i] && argrest[i] != '/'; ) i++;
-      queue_name = string_copyn(argrest, i);
-      argrest += i;
-      if (*argrest == '/') argrest++;
-      }
-
-    /* -q[f][f][l][G<name>]: Run the queue, optionally forced, optionally local
-    only, optionally named, optionally starting from a given message id. */
-
-    if (*argrest == 0 &&
-        (i + 1 >= argc || argv[i+1][0] == '-' || mac_ismsgid(argv[i+1])))
-      {
-      queue_interval = 0;
-      if (i+1 < argc && mac_ismsgid(argv[i+1]))
-        start_queue_run_id = argv[++i];
-      if (i+1 < argc && mac_ismsgid(argv[i+1]))
-        stop_queue_run_id = argv[++i];
-      }
-
-    /* -q[f][f][l][G<name>/]<n>: Run the queue at regular intervals, optionally
-    forced, optionally local only, optionally named. */
-
-    else if ((queue_interval = readconf_readtime(*argrest ? argrest : argv[++i],
-						0, FALSE)) <= 0)
-      exim_fail("exim: bad time value %s: abandoned\n", argv[i]);
-    break;
 
 
     case 'R':   /* Synonymous with -qR... */
-    receiving_message = FALSE;
+    case 'S':   /* Synonymous with -qS... */
+      {
+      const uschar * tainted_selectstr;
+      uschar * s;
+
+      receiving_message = FALSE;
 
     /* -Rf:   As -R (below) but force all deliveries,
        -Rff:  Ditto, but also thaw all frozen messages,
@@ -3213,74 +3693,52 @@ for (i = 1; i < argc; i++)
        -Rrf:  Regex and force
        -Rrff: Regex and force and thaw
 
+       -S...: Like -R but works on sender.
+
     in all cases provided there are no further characters in this
     argument. */
 
-    if (*argrest != 0)
-      {
-      int i;
-      for (i = 0; i < nelem(rsopts); i++)
-        if (Ustrcmp(argrest, rsopts[i]) == 0)
-          {
-          if (i != 2) f.queue_run_force = TRUE;
-          if (i >= 2) f.deliver_selectstring_regex = TRUE;
-          if (i == 1 || i == 4) f.deliver_force_thaw = TRUE;
-          argrest += Ustrlen(rsopts[i]);
-          }
-      }
+      if (!qrunners) alloc_onetime_qrunner();
+      qrunners->queue_2stage = f.queue_2stage;
+      if (*argrest)
+	for (int i = 0; i < nelem(rsopts); i++)
+	  if (Ustrcmp(argrest, rsopts[i]) == 0)
+	    {
+	    if (i != 2) qrunners->queue_run_force = TRUE;
+	    if (i >= 2)
+	      if (switchchar == 'R')
+		f.deliver_selectstring_regex = TRUE;
+	      else
+		f.deliver_selectstring_sender_regex = TRUE;
+	    if (i == 1 || i == 4) qrunners->deliver_force_thaw = TRUE;
+	    argrest += Ustrlen(rsopts[i]);
+	    }
 
-    /* -R: Set string to match in addresses for forced queue run to
+    /* -R or -S: Set string to match in addresses for forced queue run to
     pick out particular messages. */
 
-    if (*argrest)
-      deliver_selectstring = argrest;
-    else if (i+1 < argc)
-      deliver_selectstring = argv[++i];
-    else
-      exim_fail("exim: string expected after -R\n");
+      /* Avoid attacks from people providing very long strings, and do so before
+      we make copies. */
+      if (*argrest)
+	tainted_selectstr = argrest;
+      else if (i+1 < argc)
+	tainted_selectstr = argv[++i];
+      else
+	exim_fail("exim: string expected after %s\n", switchchar == 'R' ? "-R" : "-S");
+
+      s = string_copy_taint(
+	exim_str_fail_toolong(tainted_selectstr, EXIM_EMAILADDR_MAX, "-R"),
+	GET_TAINTED);
+
+      if (switchchar == 'R')
+	deliver_selectstring = s;
+      else
+	deliver_selectstring_sender = s;
+      }
     break;
 
 
     /* -r: an obsolete synonym for -f (see above) */
-
-
-    /* -S: Like -R but works on sender. */
-
-    case 'S':   /* Synonymous with -qS... */
-    receiving_message = FALSE;
-
-    /* -Sf:   As -S (below) but force all deliveries,
-       -Sff:  Ditto, but also thaw all frozen messages,
-       -Sr:   String is regex
-       -Srf:  Regex and force
-       -Srff: Regex and force and thaw
-
-    in all cases provided there are no further characters in this
-    argument. */
-
-    if (*argrest)
-      {
-      int i;
-      for (i = 0; i < nelem(rsopts); i++)
-        if (Ustrcmp(argrest, rsopts[i]) == 0)
-          {
-          if (i != 2) f.queue_run_force = TRUE;
-          if (i >= 2) f.deliver_selectstring_sender_regex = TRUE;
-          if (i == 1 || i == 4) f.deliver_force_thaw = TRUE;
-          argrest += Ustrlen(rsopts[i]);
-          }
-      }
-
-    /* -S: Set string to match in addresses for forced queue run to
-    pick out particular messages. */
-
-    if (*argrest)
-      deliver_selectstring_sender = argrest;
-    else if (i+1 < argc)
-      deliver_selectstring_sender = argv[++i];
-    else
-      exim_fail("exim: string expected after -S\n");
-    break;
 
     /* -Tqt is an option that is exclusively for use by the testing suite.
     It is not recognized in other circumstances. It allows for the setting up
@@ -3288,8 +3746,8 @@ for (i = 1; i < argc; i++)
     tested. Otherwise variability of clock ticks etc. cause problems. */
 
     case 'T':
-    if (f.running_in_test_harness && Ustrcmp(argrest, "qt") == 0)
-      fudged_queue_times = argv[++i];
+    if (f.running_in_test_harness && Ustrcmp(argrest, "qt") == 0 && ++i < argc)
+      fudged_queue_times = string_copy_taint(argv[i], GET_TAINTED);
     else badarg = TRUE;
     break;
 
@@ -3297,7 +3755,7 @@ for (i = 1; i < argc; i++)
     /* -t: Set flag to extract recipients from body of message. */
 
     case 't':
-    if (*argrest == 0) extract_recipients = TRUE;
+    if (!*argrest) extract_recipients = TRUE;
 
     /* -ti: Set flag to extract recipients from body of message, and also
     specify that dot does not end the message. */
@@ -3310,7 +3768,7 @@ for (i = 1; i < argc; i++)
 
     /* -tls-on-connect: don't wait for STARTTLS (for old clients) */
 
-    #ifdef SUPPORT_TLS
+    #ifndef DISABLE_TLS
     else if (Ustrcmp(argrest, "ls-on-connect") == 0) tls_in.on_connect = TRUE;
     #endif
 
@@ -3329,7 +3787,7 @@ for (i = 1; i < argc; i++)
     /* -v: verify things - this is a very low-level debugging */
 
     case 'v':
-    if (*argrest == 0)
+    if (!*argrest)
       {
       debug_selector |= D_v;
       debug_file = stderr;
@@ -3349,22 +3807,26 @@ for (i = 1; i < argc; i++)
     As Exim is 8-bit clean, it just ignores this flag. */
 
     case 'x':
-    if (*argrest != 0) badarg = TRUE;
+    if (*argrest) badarg = TRUE;
     break;
 
     /* -X: in sendmail: takes one parameter, logfile, and sends debugging
     logs to that file.  We swallow the parameter and otherwise ignore it. */
 
     case 'X':
-    if (*argrest == '\0')
+    if (!*argrest)
       if (++i >= argc)
         exim_fail("exim: string expected after -X\n");
     break;
 
+    /* -z: a line of text to log */
+
     case 'z':
-    if (*argrest == '\0')
+    if (!*argrest)
       if (++i < argc)
-	log_oneline = argv[i];
+	log_oneline = string_copy_taint(
+	  exim_str_fail_toolong(argv[i], 2048, "-z logtext"),
+	  GET_TAINTED);
       else
         exim_fail("exim: file name expected after %s\n", argv[i-1]);
     break;
@@ -3386,64 +3848,52 @@ for (i = 1; i < argc; i++)
 
 /* If -R or -S have been specified without -q, assume a single queue run. */
 
-if (  (deliver_selectstring || deliver_selectstring_sender)
-   && queue_interval < 0)
-    queue_interval = 0;
+ if ((deliver_selectstring || deliver_selectstring_sender) && !qrunners)
+  alloc_onetime_qrunner();
 
 
 END_ARG:
+ store_pool = old_pool;
+ }
+
 /* If usage_wanted is set we call the usage function - which never returns */
 if (usage_wanted) exim_usage(called_as);
 
 /* Arguments have been processed. Check for incompatibilities. */
-if ((
-    (smtp_input || extract_recipients || recipients_arg < argc) &&
-    (f.daemon_listen || queue_interval >= 0 || bi_option ||
-      test_retry_arg >= 0 || test_rewrite_arg >= 0 ||
-      filter_test != FTEST_NONE || (msg_action_arg > 0 && !one_msg_action))
-    ) ||
-    (
-    msg_action_arg > 0 &&
-    (f.daemon_listen || queue_interval > 0 || list_options ||
-      (checking && msg_action != MSG_LOAD) ||
-      bi_option || test_retry_arg >= 0 || test_rewrite_arg >= 0)
-    ) ||
-    (
-    (f.daemon_listen || queue_interval > 0) &&
-    (sender_address != NULL || list_options || list_queue || checking ||
-      bi_option)
-    ) ||
-    (
-    f.daemon_listen && queue_interval == 0
-    ) ||
-    (
-    f.inetd_wait_mode && queue_interval >= 0
-    ) ||
-    (
-    list_options &&
-    (checking || smtp_input || extract_recipients ||
-      filter_test != FTEST_NONE || bi_option)
-    ) ||
-    (
-    verify_address_mode &&
-    (f.address_test_mode || smtp_input || extract_recipients ||
-      filter_test != FTEST_NONE || bi_option)
-    ) ||
-    (
-    f.address_test_mode && (smtp_input || extract_recipients ||
-      filter_test != FTEST_NONE || bi_option)
-    ) ||
-    (
-    smtp_input && (sender_address != NULL || filter_test != FTEST_NONE ||
-      extract_recipients)
-    ) ||
-    (
-    deliver_selectstring != NULL && queue_interval < 0
-    ) ||
-    (
-    msg_action == MSG_LOAD &&
-      (!expansion_test || expansion_test_message != NULL)
-    )
+if (  (  (smtp_input || extract_recipients || recipients_arg < argc)
+      && (  f.daemon_listen || qrunners || bi_option
+	 || test_retry_arg >= 0 || test_rewrite_arg >= 0
+	 || filter_test != FTEST_NONE
+	 || msg_action_arg > 0 && !one_msg_action
+      )  )
+   || (  msg_action_arg > 0
+      && (  f.daemon_listen || is_multiple_qrun() || list_options
+	 || checking && msg_action != MSG_LOAD
+	 || bi_option || test_retry_arg >= 0 || test_rewrite_arg >= 0
+      )  )
+   || (  (f.daemon_listen || is_multiple_qrun())
+      && (  sender_address || list_options || list_queue || checking
+	 || bi_option
+      )  )
+   || f.daemon_listen && is_onetime_qrun()
+   || f.inetd_wait_mode && qrunners
+   || (  list_options
+      && (  checking || smtp_input || extract_recipients
+	 || filter_test != FTEST_NONE || bi_option
+      )  )
+   || (  verify_address_mode
+      && (  f.address_test_mode || smtp_input || extract_recipients
+	 || filter_test != FTEST_NONE || bi_option
+      )  )
+   || (  f.address_test_mode
+      && (  smtp_input || extract_recipients || filter_test != FTEST_NONE
+	 || bi_option
+      )  )
+   || (  smtp_input
+      && (sender_address || filter_test != FTEST_NONE || extract_recipients)
+      )
+   || deliver_selectstring && !qrunners
+   || msg_action == MSG_LOAD && (!expansion_test || expansion_test_message)
    )
   exim_fail("exim: incompatible command-line options or arguments\n");
 
@@ -3456,14 +3906,14 @@ if (debug_selector != 0)
   debug_file = stderr;
   debug_fd = fileno(debug_file);
   f.background_daemon = FALSE;
-  if (f.running_in_test_harness) millisleep(100);   /* lets caller finish */
+  testharness_pause_ms(100);   /* lets caller finish */
   if (debug_selector != D_v)    /* -v only doesn't show this */
     {
     debug_printf("Exim version %s uid=%ld gid=%ld pid=%d D=%x\n",
       version_string, (long int)real_uid, (long int)real_gid, (int)getpid(),
       debug_selector);
     if (!version_printed)
-      show_whats_supported(stderr);
+      show_whats_supported(FALSE);
     }
   }
 
@@ -3481,7 +3931,7 @@ else
   {
   struct rlimit rlp;
 
-  #ifdef RLIMIT_NOFILE
+#ifdef RLIMIT_NOFILE
   if (getrlimit(RLIMIT_NOFILE, &rlp) < 0)
     {
     log_write(0, LOG_MAIN|LOG_PANIC, "getrlimit(RLIMIT_NOFILE) failed: %s",
@@ -3504,9 +3954,9 @@ else
           strerror(errno));
       }
     }
-  #endif
+#endif
 
-  #ifdef RLIMIT_NPROC
+#ifdef RLIMIT_NPROC
   if (getrlimit(RLIMIT_NPROC, &rlp) < 0)
     {
     log_write(0, LOG_MAIN|LOG_PANIC, "getrlimit(RLIMIT_NPROC) failed: %s",
@@ -3514,20 +3964,20 @@ else
     rlp.rlim_cur = rlp.rlim_max = 0;
     }
 
-  #ifdef RLIM_INFINITY
+# ifdef RLIM_INFINITY
   if (rlp.rlim_cur != RLIM_INFINITY && rlp.rlim_cur < 1000)
     {
     rlp.rlim_cur = rlp.rlim_max = RLIM_INFINITY;
-  #else
+# else
   if (rlp.rlim_cur < 1000)
     {
     rlp.rlim_cur = rlp.rlim_max = 1000;
-  #endif
+# endif
     if (setrlimit(RLIMIT_NPROC, &rlp) < 0)
       log_write(0, LOG_MAIN|LOG_PANIC, "setrlimit(RLIMIT_NPROC) failed: %s",
         strerror(errno));
     }
-  #endif
+#endif
   }
 
 /* Exim is normally entered as root (but some special configurations are
@@ -3562,11 +4012,15 @@ an error return. The following code should cope with both types of system.
  in the call to exim_setugid().
 
 However, if this process isn't running as root, setgroups() can't be used
-since you have to be root to run it, even if throwing away groups. Not being
-root here happens only in some unusual configurations. We just ignore the
-error. */
+since you have to be root to run it, even if throwing away groups.
+Except, sigh, for Hurd - where you can.
+Not being root here happens only in some unusual configurations. */
 
-if (setgroups(0, NULL) != 0 && setgroups(1, group_list) != 0 && !unprivileged)
+if (  !unprivileged
+#ifndef OS_SETGROUPS_ZERO_DROPS_ALL
+   && setgroups(0, NULL) != 0
+#endif
+   && setgroups(1, group_list) != 0)
   exim_fail("exim: setgroups() failed: %s\n", strerror(errno));
 
 /* If the configuration file name has been altered by an argument on the
@@ -3646,6 +4100,7 @@ is equivalent to the ability to modify a setuid binary!
 This needs to happen before we read the main configuration. */
 init_lookup_list();
 
+/*XXX this excrescence could move to the testsuite standard config setup file */
 #ifdef SUPPORT_I18N
 if (f.running_in_test_harness) smtputf8_advertise_hosts = NULL;
 #endif
@@ -3661,9 +4116,11 @@ during readconf_main() some expansion takes place already. */
 /* Store the initial cwd before we change directories.  Can be NULL if the
 dir has already been unlinked. */
 initial_cwd = os_getcwd(NULL, 0);
-if (initial_cwd && strlen(CCS initial_cwd) >= BIG_BUFFER_SIZE) {
-  exim_fail("exim: initial cwd is far too long\n");
-}
+if (!initial_cwd && errno)
+  exim_fail("exim: getting initial cwd failed: %s\n", strerror(errno));
+
+if (initial_cwd && (strlen(CCS initial_cwd) >= BIG_BUFFER_SIZE))
+  exim_fail("exim: initial cwd is far too long (%d)\n", Ustrlen(CCS initial_cwd));
 
 /* checking:
     -be[m] expansion test        -
@@ -3681,8 +4138,21 @@ If any of these options is set, we suppress warnings about configuration
 issues (currently about tls_advertise_hosts and keep_environment not being
 defined) */
 
-readconf_main(checking || list_options);
+  {
+  int old_pool = store_pool;
+#ifdef MEASURE_TIMING
+  struct timeval t0;
+  (void)gettimeofday(&t0, NULL);
+#endif
 
+  store_pool = POOL_CONFIG;
+  readconf_main(checking || list_options);
+  store_pool = old_pool;
+
+#ifdef MEASURE_TIMING
+  report_time_since(&t0, US"readconf_main (delta)");
+#endif
+  }
 
 /* Now in directory "/" */
 
@@ -3701,16 +4171,13 @@ for later interrogation. */
 if (real_uid == root_uid || real_uid == exim_uid || real_gid == exim_gid)
   f.admin_user = TRUE;
 else
-  {
-  int i, j;
-  for (i = 0; i < group_count && !f.admin_user; i++)
+  for (int i = 0; i < group_count && !f.admin_user; i++)
     if (group_list[i] == exim_gid)
       f.admin_user = TRUE;
     else if (admin_groups)
-      for (j = 1; j <= (int)admin_groups[0] && !f.admin_user; j++)
+      for (int j = 1; j <= (int)admin_groups[0] && !f.admin_user; j++)
         if (admin_groups[j] == group_list[i])
           f.admin_user = TRUE;
-  }
 
 /* Another group of privileged users are the trusted users. These are root,
 exim, and any caller matching trusted_users or trusted_groups. Trusted callers
@@ -3721,18 +4188,16 @@ if (real_uid == root_uid || real_uid == exim_uid)
   f.trusted_caller = TRUE;
 else
   {
-  int i, j;
-
   if (trusted_users)
-    for (i = 1; i <= (int)trusted_users[0] && !f.trusted_caller; i++)
+    for (int i = 1; i <= (int)trusted_users[0] && !f.trusted_caller; i++)
       if (trusted_users[i] == real_uid)
         f.trusted_caller = TRUE;
 
   if (trusted_groups)
-    for (i = 1; i <= (int)trusted_groups[0] && !f.trusted_caller; i++)
+    for (int i = 1; i <= (int)trusted_groups[0] && !f.trusted_caller; i++)
       if (trusted_groups[i] == real_gid)
         f.trusted_caller = TRUE;
-      else for (j = 0; j < group_count && !f.trusted_caller; j++)
+      else for (int j = 0; j < group_count && !f.trusted_caller; j++)
         if (trusted_groups[i] == group_list[j])
           f.trusted_caller = TRUE;
   }
@@ -3750,10 +4215,9 @@ decode_bits(log_selector, log_selector_size, log_notall,
 
 DEBUG(D_any)
   {
-  int i;
   debug_printf("configuration file is %s\n", config_main_filename);
   debug_printf("log selectors =");
-  for (i = 0; i < log_selector_size; i++)
+  for (int i = 0; i < log_selector_size; i++)
     debug_printf(" %08x", log_selector[i]);
   debug_printf("\n");
   }
@@ -3830,9 +4294,7 @@ EXIM_TMPDIR by the build scripts.
 */
 
 #ifdef EXIM_TMPDIR
-  {
-  uschar **p;
-  if (environ) for (p = USS environ; *p; p++)
+  if (environ) for (uschar ** p = USS environ; *p; p++)
     if (Ustrncmp(*p, "TMPDIR=", 7) == 0 && Ustrcmp(*p+7, EXIM_TMPDIR) != 0)
       {
       uschar * newp = store_malloc(Ustrlen(EXIM_TMPDIR) + 8);
@@ -3840,7 +4302,6 @@ EXIM_TMPDIR by the build scripts.
       *p = newp;
       DEBUG(D_any) debug_printf("reset TMPDIR=%s in environment\n", EXIM_TMPDIR);
       }
-  }
 #endif
 
 /* Timezone handling. If timezone_string is "utc", set a flag to cause all
@@ -3942,9 +4403,8 @@ verifying/testing addresses or expansions. */
 if (  (debug_selector & D_any  ||  LOGGING(arguments))
    && f.really_exim && !list_options && !checking)
   {
-  int i;
   uschar *p = big_buffer;
-  Ustrcpy(p, "cwd= (failed)");
+  Ustrcpy(p, US"cwd= (failed)");
 
   if (!initial_cwd)
     p += 13;
@@ -3952,29 +4412,30 @@ if (  (debug_selector & D_any  ||  LOGGING(arguments))
     {
     p += 4;
     snprintf(CS p, big_buffer_size - (p - big_buffer), "%s", CCS initial_cwd);
-    p += strlen(CCS p);
+    p += Ustrlen(CCS p);
     }
 
   (void)string_format(p, big_buffer_size - (p - big_buffer), " %d args:", argc);
   while (*p) p++;
-  for (i = 0; i < argc; i++)
+  for (int i = 0; i < argc; i++)
     {
     int len = Ustrlen(argv[i]);
     const uschar *printing;
     uschar *quote;
     if (p + len + 8 >= big_buffer + big_buffer_size)
       {
-      Ustrcpy(p, " ...");
+      Ustrcpy(p, US" ...");
       log_write(0, LOG_MAIN, "%s", big_buffer);
-      Ustrcpy(big_buffer, "...");
+      Ustrcpy(big_buffer, US"...");
       p = big_buffer + 3;
       }
     printing = string_printing(argv[i]);
-    if (printing[0] == 0) quote = US"\""; else
+    if (!*printing) quote = US"\"";
+    else
       {
       const uschar *pp = printing;
       quote = US"";
-      while (*pp != 0) if (isspace(*pp++)) { quote = US"\""; break; }
+      while (*pp) if (isspace(*pp++)) { quote = US"\""; break; }
       }
     p += sprintf(CS p, " %s%.*s%s", quote, (int)(big_buffer_size -
       (p - big_buffer) - 4), printing, quote);
@@ -3995,10 +4456,8 @@ privilege by now. Before the chdir, we try to ensure that the directory exists.
 
 if (Uchdir(spool_directory) != 0)
   {
-  int dummy;
-  (void)directory_make(spool_directory, US"", SPOOL_DIRECTORY_MODE, FALSE);
-  dummy = /* quieten compiler */ Uchdir(spool_directory);
-  dummy = dummy;	/* yet more compiler quietening, sigh */
+  (void) directory_make(spool_directory, US"", SPOOL_DIRECTORY_MODE, FALSE);
+  (void) Uchdir(spool_directory);
   }
 
 /* Handle calls with the -bi option. This is a sendmail option to rebuild *the*
@@ -4009,23 +4468,23 @@ script. */
 
 if (bi_option)
   {
-  (void)fclose(config_file);
-  if (bi_command != NULL)
+  (void) fclose(config_file);
+  if (bi_command && *bi_command)
     {
     int i = 0;
-    uschar *argv[3];
-    argv[i++] = bi_command;
-    if (alias_arg != NULL) argv[i++] = alias_arg;
+    const uschar * argv[3];
+    argv[i++] = bi_command;	/* nonexpanded option so assume untainted */
+    if (alias_arg) argv[i++] = alias_arg;
     argv[i++] = NULL;
 
     setgroups(group_count, group_list);
     exim_setugid(real_uid, real_gid, FALSE, US"running bi_command");
 
-    DEBUG(D_exec) debug_printf("exec %.256s %.256s\n", argv[0],
-      (argv[1] == NULL)? US"" : argv[1]);
+    DEBUG(D_exec) debug_printf("exec '%.256s' %s%.256s%s\n", argv[0],
+      argv[1] ? "'" : "", argv[1] ? argv[1] : US"", argv[1] ? "'" : "");
 
     execv(CS argv[0], (char *const *)argv);
-    exim_fail("exim: exec failed: %s\n", strerror(errno));
+    exim_fail("exim: exec '%s' failed: %s\n", argv[0], strerror(errno));
     }
   else
     {
@@ -4052,12 +4511,15 @@ count. Only an admin user can use the test interface to scan for email
 if (!f.admin_user)
   {
   BOOL debugset = (debug_selector & ~D_v) != 0;
-  if (deliver_give_up || f.daemon_listen || malware_test_file ||
-     (count_queue && queue_list_requires_admin) ||
-     (list_queue && queue_list_requires_admin) ||
-     (queue_interval >= 0 && prod_requires_admin) ||
-     (debugset && !f.running_in_test_harness))
-    exim_fail("exim:%s permission denied\n", debugset? " debugging" : "");
+  if (  deliver_give_up || f.daemon_listen || malware_test_file
+     || count_queue && queue_list_requires_admin
+     || list_queue && queue_list_requires_admin
+     || qrunners && prod_requires_admin
+     || queue_name_dest && prod_requires_admin
+     || debugset && !f.running_in_test_harness
+     )
+    exim_fail("exim:%s permission denied; not admin\n",
+	      debugset ? " debugging" : "");
   }
 
 /* If the real user is not root or the exim uid, the argument for passing
@@ -4066,12 +4528,14 @@ running with the -N option for any delivery action, unless this call to exim is
 one that supplied an input message, or we are using a patched exim for
 regression testing. */
 
-if (real_uid != root_uid && real_uid != exim_uid &&
-     (continue_hostname != NULL ||
-       (f.dont_deliver &&
-         (queue_interval >= 0 || f.daemon_listen || msg_action_arg > 0)
-       )) && !f.running_in_test_harness)
-  exim_fail("exim: Permission denied\n");
+if (  real_uid != root_uid && real_uid != exim_uid
+   && (  continue_hostname
+      || (  f.dont_deliver
+	 && (qrunners || f.daemon_listen || msg_action_arg > 0)
+      )  )
+   && !f.running_in_test_harness
+   )
+  exim_fail("exim: Permission denied; not exim user or root\n");
 
 /* If the caller is not trusted, certain arguments are ignored when running for
 real, but are permitted when checking things (-be, -bv, -bt, -bh, -bf, -bF).
@@ -4092,9 +4556,9 @@ Exim exits if the syntax is bad. */
 
 else
   {
-  if (sender_host_address != NULL)
+  if (sender_host_address)
     sender_host_port = check_port(sender_host_address);
-  if (interface_address != NULL)
+  if (interface_address)
     interface_port = check_port(interface_address);
   }
 
@@ -4153,13 +4617,9 @@ now for those OS that require the first call to os_getloadavg() to be done as
 root. There will be further calls later for each message received. */
 
 #ifdef LOAD_AVG_NEEDS_ROOT
-if (receiving_message &&
-      (queue_only_load >= 0 ||
-        (f.is_inetd && smtp_load_reserve >= 0)
-      ))
-  {
+if (  receiving_message
+   && (queue_only_load >= 0 || (f.is_inetd && smtp_load_reserve >= 0)))
   load_average = OS_GETLOADAVG();
-  }
 #endif
 
 /* The queue_only configuration option can be overridden by -odx on the command
@@ -4185,18 +4645,20 @@ retained only for starting the daemon. We always do the initgroups() in this
 situation (controlled by the TRUE below), in order to be as close as possible
 to the state Exim usually runs in. */
 
-if (!unprivileged &&                      /* originally had root AND */
-    !removed_privilege &&                 /* still got root AND      */
-    !f.daemon_listen &&                     /* not starting the daemon */
-    queue_interval <= 0 &&                /* (either kind of daemon) */
-      (                                   /*    AND EITHER           */
-      deliver_drop_privilege ||           /* requested unprivileged  */
-        (                                 /*       OR                */
-        queue_interval < 0 &&             /* not running the queue   */
-        (msg_action_arg < 0 ||            /*       and               */
-          msg_action != MSG_DELIVER) &&   /* not delivering and      */
-        (!checking || !f.address_test_mode) /* not address checking    */
-   )  ) )
+if (  !unprivileged				/* originally had root AND */
+   && !removed_privilege			/* still got root AND      */
+   && !f.daemon_listen				/* not starting the daemon */
+   && (!qrunners || is_onetime_qrun())		/* (either kind of daemon) */
+   && (						/*    AND EITHER           */
+         deliver_drop_privilege			/* requested unprivileged  */
+      || (					/*       OR                */
+            !qrunners				/* not running the queue   */
+         && (  msg_action_arg < 0		/*       and               */
+            || msg_action != MSG_DELIVER	/* not delivering          */
+	    )					/*       and               */
+         && (!checking || !f.address_test_mode)	/* not address checking    */
+	 && !rcpt_verify_quota			/* and not quota checking  */
+   )  )  )
   exim_setugid(exim_uid, exim_gid, TRUE, US"privilege not needed");
 
 /* When we are retaining a privileged uid, we still change to the exim gid. */
@@ -4204,6 +4666,7 @@ if (!unprivileged &&                      /* originally had root AND */
 else
   {
   int rv;
+  DEBUG(D_any) debug_printf("dropping to exim gid; retaining priv uid\n");
   rv = setgid(exim_gid);
   /* Impact of failure is that some stuff might end up with an incorrect group.
   We track this for failures from root, since any attempt to change privilege
@@ -4214,8 +4677,10 @@ else
     if (!(unprivileged || removed_privilege))
       exim_fail("exim: changing group failed: %s\n", strerror(errno));
     else
+      {
       DEBUG(D_any) debug_printf("changing group to %ld failed: %s\n",
           (long int)exim_gid, strerror(errno));
+      }
   }
 
 /* Handle a request to scan a file for malware */
@@ -4224,16 +4689,15 @@ if (malware_test_file)
 #ifdef WITH_CONTENT_SCAN
   int result;
   set_process_info("scanning file for malware");
-  result = malware_in_file(malware_test_file);
-  if (result == FAIL)
+  if ((result = malware_in_file(malware_test_file)) == FAIL)
     {
     printf("No malware found.\n");
-    exit(EXIT_SUCCESS);
+    exim_exit(EXIT_SUCCESS);
     }
   if (result != OK)
     {
     printf("Malware lookup returned non-okay/fail: %d\n", result);
-    exit(EXIT_FAILURE);
+    exim_exit(EXIT_FAILURE);
     }
   if (malware_name)
     printf("Malware found: %s\n", malware_name);
@@ -4242,7 +4706,7 @@ if (malware_test_file)
 #else
   printf("Malware scanning not enabled at compile time.\n");
 #endif
-  exit(EXIT_FAILURE);
+  exim_exit(EXIT_FAILURE);
   }
 
 /* Handle a request to list the delivery queue */
@@ -4251,7 +4715,7 @@ if (list_queue)
   {
   set_process_info("listing the queue");
   queue_list(list_queue_option, argv + recipients_arg, argc - recipients_arg);
-  exit(EXIT_SUCCESS);
+  exim_exit(EXIT_SUCCESS);
   }
 
 /* Handle a request to count the delivery queue */
@@ -4259,8 +4723,8 @@ if (list_queue)
 if (count_queue)
   {
   set_process_info("counting the queue");
-  queue_count();
-  exit(EXIT_SUCCESS);
+  fprintf(stdout, "%u\n", queue_count());
+  exim_exit(EXIT_SUCCESS);
   }
 
 /* Handle actions on specific messages, except for the force delivery and
@@ -4277,35 +4741,69 @@ if (msg_action_arg > 0 && msg_action != MSG_DELIVER && msg_action != MSG_LOAD)
   event_action gets expanded */
 
   if (msg_action == MSG_REMOVE)
+    {
+    int old_pool = store_pool;
+    store_pool = POOL_CONFIG;
     readconf_rest();
+    store_pool = old_pool;
+    store_writeprotect(POOL_CONFIG);
+    }
 
   if (!one_msg_action)
     {
     for (i = msg_action_arg; i < argc; i++)
       if (!queue_action(argv[i], msg_action, NULL, 0, 0))
         yield = EXIT_FAILURE;
+    switch (msg_action)
+      {
+      case MSG_REMOVE: case MSG_FREEZE: case MSG_THAW: break;
+      default: printf("\n"); break;
+      }
     }
 
   else if (!queue_action(argv[msg_action_arg], msg_action, argv, argc,
     recipients_arg)) yield = EXIT_FAILURE;
-  exit(yield);
+  exim_exit(yield);
   }
 
 /* We used to set up here to skip reading the ACL section, on
- (msg_action_arg > 0 || (queue_interval == 0 && !f.daemon_listen)
+ (msg_action_arg > 0 || (is_onetime_qrun() && !f.daemon_listen)
 Now, since the intro of the ${acl } expansion, ACL definitions may be
 needed in transports so we lost the optimisation. */
 
-readconf_rest();
+  {
+  int old_pool = store_pool;
+#ifdef MEASURE_TIMING
+  struct timeval t0;
+  (void)gettimeofday(&t0, NULL);
+#endif
 
-/* The configuration data will have been read into POOL_PERM because we won't
-ever want to reset back past it. Change the current pool to POOL_MAIN. In fact,
-this is just a bit of pedantic tidiness. It wouldn't really matter if the
-configuration were read into POOL_MAIN, because we don't do any resets till
-later on. However, it seems right, and it does ensure that both pools get used.
-*/
+  store_pool = POOL_CONFIG;
+  readconf_rest();
+  store_pool = old_pool;
 
-store_pool = POOL_MAIN;
+  /* -be can add macro definitions, needing to link to the macro structure
+  chain.  Otherwise, make the memory used for config data readonly. */
+
+  if (!expansion_test)
+    store_writeprotect(POOL_CONFIG);
+
+#ifdef MEASURE_TIMING
+  report_time_since(&t0, US"readconf_rest (delta)");
+#endif
+  }
+
+/* Handle a request to check quota */
+if (rcpt_verify_quota)
+  if (real_uid != root_uid && real_uid != exim_uid)
+    exim_fail("exim: Permission denied\n");
+  else if (recipients_arg >= argc)
+    exim_fail("exim: missing recipient for quota check\n");
+  else
+    {
+    verify_quota(US argv[recipients_arg]);	/*XXX we lose track of const here */
+    exim_exit(EXIT_SUCCESS);
+    }
 
 /* Handle the -brt option. This is for checking out retry configurations.
 The next three arguments are a domain name or a complete address, and
@@ -4317,14 +4815,14 @@ if (test_retry_arg >= 0)
   retry_config *yield;
   int basic_errno = 0;
   int more_errno = 0;
-  uschar *s1, *s2;
+  const uschar *s1, *s2;
 
   if (test_retry_arg >= argc)
     {
     printf("-brt needs a domain or address argument\n");
-    exim_exit(EXIT_FAILURE, US"main");
+    exim_exit(EXIT_FAILURE);
     }
-  s1 = argv[test_retry_arg++];
+  s1 = exim_str_fail_toolong(argv[test_retry_arg++], EXIM_EMAILADDR_MAX, "-brt");
   s2 = NULL;
 
   /* If the first argument contains no @ and no . it might be a local user
@@ -4340,13 +4838,13 @@ if (test_retry_arg >= 0)
   /* There may be an optional second domain arg. */
 
   if (test_retry_arg < argc && Ustrchr(argv[test_retry_arg], '.') != NULL)
-    s2 = argv[test_retry_arg++];
+    s2 = exim_str_fail_toolong(argv[test_retry_arg++], EXIM_DOMAINNAME_MAX, "-brt 2nd");
 
   /* The final arg is an error name */
 
   if (test_retry_arg < argc)
     {
-    uschar *ss = argv[test_retry_arg];
+    const uschar *ss = exim_str_fail_toolong(argv[test_retry_arg], EXIM_DRIVERNAME_MAX, "-brt 3rd");
     uschar *error =
       readconf_retry_error(ss, ss + Ustrlen(ss), &basic_errno, &more_errno);
     if (error != NULL)
@@ -4375,7 +4873,6 @@ if (test_retry_arg >= 0)
     printf("No retry information found\n");
   else
     {
-    retry_rule *r;
     more_errno = yield->more_errno;
     printf("Retry rule: %s  ", yield->pattern);
 
@@ -4405,7 +4902,7 @@ if (test_retry_arg >= 0)
       printf("auth_failed  ");
     else printf("*  ");
 
-    for (r = yield->rules; r; r = r->next)
+    for (retry_rule * r = yield->rules; r; r = r->next)
       {
       printf("%c,%s", r->rule, readconf_printtime(r->timeout)); /* Do not */
       printf(",%s", readconf_printtime(r->p1));                 /* amalgamate */
@@ -4428,7 +4925,7 @@ if (test_retry_arg >= 0)
 
     printf("\n");
     }
-  exim_exit(EXIT_SUCCESS, US"main");
+  exim_exit(EXIT_SUCCESS);
   }
 
 /* Handle a request to list one or more configuration options */
@@ -4449,29 +4946,26 @@ if (list_options)
 	 Ustrcmp(argv[i], "macro") == 0 ||
 	 Ustrcmp(argv[i], "environment") == 0))
       {
-      fail |= !readconf_print(argv[i+1], argv[i], flag_n);
+      fail |= !readconf_print(exim_str_fail_toolong(argv[i+1], EXIM_DRIVERNAME_MAX, "-bP name"), argv[i], flag_n);
       i++;
       }
     else
-      fail = !readconf_print(argv[i], NULL, flag_n);
+      fail = !readconf_print(exim_str_fail_toolong(argv[i], EXIM_DRIVERNAME_MAX, "-bP item"), NULL, flag_n);
     }
-  exim_exit(fail ? EXIT_FAILURE : EXIT_SUCCESS, US"main");
+  exim_exit(fail ? EXIT_FAILURE : EXIT_SUCCESS);
   }
 
 if (list_config)
   {
   set_process_info("listing config");
   exim_exit(readconf_print(US"config", NULL, flag_n)
-		? EXIT_SUCCESS : EXIT_FAILURE, US"main");
+		? EXIT_SUCCESS : EXIT_FAILURE);
   }
 
 
-/* Initialise subsystems as required */
-#ifndef DISABLE_DKIM
-dkim_exim_init();
-#endif
-deliver_init();
+/* Initialise subsystems as required. */
 
+tcp_init();
 
 /* Handle a request to deliver one or more messages that are already on the
 queue. Values of msg_action other than MSG_DELIVER and MSG_LOAD are dealt with
@@ -4491,7 +4985,7 @@ if (msg_action_arg > 0 && msg_action != MSG_LOAD)
   if (prod_requires_admin && !f.admin_user)
     {
     fprintf(stderr, "exim: Permission denied\n");
-    exim_exit(EXIT_FAILURE, US"main");
+    exim_exit(EXIT_FAILURE);
     }
   set_process_info("delivering specified messages");
   if (deliver_give_up) forced_delivery = f.deliver_force_thaw = TRUE;
@@ -4499,41 +4993,35 @@ if (msg_action_arg > 0 && msg_action != MSG_LOAD)
     {
     int status;
     pid_t pid;
+    /*XXX This use of argv[i] for msg_id should really be tainted, but doing
+    that runs into a later copy into the untainted global message_id[] */
+    /*XXX Do we need a length limit check here? */
     if (i == argc - 1)
       (void)deliver_message(argv[i], forced_delivery, deliver_give_up);
-    else if ((pid = fork()) == 0)
+    else if ((pid = exim_fork(US"cmdline-delivery")) == 0)
       {
       (void)deliver_message(argv[i], forced_delivery, deliver_give_up);
-      _exit(EXIT_SUCCESS);
+      exim_underbar_exit(EXIT_SUCCESS);
       }
     else if (pid < 0)
       {
       fprintf(stderr, "failed to fork delivery process for %s: %s\n", argv[i],
         strerror(errno));
-      exim_exit(EXIT_FAILURE, US"main");
+      exim_exit(EXIT_FAILURE);
       }
     else wait(&status);
     }
-  exim_exit(EXIT_SUCCESS, US"main");
+  exim_exit(EXIT_SUCCESS);
   }
 
 
 /* If only a single queue run is requested, without SMTP listening, we can just
 turn into a queue runner, with an optional starting message id. */
 
-if (queue_interval == 0 && !f.daemon_listen)
+if (is_onetime_qrun() && !f.daemon_listen)
   {
-  DEBUG(D_queue_run) debug_printf("Single queue run%s%s%s%s\n",
-    (start_queue_run_id == NULL)? US"" : US" starting at ",
-    (start_queue_run_id == NULL)? US"" : start_queue_run_id,
-    (stop_queue_run_id == NULL)?  US"" : US" stopping at ",
-    (stop_queue_run_id == NULL)?  US"" : stop_queue_run_id);
-  if (*queue_name)
-    set_process_info("running the '%s' queue (single queue run)", queue_name);
-  else
-    set_process_info("running the queue (single queue run)");
-  queue_run(start_queue_run_id, stop_queue_run_id, FALSE);
-  exim_exit(EXIT_SUCCESS, US"main");
+  single_queue_run(qrunners, start_queue_run_id, stop_queue_run_id);
+  exim_exit(EXIT_SUCCESS);
   }
 
 
@@ -4580,10 +5068,12 @@ for (i = 0;;)
         /* If a pattern for matching the gecos field was supplied, apply
         it and then expand the name string. */
 
+	GET_OPTION("gecos_pattern");
+	GET_OPTION("gecos_name");
         if (gecos_pattern && gecos_name)
           {
-          const pcre *re;
-          re = regex_must_compile(gecos_pattern, FALSE, TRUE); /* Use malloc */
+          const pcre2_code *re;
+          re = regex_must_compile(gecos_pattern, MCS_NOFLAGS, TRUE); /* Use malloc */
 
           if (regex_match_and_setup(re, name, 0, -1))
             {
@@ -4623,16 +5113,17 @@ for (i = 0;;)
 configuration specifies something to use. When running in the test harness,
 any setting of unknown_login overrides the actual name. */
 
-if (originator_login == NULL || f.running_in_test_harness)
+if (!originator_login || f.running_in_test_harness)
   {
-  if (unknown_login != NULL)
+  GET_OPTION("unknown_login");
+  if (unknown_login)
     {
     originator_login = expand_string(unknown_login);
-    if (originator_name == NULL && unknown_username != NULL)
+    if (!originator_name && unknown_username)
       originator_name = expand_string(unknown_username);
-    if (originator_name == NULL) originator_name = US"";
+    if (!originator_name) originator_name = US"";
     }
-  if (originator_login == NULL)
+  if (!originator_login)
     log_write(0, LOG_MAIN|LOG_PANIC_DIE, "Failed to get user name for uid %d",
       (int)real_uid);
   }
@@ -4640,8 +5131,7 @@ if (originator_login == NULL || f.running_in_test_harness)
 /* Ensure that the user name is in a suitable form for use as a "phrase" in an
 RFC822 address.*/
 
-originator_name = string_copy(parse_fix_phrase(originator_name,
-  Ustrlen(originator_name), big_buffer, big_buffer_size));
+originator_name = US parse_fix_phrase(originator_name, Ustrlen(originator_name));
 
 /* If a message is created by this call of Exim, the uid/gid of its originator
 are those of the caller. These values are overridden if an existing message is
@@ -4658,7 +5148,7 @@ returns. We leave this till here so that the originator_ fields are available
 for incoming messages via the daemon. The daemon cannot be run in mua_wrapper
 mode. */
 
-if (f.daemon_listen || f.inetd_wait_mode || queue_interval > 0)
+if (f.daemon_listen || f.inetd_wait_mode || is_multiple_qrun())
   {
   if (mua_wrapper)
     {
@@ -4666,6 +5156,23 @@ if (f.daemon_listen || f.inetd_wait_mode || queue_interval > 0)
     log_write(0, LOG_MAIN|LOG_PANIC_DIE, "Daemon cannot be run when "
       "mua_wrapper is set");
     }
+
+# ifndef DISABLE_TLS
+  /* This also checks that the library linkage is working and we can call
+  routines in it, so call even if tls_require_ciphers is unset */
+    {
+# ifdef MEASURE_TIMING
+    struct timeval t0;
+    (void)gettimeofday(&t0, NULL);
+# endif
+    if (!tls_dropprivs_validate_require_cipher(FALSE))
+      exim_exit(EXIT_FAILURE);
+# ifdef MEASURE_TIMING
+    report_time_since(&t0, US"validate_ciphers (delta)");
+# endif
+    }
+#endif
+
   daemon_go();
   }
 
@@ -4673,8 +5180,8 @@ if (f.daemon_listen || f.inetd_wait_mode || queue_interval > 0)
 the caller. This will get overwritten below for an inetd call. If a trusted
 caller has set it empty, unset it. */
 
-if (sender_ident == NULL) sender_ident = originator_login;
-  else if (sender_ident[0] == 0) sender_ident = NULL;
+if (!sender_ident) sender_ident = originator_login;
+else if (!*sender_ident) sender_ident = NULL;
 
 /* Handle the -brw option, which is for checking out rewriting rules. Cause log
 writes (on errors) to go to stderr instead. Can't do this earlier, as want the
@@ -4686,18 +5193,18 @@ if (test_rewrite_arg >= 0)
   if (test_rewrite_arg >= argc)
     {
     printf("-brw needs an address argument\n");
-    exim_exit(EXIT_FAILURE, US"main");
+    exim_exit(EXIT_FAILURE);
     }
-  rewrite_test(argv[test_rewrite_arg]);
-  exim_exit(EXIT_SUCCESS, US"main");
+  rewrite_test(exim_str_fail_toolong(argv[test_rewrite_arg], EXIM_EMAILADDR_MAX, "-brw"));
+  exim_exit(EXIT_SUCCESS);
   }
 
 /* A locally-supplied message is considered to be coming from a local user
 unless a trusted caller supplies a sender address with -f, or is passing in the
 message via SMTP (inetd invocation or otherwise). */
 
-if ((sender_address == NULL && !smtp_input) ||
-    (!f.trusted_caller && filter_test == FTEST_NONE))
+if (  !sender_address && !smtp_input
+   || !f.trusted_caller && filter_test == FTEST_NONE)
   {
   f.sender_local = TRUE;
 
@@ -4705,10 +5212,10 @@ if ((sender_address == NULL && !smtp_input) ||
   via -oMas and -oMai and if so, they will already be set. Otherwise, force
   defaults except when host checking. */
 
-  if (authenticated_sender == NULL && !host_checking)
+  if (!authenticated_sender && !host_checking)
     authenticated_sender = string_sprintf("%s@%s", originator_login,
       qualify_domain_sender);
-  if (authenticated_id == NULL && !host_checking)
+  if (!authenticated_id && !host_checking)
     authenticated_id = originator_login;
   }
 
@@ -4718,16 +5225,16 @@ is specified is the empty address. However, if a trusted caller does not
 specify a sender address for SMTP input, we leave sender_address unset. This
 causes the MAIL commands to be honoured. */
 
-if ((!smtp_input && sender_address == NULL) ||
-    !receive_check_set_sender(sender_address))
+if (  !smtp_input && !sender_address
+   || !receive_check_set_sender(sender_address))
   {
   /* Either the caller is not permitted to set a general sender, or this is
   non-SMTP input and the trusted caller has not set a sender. If there is no
   sender, or if a sender other than <> is set, override with the originator's
   login (which will get qualified below), except when checking things. */
 
-  if (sender_address == NULL             /* No sender_address set */
-       ||                                /*         OR            */
+  if (  !sender_address                  /* No sender_address set */
+     ||                                  /*         OR            */
        (sender_address[0] != 0 &&        /* Non-empty sender address, AND */
        !checking))                       /* Not running tests, including filter tests */
     {
@@ -4745,8 +5252,7 @@ f.sender_set_untrusted = sender_address != originator_login && !f.trusted_caller
 address, which indicates an error message, or doesn't exist (root caller, smtp
 interface, no -f argument). */
 
-if (sender_address != NULL && sender_address[0] != 0 &&
-    sender_address_domain == 0)
+if (sender_address && *sender_address && sender_address_domain == 0)
   sender_address = string_sprintf("%s@%s", local_part_quote(sender_address),
     qualify_domain_sender);
 
@@ -4779,11 +5285,13 @@ if (verify_address_mode || f.address_test_mode)
     }
 
   if (recipients_arg < argc)
-    {
     while (recipients_arg < argc)
       {
-      uschar *s = argv[recipients_arg++];
-      while (*s != 0)
+      /* Supplied addresses are tainted since they come from a user */
+      uschar * s = string_copy_taint(
+	exim_str_fail_toolong(argv[recipients_arg++], EXIM_DISPLAYMAIL_MAX, "address verification"),
+	GET_TAINTED);
+      while (*s)
         {
         BOOL finished = FALSE;
         uschar *ss = parse_find_address_end(s, FALSE);
@@ -4791,20 +5299,22 @@ if (verify_address_mode || f.address_test_mode)
         test_address(s, flags, &exit_value);
         s = ss;
         if (!finished)
-          while (*(++s) != 0 && (*s == ',' || isspace(*s)));
+          while (*++s == ',' || isspace(*s)) ;
         }
       }
-    }
 
   else for (;;)
     {
-    uschar *s = get_stdinput(NULL, NULL);
-    if (s == NULL) break;
-    test_address(s, flags, &exit_value);
+    uschar * s = get_stdinput(NULL, NULL);
+    if (!s) break;
+    test_address(string_copy_taint(
+	exim_str_fail_toolong(s, EXIM_DISPLAYMAIL_MAX, "address verification (stdin)"),
+	GET_TAINTED),
+      flags, &exit_value);
     }
 
   route_tidyup();
-  exim_exit(exit_value, US"main");
+  exim_exit(exit_value);
   }
 
 /* Handle expansion checking. Either expand items on the command line, or read
@@ -4817,11 +5327,15 @@ if (expansion_test)
   dns_init(FALSE, FALSE, FALSE);
   if (msg_action_arg > 0 && msg_action == MSG_LOAD)
     {
-    uschar spoolname[256];  /* Not big_buffer; used in spool_read_header() */
+    uschar * spoolname;
     if (!f.admin_user)
       exim_fail("exim: permission denied\n");
-    message_id = argv[msg_action_arg];
-    (void)string_format(spoolname, sizeof(spoolname), "%s-H", message_id);
+    message_id = US exim_str_fail_toolong(argv[msg_action_arg], MESSAGE_ID_LENGTH, "message-id");
+    /* Checking the length of the ID is sufficient to validate it.
+    Get an untainted version so file opens can be done. */
+    message_id = string_copy_taint(message_id, GET_UNTAINTED);
+
+    spoolname = string_sprintf("%s-H", message_id);
     if ((deliver_datafile = spool_open_datafile(message_id)) < 0)
       printf ("Failed to load message datafile %s\n", message_id);
     if (spool_read_header(spoolname, TRUE, FALSE) != spool_read_OK)
@@ -4833,6 +5347,7 @@ if (expansion_test)
 
   else if (expansion_test_message)
     {
+    uschar * rme = expand_string(recipients_max);
     int save_stdin = dup(0);
     int fd = Uopen(expansion_test_message, O_RDONLY, 0);
     if (fd < 0)
@@ -4841,6 +5356,7 @@ if (expansion_test)
     (void) dup2(fd, 0);
     filter_test = FTEST_USER;      /* Fudge to make it look like filter test */
     message_ended = END_NOTENDED;
+    recipients_max_expanded = atoi(CCS rme);
     read_message_body(receive_msg(extract_recipients));
     message_linecount += body_linecount;
     (void)dup2(save_stdin, 0);
@@ -4860,7 +5376,7 @@ if (expansion_test)
 
   if (recipients_arg < argc)
     while (recipients_arg < argc)
-      expansion_test_line(argv[recipients_arg++]);
+      expansion_test_line(exim_str_fail_toolong(argv[recipients_arg++], EXIM_EMAILADDR_MAX, "recipient"));
 
   /* Read stdin */
 
@@ -4890,7 +5406,7 @@ if (expansion_test)
     deliver_datafile = -1;
     }
 
-  exim_exit(EXIT_SUCCESS, US"main: expansion test");
+  exim_exit(EXIT_SUCCESS);
   }
 
 
@@ -4899,17 +5415,18 @@ for hosts that want to play several parts at once. We need to ensure that it is
 set for host checking, and for receiving messages. */
 
 smtp_active_hostname = primary_hostname;
-if (raw_active_hostname != NULL)
+GET_OPTION("smtp_active_hostname");
+if (raw_active_hostname)
   {
-  uschar *nah = expand_string(raw_active_hostname);
-  if (nah == NULL)
+  uschar * nah = expand_string(raw_active_hostname);
+  if (!nah)
     {
     if (!f.expand_string_forcedfail)
       log_write(0, LOG_MAIN|LOG_PANIC_DIE, "failed to expand \"%s\" "
         "(smtp_active_hostname): %s", raw_active_hostname,
         expand_string_message);
     }
-  else if (nah[0] != 0) smtp_active_hostname = nah;
+  else if (nah[0]) smtp_active_hostname = nah;
   }
 
 /* Handle host checking: this facility mocks up an incoming SMTP call from a
@@ -4927,17 +5444,20 @@ if (host_checking)
   if (!sender_ident_set)
     {
     sender_ident = NULL;
-    if (f.running_in_test_harness && sender_host_port != 0 &&
-        interface_address != NULL && interface_port != 0)
-      verify_get_ident(1413);
+    if (f.running_in_test_harness && sender_host_port
+       && interface_address && interface_port)
+      verify_get_ident(1223);		/* note hardwired port number */
     }
 
   /* In case the given address is a non-canonical IPv6 address, canonicalize
-  it. The code works for both IPv4 and IPv6, as it happens. */
+  it. Use the compressed form for IPv6. */
 
   size = host_aton(sender_host_address, x);
-  sender_host_address = store_get(48);  /* large enough for full IPv6 */
-  (void)host_nmtoa(size, x, -1, sender_host_address, ':');
+  sender_host_address = store_get(48, GET_UNTAINTED);  /* large enough for full IPv6 */
+  if (size == 1)
+    (void) host_nmtoa(size, x, -1, sender_host_address, ':');
+  else
+    (void) ipv6_nmtoa(x, sender_host_address);
 
   /* Now set up for testing */
 
@@ -4954,9 +5474,13 @@ if (host_checking)
     "**** This is not for real!\n\n",
       sender_host_address);
 
+  connection_id = getpid();
   memset(sender_host_cache, 0, sizeof(sender_host_cache));
   if (verify_check_host(&hosts_connection_nolog) == OK)
+    {
     BIT_CLEAR(log_selector, log_selector_size, Li_smtp_connection);
+    BIT_CLEAR(log_selector, log_selector_size, Li_smtp_no_mail);
+    }
   log_write(L_smtp_connection, LOG_MAIN, "%s", smtp_get_connection_info());
 
   /* NOTE: We do *not* call smtp_log_no_mail() if smtp_start_session() fails,
@@ -4966,7 +5490,8 @@ if (host_checking)
 
   if (smtp_start_session())
     {
-    for (reset_point = store_get(0); ; store_reset(reset_point))
+    rmark reset_point;
+    for (; (reset_point = store_mark()); store_reset(reset_point))
       {
       if (smtp_setup_msg() <= 0) break;
       if (!receive_msg(FALSE)) break;
@@ -4980,11 +5505,13 @@ if (host_checking)
       deliver_localpart_orig = NULL;
       deliver_domain_orig = NULL;
       callout_address = sending_ip_address = NULL;
+      deliver_localpart_data = deliver_domain_data =
+      recipient_data = sender_data = NULL;
       sender_rate = sender_rate_limit = sender_rate_period = NULL;
       }
     smtp_log_no_mail();
     }
-  exim_exit(EXIT_SUCCESS, US"main");
+  exim_exit(EXIT_SUCCESS);
   }
 
 
@@ -5101,7 +5628,7 @@ if (smtp_input)
   {
   if (!f.is_inetd) set_process_info("accepting a local %sSMTP message from <%s>",
     smtp_batched_input? "batched " : "",
-    (sender_address!= NULL)? sender_address : originator_login);
+    sender_address ? sender_address : originator_login);
   }
 else
   {
@@ -5136,25 +5663,31 @@ because a log line has already been written for all its failure exists
 (usually "connection refused: <reason>") and writing another one is
 unnecessary clutter. */
 
+connection_id = getpid();
 if (smtp_input)
   {
   smtp_in = stdin;
   smtp_out = stdout;
   memset(sender_host_cache, 0, sizeof(sender_host_cache));
   if (verify_check_host(&hosts_connection_nolog) == OK)
+    {
     BIT_CLEAR(log_selector, log_selector_size, Li_smtp_connection);
+    BIT_CLEAR(log_selector, log_selector_size, Li_smtp_no_mail);
+    }
   log_write(L_smtp_connection, LOG_MAIN, "%s", smtp_get_connection_info());
   if (!smtp_start_session())
     {
     mac_smtp_fflush();
-    exim_exit(EXIT_SUCCESS, US"smtp_start toplevel");
+    exim_exit(EXIT_SUCCESS);
     }
   }
 
-/* Otherwise, set up the input size limit here. */
+/* Otherwise, set up the input size limit here and set no stdin stdio buffer
+(we handle buferring so as to have visibility of fill level). */
 
 else
   {
+  GET_OPTION("message_size_limit");
   thismessage_size_limit = expand_string_integer(message_size_limit, TRUE);
   if (expand_string_message)
     if (thismessage_size_limit == -1)
@@ -5163,6 +5696,8 @@ else
     else
       log_write(0, LOG_MAIN|LOG_PANIC_DIE, "invalid value for "
         "message_size_limit: %s", expand_string_message);
+
+  setvbuf(stdin, NULL, _IONBF, 0);
   }
 
 /* Loop for several messages when reading SMTP input. If we fork any child
@@ -5195,29 +5730,29 @@ that SIG_IGN works. */
 
 if (!f.synchronous_delivery)
   {
-  #ifdef SA_NOCLDWAIT
+#ifdef SA_NOCLDWAIT
   struct sigaction act;
   act.sa_handler = SIG_IGN;
   sigemptyset(&(act.sa_mask));
   act.sa_flags = SA_NOCLDWAIT;
   sigaction(SIGCHLD, &act, NULL);
-  #else
+#else
   signal(SIGCHLD, SIG_IGN);
-  #endif
+#endif
   }
 
 /* Save the current store pool point, for resetting at the start of
 each message, and save the real sender address, if any. */
 
-reset_point = store_get(0);
 real_sender_address = sender_address;
 
 /* Loop to receive messages; receive_msg() returns TRUE if there are more
 messages to be read (SMTP input), or FALSE otherwise (not SMTP, or SMTP channel
 collapsed). */
 
-while (more)
+for (BOOL more = TRUE; more; )
   {
+  rmark reset_point = store_mark();
   message_id[0] = 0;
 
   /* Handle the SMTP case; call smtp_setup_mst() to deal with the initial SMTP
@@ -5233,8 +5768,8 @@ while (more)
     int rc;
     if ((rc = smtp_setup_msg()) > 0)
       {
-      if (real_sender_address != NULL &&
-          !receive_check_set_sender(sender_address))
+      if (   real_sender_address
+	  && !receive_check_set_sender(sender_address))
         {
         sender_address = raw_sender = real_sender_address;
         sender_address_unrewritten = NULL;
@@ -5245,31 +5780,35 @@ while (more)
       the very end. The result of the ACL is ignored (as for other non-SMTP
       messages). It is run for its potential side effects. */
 
-      if (smtp_batched_input && acl_not_smtp_start != NULL)
-        {
-        uschar *user_msg, *log_msg;
-        f.enable_dollar_recipients = TRUE;
-        (void)acl_check(ACL_WHERE_NOTSMTP_START, NULL, acl_not_smtp_start,
-          &user_msg, &log_msg);
-        f.enable_dollar_recipients = FALSE;
-        }
+      if (smtp_batched_input)
+	{
+	GET_OPTION("acl_not_smtp_start");
+	if (acl_not_smtp_start)
+	  {
+	  uschar * user_msg, * log_msg;
+	  f.enable_dollar_recipients = TRUE;
+	  (void)acl_check(ACL_WHERE_NOTSMTP_START, NULL, acl_not_smtp_start,
+	    &user_msg, &log_msg);
+	  f.enable_dollar_recipients = FALSE;
+	  }
+	}
 
       /* Now get the data for the message */
 
       more = receive_msg(extract_recipients);
-      if (message_id[0] == 0)
+      if (!message_id[0])
         {
 	cancel_cutthrough_connection(TRUE, US"receive dropped");
-        if (more) goto moreloop;
+        if (more) goto MORELOOP;
         smtp_log_no_mail();               /* Log no mail if configured */
-        exim_exit(EXIT_FAILURE, US"receive toplevel");
+        exim_exit(EXIT_FAILURE);
         }
       }
     else
       {
       cancel_cutthrough_connection(TRUE, US"message setup dropped");
       smtp_log_no_mail();               /* Log no mail if configured */
-      exim_exit(rc ? EXIT_FAILURE : EXIT_SUCCESS, US"msg setup toplevel");
+      exim_exit(rc ? EXIT_FAILURE : EXIT_SUCCESS);
       }
     }
 
@@ -5281,10 +5820,11 @@ while (more)
 
   else
     {
-    int i;
-    int rcount = 0;
-    int count = argc - recipients_arg;
-    uschar **list = argv + recipients_arg;
+    uschar * rme = expand_string(recipients_max);
+    int rcount = 0, count = argc - recipients_arg;
+    const uschar ** list = argv + recipients_arg;
+
+    recipients_max_expanded = atoi(CCS rme);
 
     /* These options cannot be changed dynamically for non-SMTP messages */
 
@@ -5295,37 +5835,46 @@ while (more)
 
     raw_sender = string_copy(sender_address);
 
-    /* Loop for each argument */
+    /* Loop for each argument (supplied by user hence tainted) */
 
-    for (i = 0; i < count; i++)
+    for (int i = 0; i < count; i++)
       {
       int start, end, domain;
-      uschar *errmess;
-      uschar *s = list[i];
+      uschar * errmess;
+      /* There can be multiple addresses, so EXIM_DISPLAYMAIL_MAX (tuned for 1) is too short.
+      We'll still want to cap it to something, just in case. */
+      uschar * s = string_copy_taint(
+	exim_str_fail_toolong(list[i], BIG_BUFFER_SIZE, "address argument"),
+	GET_TAINTED);
 
       /* Loop for each comma-separated address */
 
-      while (*s != 0)
+      while (*s)
         {
         BOOL finished = FALSE;
-        uschar *recipient;
-        uschar *ss = parse_find_address_end(s, FALSE);
+        uschar * recipient;
+        uschar * ss = parse_find_address_end(s, FALSE);
 
         if (*ss == ',') *ss = 0; else finished = TRUE;
 
         /* Check max recipients - if -t was used, these aren't recipients */
 
-        if (recipients_max > 0 && ++rcount > recipients_max &&
-            !extract_recipients)
+        if (  recipients_max_expanded > 0 && ++rcount > recipients_max_expanded
+	   && !extract_recipients)
+	  {
+	  DEBUG(D_all) debug_printf("excess reipients (max %d)\n",
+	    recipients_max_expanded);
+
           if (error_handling == ERRORS_STDERR)
             {
             fprintf(stderr, "exim: too many recipients\n");
-            exim_exit(EXIT_FAILURE, US"main");
+            exim_exit(EXIT_FAILURE);
             }
           else
             return
               moan_to_sender(ERRMESS_TOOMANYRECIP, NULL, NULL, stdin, TRUE)?
                 errors_sender_rc : EXIT_FAILURE;
+	  }
 
 #ifdef SUPPORT_I18N
 	{
@@ -5336,11 +5885,12 @@ while (more)
           parse_extract_address(s, &errmess, &start, &end, &domain, FALSE);
 
 #ifdef SUPPORT_I18N
-	if (string_is_utf8(recipient))
-	  message_smtputf8 = TRUE;
-	else
-	  allow_utf8_domains = b;
+        if (recipient)
+          if (string_is_utf8(recipient)) message_smtputf8 = TRUE;
+          else allow_utf8_domains = b;
 	}
+#else
+        ;
 #endif
         if (domain == 0 && !f.allow_unqualified_recipient)
           {
@@ -5348,13 +5898,16 @@ while (more)
           errmess = US"unqualified recipient address not allowed";
           }
 
-        if (recipient == NULL)
-          {
+        if (!recipient)
+	  {
+	  DEBUG(D_all) debug_printf("bad recipient address \"%s\": %s\n",
+	    string_printing(list[i]), errmess);
+
           if (error_handling == ERRORS_STDERR)
             {
             fprintf(stderr, "exim: bad recipient address \"%s\": %s\n",
               string_printing(list[i]), errmess);
-            exim_exit(EXIT_FAILURE, US"main");
+            exim_exit(EXIT_FAILURE);
             }
           else
             {
@@ -5366,12 +5919,12 @@ while (more)
               moan_to_sender(ERRMESS_BADARGADDRESS, &eblock, NULL, stdin, TRUE)?
                 errors_sender_rc : EXIT_FAILURE;
             }
-          }
+	  }
 
-        receive_add_recipient(recipient, -1);
+        receive_add_recipient(string_copy_taint(recipient, GET_TAINTED), -1);
         s = ss;
         if (!finished)
-          while (*(++s) != 0 && (*s == ',' || isspace(*s)));
+          while (*++s && (*s == ',' || isspace(*s)));
         }
       }
 
@@ -5379,12 +5932,11 @@ while (more)
 
     DEBUG(D_receive)
       {
-      int i;
-      if (sender_address != NULL) debug_printf("Sender: %s\n", sender_address);
-      if (recipients_list != NULL)
+      if (sender_address) debug_printf("Sender: %s\n", sender_address);
+      if (recipients_list)
         {
         debug_printf("Recipients:\n");
-        for (i = 0; i < recipients_count; i++)
+        for (int i = 0; i < recipients_count; i++)
           debug_printf("  %s\n", recipients_list[i].address);
         }
       }
@@ -5393,9 +5945,10 @@ while (more)
     ignored; rejecting here would just add complication, and it can just as
     well be done later. Allow $recipients to be visible in the ACL. */
 
+    GET_OPTION("acl_not_smtp_start");
     if (acl_not_smtp_start)
       {
-      uschar *user_msg, *log_msg;
+      uschar * user_msg, * log_msg;
       f.enable_dollar_recipients = TRUE;
       (void)acl_check(ACL_WHERE_NOTSMTP_START, NULL, acl_not_smtp_start,
         &user_msg, &log_msg);
@@ -5408,13 +5961,8 @@ while (more)
     the file copy. */
 
     if (!receive_timeout)
-      {
-      struct timeval t = { .tv_sec = 30*60, .tv_usec = 0 };	/* 30 minutes */
-      fd_set r;
-
-      FD_ZERO(&r); FD_SET(0, &r);
-      if (select(1, &r, NULL, NULL, &t) == 0) mainlog_close();
-      }
+      if (poll_one_fd(0, POLLIN, 30*60*1000) == 0)	/* 30 minutes */
+	mainlog_close();
 
     /* Read the data for the message. If filter_test is not FTEST_NONE, this
     will just read the headers for the message, and not write anything onto the
@@ -5427,7 +5975,7 @@ while (more)
     for real; when reading the headers of a message for filter testing,
     it is TRUE if the headers were terminated by '.' and FALSE otherwise. */
 
-    if (message_id[0] == 0) exim_exit(EXIT_FAILURE, US"main");
+    if (!message_id[0]) exim_exit(EXIT_FAILURE);
     }  /* Non-SMTP message reception */
 
   /* If this is a filter testing run, there are headers in store, but
@@ -5439,17 +5987,15 @@ while (more)
 
   if (filter_test != FTEST_NONE)
     {
-    deliver_domain = (ftest_domain != NULL)?
-      ftest_domain : qualify_domain_recipient;
+    deliver_domain = ftest_domain ? ftest_domain : qualify_domain_recipient;
     deliver_domain_orig = deliver_domain;
-    deliver_localpart = (ftest_localpart != NULL)?
-      ftest_localpart : originator_login;
+    deliver_localpart = ftest_localpart ? US ftest_localpart : originator_login;
     deliver_localpart_orig = deliver_localpart;
-    deliver_localpart_prefix = ftest_prefix;
-    deliver_localpart_suffix = ftest_suffix;
+    deliver_localpart_prefix = US ftest_prefix;
+    deliver_localpart_suffix = US ftest_suffix;
     deliver_home = originator_home;
 
-    if (return_path == NULL)
+    if (!return_path)
       {
       printf("Return-path copied from sender\n");
       return_path = string_copy(sender_address);
@@ -5460,19 +6006,19 @@ while (more)
 
     receive_add_recipient(
       string_sprintf("%s%s%s@%s",
-        (ftest_prefix == NULL)? US"" : ftest_prefix,
+        ftest_prefix ? ftest_prefix : US"",
         deliver_localpart,
-        (ftest_suffix == NULL)? US"" : ftest_suffix,
+        ftest_suffix ? ftest_suffix : US"",
         deliver_domain), -1);
 
     printf("Recipient   = %s\n", recipients_list[0].address);
-    if (ftest_prefix != NULL) printf("Prefix    = %s\n", ftest_prefix);
-    if (ftest_suffix != NULL) printf("Suffix    = %s\n", ftest_suffix);
+    if (ftest_prefix) printf("Prefix    = %s\n", ftest_prefix);
+    if (ftest_suffix) printf("Suffix    = %s\n", ftest_suffix);
 
     if (chdir("/"))   /* Get away from wherever the user is running this from */
       {
       DEBUG(D_receive) debug_printf("chdir(\"/\") failed\n");
-      exim_exit(EXIT_FAILURE, US"main");
+      exim_exit(EXIT_FAILURE);
       }
 
     /* Now we run either a system filter test, or a user filter test, or both.
@@ -5480,17 +6026,17 @@ while (more)
     available to the user filter. We need to copy the filter variables
     explicitly. */
 
-    if ((filter_test & FTEST_SYSTEM) != 0)
+    if (filter_test & FTEST_SYSTEM)
       if (!filter_runtest(filter_sfd, filter_test_sfile, TRUE, more))
-        exim_exit(EXIT_FAILURE, US"main");
+        exim_exit(EXIT_FAILURE);
 
     memcpy(filter_sn, filter_n, sizeof(filter_sn));
 
-    if ((filter_test & FTEST_USER) != 0)
+    if (filter_test & FTEST_USER)
       if (!filter_runtest(filter_ufd, filter_test_ufile, FALSE, more))
-        exim_exit(EXIT_FAILURE, US"main");
+        exim_exit(EXIT_FAILURE);
 
-    exim_exit(EXIT_SUCCESS, US"main");
+    exim_exit(EXIT_SUCCESS);
     }
 
   /* Else act on the result of message reception. We should not get here unless
@@ -5498,9 +6044,9 @@ while (more)
   will be TRUE. If it is not, check on the number of messages received in this
   connection. */
 
-  if (!session_local_queue_only &&
-      smtp_accept_queue_per_connection > 0 &&
-      receive_messagecount > smtp_accept_queue_per_connection)
+  if (  !session_local_queue_only
+     && smtp_accept_queue_per_connection > 0
+     && receive_messagecount > smtp_accept_queue_per_connection)
     {
     session_local_queue_only = TRUE;
     queue_only_reason = 2;
@@ -5516,16 +6062,12 @@ while (more)
   ones. However, there are odd cases where this is not wanted, so this can be
   changed by setting queue_only_load_latch false. */
 
-  local_queue_only = session_local_queue_only;
-  if (!local_queue_only && queue_only_load >= 0)
-    {
-    local_queue_only = (load_average = OS_GETLOADAVG()) > queue_only_load;
-    if (local_queue_only)
+  if (!(local_queue_only = session_local_queue_only) && queue_only_load >= 0)
+    if ((local_queue_only = (load_average = OS_GETLOADAVG()) > queue_only_load))
       {
       queue_only_reason = 3;
       if (queue_only_load_latch) session_local_queue_only = TRUE;
       }
-    }
 
   /* If running as an MUA wrapper, all queueing options and freezing options
   are ignored. */
@@ -5572,7 +6114,7 @@ while (more)
     pid_t pid;
     search_tidyup();
 
-    if ((pid = fork()) == 0)
+    if ((pid = exim_fork(US"local-accept-delivery")) == 0)
       {
       int rc;
       close_unwanted();      /* Close unwanted file descriptors and TLS */
@@ -5591,8 +6133,8 @@ while (more)
 
       rc = deliver_message(message_id, FALSE, FALSE);
       search_tidyup();
-      _exit((!mua_wrapper || rc == DELIVER_MUA_SUCCEEDED)?
-        EXIT_SUCCESS : EXIT_FAILURE);
+      exim_underbar_exit(!mua_wrapper || rc == DELIVER_MUA_SUCCEEDED
+        ? EXIT_SUCCESS : EXIT_FAILURE);
       }
 
     if (pid < 0)
@@ -5616,7 +6158,7 @@ while (more)
 	  log_write(0, LOG_MAIN|LOG_PANIC,
 	    "process %d crashed with signal %d while delivering %s",
 	    (int)pid, status & 0x00ff, message_id);
-	if (mua_wrapper && (status & 0xffff) != 0) exim_exit(EXIT_FAILURE, US"main");
+	if (mua_wrapper && (status & 0xffff) != 0) exim_exit(EXIT_FAILURE);
 	}
       }
     }
@@ -5626,11 +6168,11 @@ while (more)
   finished subprocesses here, in case there are lots of messages coming in
   from the same source. */
 
-  #ifndef SIG_IGN_WORKS
+#ifndef SIG_IGN_WORKS
   while (waitpid(-1, NULL, WNOHANG) > 0);
-  #endif
+#endif
 
-moreloop:
+MORELOOP:
   return_path = sender_address = NULL;
   authenticated_sender = NULL;
   deliver_localpart_orig = NULL;
@@ -5639,18 +6181,23 @@ moreloop:
   dnslist_domain = dnslist_matched = NULL;
 #ifdef WITH_CONTENT_SCAN
   malware_name = NULL;
+  regex_vars_clear();
 #endif
   callout_address = NULL;
   sending_ip_address = NULL;
+  deliver_localpart_data = deliver_domain_data =
+  recipient_data = sender_data = NULL;
   acl_var_m = NULL;
-  { int i; for(i=0; i<REGEX_VARS; i++) regex_vars[i] = NULL; }
+  lookup_value = NULL;                            /* Can be set by ACL */
 
   store_reset(reset_point);
   }
 
-exim_exit(EXIT_SUCCESS, US"main");   /* Never returns */
+exim_exit(EXIT_SUCCESS);   /* Never returns */
 return 0;                  /* To stop compiler warning */
 }
 
 
 /* End of exim.c */
+/* vi: aw ai sw=2
+*/

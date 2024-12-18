@@ -119,9 +119,11 @@ if [ -e "${UPEX4CT_outputfile}" ] && [ -z "$NOBACKUP" ]; then
   fi
 fi
  
-NEWTEMPLATE=$(tempfile -m644 -p ex4)
+NEWTEMPLATE=$(mktemp)
 if [ -f "${UPEX4CT_outputfile}" ] ; then
 	chmod --reference="${UPEX4CT_outputfile}" "$NEWTEMPLATE"
+else
+	chmod 0644 "$NEWTEMPLATE"
 fi
 
 # generate .template. Ugly - better alternative?

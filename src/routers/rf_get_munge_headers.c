@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2022 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 #include "rf_functions.h"
@@ -38,17 +40,17 @@ if (rblock->extra_headers)
   {
   const uschar * list = rblock->extra_headers;
   int sep = '\n';
-  uschar * s;
+  uschar * s, * t;
   int slen;
 
   while ((s = string_nextinlist(&list, &sep, NULL, 0)))
-    if (!(s = expand_string(s)))
+    if (!(s = expand_string(t = s)))
       {
       if (!f.expand_string_forcedfail)
 	{
 	addr->message = string_sprintf(
 	  "%s router failed to expand add_headers item \"%s\": %s",
-	  rblock->name, s, expand_string_message);
+	  rblock->name, t, expand_string_message);
 	return DEFER;
 	}
       }
@@ -59,7 +61,7 @@ if (rblock->extra_headers)
       shared with other addresses. The output function outputs them in reverse
       order. */
 
-      header_line *  h = store_get(sizeof(header_line));
+      header_line *  h = store_get(sizeof(header_line), GET_UNTAINTED);
 
       /* We used to use string_sprintf() to add the newline if needed, but that
       causes problems if the header line is exceedingly long (e.g. adding
@@ -69,7 +71,7 @@ if (rblock->extra_headers)
 	h->text = s;
       else
 	{
-	h->text = store_get(slen+2);
+	h->text = store_get(slen+2, s);
 	memcpy(h->text, s, slen);
 	h->text[slen++] = '\n';
 	h->text[slen] = 0;
@@ -90,20 +92,20 @@ if (rblock->remove_headers)
   {
   const uschar * list = rblock->remove_headers;
   int sep = ':';
-  uschar * s;
+  uschar * s, * t;
   gstring * g = NULL;
 
   if (*remove_headers)
     g = string_cat(NULL, *remove_headers);
 
   while ((s = string_nextinlist(&list, &sep, NULL, 0)))
-    if (!(s = expand_string(s)))
+    if (!(s = expand_string(t = s)))
       {
       if (!f.expand_string_forcedfail)
 	{
 	addr->message = string_sprintf(
 	  "%s router failed to expand remove_headers item \"%s\": %s",
-	  rblock->name, s, expand_string_message);
+	  rblock->name, t, expand_string_message);
 	return DEFER;
 	}
       }

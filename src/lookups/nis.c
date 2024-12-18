@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2022 */
 /* Copyright (c) University of Cambridge 1995 - 2015 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 #include "lf_functions.h"
@@ -19,12 +21,12 @@
 the "nis" and "nis0" lookup types. */
 
 static void *
-nis_open(uschar *filename, uschar **errmsg)
+nis_open(const uschar * filename, uschar ** errmsg)
 {
 char *nis_domain;
 if (yp_get_default_domain(&nis_domain) != 0)
   {
-  *errmsg = string_sprintf("failed to get default NIS domain");
+  *errmsg = US"failed to get default NIS domain";
   return NULL;
   }
 return nis_domain;
@@ -41,8 +43,9 @@ for nis0 because they are so short it isn't worth trying to use any common
 code. */
 
 static int
-nis_find(void *handle, uschar *filename, const uschar *keystring, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+nis_find(void * handle, const uschar * filename, const uschar * keystring,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
 int rc;
 uschar *nis_data;
@@ -67,8 +70,9 @@ return (rc == YPERR_KEY || rc == YPERR_MAP)? FAIL : DEFER;
 /* See local README for interface description. */
 
 static int
-nis0_find(void *handle, uschar *filename, const uschar *keystring, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+nis0_find(void * handle, const uschar * filename, const uschar * keystring,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
 int rc;
 uschar *nis_data;
@@ -94,37 +98,38 @@ return (rc == YPERR_KEY || rc == YPERR_MAP)? FAIL : DEFER;
 
 #include "../version.h"
 
-void
-nis_version_report(FILE *f)
+gstring *
+nis_version_report(gstring * g)
 {
 #ifdef DYNLOOKUP
-fprintf(f, "Library version: NIS: Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g, "Library version: NIS: Exim version %s\n", EXIM_VERSION_STR);
 #endif
+return g;
 }
 
 
 static lookup_info nis_lookup_info = {
-  US"nis",                       /* lookup name */
-  0,                             /* not abs file, not query style*/
-  nis_open,                      /* open function */
-  NULL,                          /* check function */
-  nis_find,                      /* find function */
-  NULL,                          /* no close function */
-  NULL,                          /* no tidy function */
-  NULL,                          /* no quoting function */
-  nis_version_report             /* version reporting */
+  .name = US"nis",			/* lookup name */
+  .type = 0,				/* not abs file, not query style*/
+  .open = nis_open,			/* open function */
+  .check = NULL,			/* check function */
+  .find = nis_find,			/* find function */
+  .close = NULL,			/* no close function */
+  .tidy = NULL,				/* no tidy function */
+  .quote = NULL,			/* no quoting function */
+  .version_report = nis_version_report             /* version reporting */
 };
 
 static lookup_info nis0_lookup_info = {
-  US"nis0",                      /* lookup name */
-  0,                             /* not absfile, not query style */
-  nis_open,    /* sic */         /* open function */
-  NULL,                          /* check function */
-  nis0_find,                     /* find function */
-  NULL,                          /* no close function */
-  NULL,                          /* no tidy function */
-  NULL,                          /* no quoting function */
-  NULL                           /* no version reporting (redundant) */
+  .name = US"nis0",			/* lookup name */
+  .type = 0,				/* not absfile, not query style */
+  .open = nis_open,			/* sic */         /* open function */
+  .check = NULL,			/* check function */
+  .find = nis0_find,			/* find function */
+  .close = NULL,			/* no close function */
+  .tidy = NULL,				/* no tidy function */
+  .quote = NULL,			/* no quoting function */
+  .version_report = NULL                           /* no version reporting (redundant) */
 };
 
 #ifdef DYNLOOKUP

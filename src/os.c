@@ -2,13 +2,18 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #ifdef STAND_ALONE
 # include <signal.h>
 # include <stdio.h>
 # include <time.h>
+#else
+# define IS_DEBUG(x) (debug_selector & (x))
+# define DEBUG(x) if (IS_DEBUG(x))
 #endif
 
 #ifndef CS
@@ -48,9 +53,9 @@ sigemptyset(&(act.sa_mask));
 act.sa_flags = SA_RESTART;
 sigaction(sig, &act, NULL);
 
-#ifdef STAND_ALONE
+# ifdef STAND_ALONE
 printf("Used SA_RESTART\n");
-#endif
+# endif
 
 /* SunOS4 and Ultrix default to non-interruptable signals, with SV_INTERRUPT
 for making them interruptable. This seems to be a dying fashion. */
@@ -58,9 +63,9 @@ for making them interruptable. This seems to be a dying fashion. */
 #elif defined SV_INTERRUPT
 signal(sig, handler);
 
-#ifdef STAND_ALONE
+# ifdef STAND_ALONE
 printf("Used default signal()\n");
-#endif
+# endif
 
 
 /* If neither SA_RESTART nor SV_INTERRUPT is available we don't know how to
@@ -69,9 +74,9 @@ set up a restarting signal, so simply suppress the facility. */
 #else
 signal(sig, SIG_IGN);
 
-#ifdef STAND_ALONE
+# ifdef STAND_ALONE
 printf("Used SIG_IGN\n");
-#endif
+# endif
 
 #endif
 }
@@ -359,9 +364,9 @@ here as there is the -hal variant, and other systems might follow this road one
 day. */
 
 #if !defined(OS_LOAD_AVERAGE) && defined(HAVE_KSTAT)
-#define OS_LOAD_AVERAGE
+# define OS_LOAD_AVERAGE
 
-#include <kstat.h>
+# include <kstat.h>
 
 int
 os_getloadavg(void)
@@ -395,7 +400,7 @@ return avg;
 #if !defined(OS_LOAD_AVERAGE) && defined(HAVE_DEV_KMEM)
 #define OS_LOAD_AVERAGE
 
-#include <nlist.h>
+# include <nlist.h>
 
 static int  avg_kd = -1;
 static long avg_offset;
@@ -479,7 +484,7 @@ Returns:      a chain of ip_address_items, each pointing to a textual
 
 #ifdef HAVE_GETIFADDRS
 
-#include <ifaddrs.h>
+# include <ifaddrs.h>
 
 ip_address_item *
 os_common_find_running_interfaces(void)
@@ -493,12 +498,13 @@ if (getifaddrs(&ifalist) != 0)
   log_write(0, LOG_PANIC_DIE, "Unable to call getifaddrs: %d %s",
     errno, strerror(errno));
 
-struct ifaddrs *ifa;
-for (ifa = ifalist; ifa != NULL; ifa = ifa->ifa_next)
+for (struct ifaddrs * ifa = ifalist; ifa; ifa = ifa->ifa_next)
   {
-  if (ifa->ifa_addr->sa_family != AF_INET
+  struct sockaddr * ifa_addr = ifa->ifa_addr;
+  if (!ifa_addr) continue;
+  if (ifa_addr->sa_family != AF_INET
 #if HAVE_IPV6
-    && ifa->ifa_addr->sa_family != AF_INET6
+    && ifa_addr->sa_family != AF_INET6
 #endif /* HAVE_IPV6 */
     )
     continue;
@@ -509,12 +515,12 @@ for (ifa = ifalist; ifa != NULL; ifa = ifa->ifa_next)
   /* Create a data block for the address, fill in the data, and put it on the
   chain. */
 
-  next = store_get(sizeof(ip_address_item));
+  next = store_get(sizeof(ip_address_item), GET_UNTAINTED);
   next->next = NULL;
   next->port = 0;
-  (void)host_ntoa(-1, ifa->ifa_addr, next->address, NULL);
+  (void)host_ntoa(-1, ifa_addr, next->address, NULL);
 
-  if (yield == NULL)
+  if (!yield)
     yield = last = next;
   else
     {
@@ -617,7 +623,6 @@ int vs;
 ip_address_item *yield = NULL;
 ip_address_item *last = NULL;
 ip_address_item  *next;
-char *cp;
 char buf[MAX_INTERFACES*sizeof(struct V_ifreq)];
 struct sockaddr *addrp;
 size_t len = 0;
@@ -628,13 +633,13 @@ what we want to know. */
 
 if ((vs = socket(FAMILY, SOCK_DGRAM, 0)) < 0)
   {
-  #if HAVE_IPV6
+#if HAVE_IPV6
   DEBUG(D_interface)
     debug_printf("Unable to create IPv6 socket to find interface addresses:\n  "
       "error %d %s\nTrying for an IPv4 socket\n", errno, strerror(errno));
   vs = socket(AF_INET, SOCK_DGRAM, 0);
   if (vs < 0)
-  #endif
+#endif
   log_write(0, LOG_PANIC_DIE, "Unable to create IPv4 socket to find interface "
     "addresses: %d %s", errno, strerror(errno));
   }
@@ -683,7 +688,7 @@ buffer is not guaranteed to be aligned. Thus, we must first copy the basic
 struct to some aligned memory before looking at the field in the fixed part to
 find its length, and then recopy the correct length. */
 
-for (cp = buf; cp < buf + ifc.V_ifc_len; cp += len)
+for (char * cp = buf; cp < buf + ifc.V_ifc_len; cp += len)
   {
   memcpy(CS &ifreq, cp, sizeof(ifreq));
 
@@ -745,7 +750,7 @@ for (cp = buf; cp < buf + ifc.V_ifc_len; cp += len)
   /* Create a data block for the address, fill in the data, and put it on the
   chain. */
 
-  next = store_get(sizeof(ip_address_item));
+  next = store_get(sizeof(ip_address_item), GET_UNTAINTED);
   next->next = NULL;
   next->port = 0;
   (void)host_ntoa(-1, addrp, next->address, NULL);
@@ -777,13 +782,13 @@ interfaces. We just return the loopback address(es). */
 ip_address_item *
 os_common_find_running_interfaces(void)
 {
-ip_address_item *yield = store_get(sizeof(address_item));
+ip_address_item *yield = store_get(sizeof(address_item), GET_UNTAINTED);
 yield->address = US"127.0.0.1";
 yield->port = 0;
 yield->next = NULL;
 
 #if HAVE_IPV6
-yield->next = store_get(sizeof(address_item));
+yield->next = store_get(sizeof(address_item), GET_UNTAINTED);
 yield->next->address = US"::1";
 yield->next->port = 0;
 yield->next->next = NULL;
@@ -814,7 +819,7 @@ programmer creates their own structs. */
 
 #if !defined(OS_GET_DNS_RESOLVER_RES) && !defined(COMPILE_UTILITY)
 
-#include <resolv.h>
+# include <resolv.h>
 
 /* confirmed that res_state is typedef'd as a struct* on BSD and Linux, will
 find out how unportable it is on other OSes, but most resolver implementations
@@ -833,7 +838,7 @@ return type.
 res_state
 os_get_dns_resolver_res(void)
 {
-  return &_res;
+return &_res;
 }
 
 #endif /* OS_GET_DNS_RESOLVER_RES */
@@ -873,9 +878,7 @@ os_getcwd(unsigned char * buffer, size_t size)
 return US  getcwd(CS buffer, size);
 }
 #else
-#ifndef PATH_MAX
-# define PATH_MAX 4096
-#endif
+# include "path_max.h"
 unsigned char *
 os_getcwd(unsigned char * buffer, size_t size)
 {
@@ -887,6 +890,21 @@ if (!(b = getcwd(b, size))) return NULL;
 return buffer ? buffer : realloc(b, strlen(b) + 1);
 }
 #endif
+
+/* ----------------------------------------------------------------------- */
+/***********************************************************
+*             strchrnul()                                  *
+***********************************************************/
+
+#if !defined(EXIM_HAVE_STRCHRNUL)
+char *
+strchrnul(const char * s, int c)
+{
+while (*s != c && *s) s++;
+return CS s;
+}
+#endif
+
 
 /* ----------------------------------------------------------------------- */
 

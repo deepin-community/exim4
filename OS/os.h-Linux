@@ -1,5 +1,7 @@
 /* Exim: OS-specific C header file for Linux */
-/* Copyright (c) University of Cambridge 1995 - 2018 */
+/* Copyright (c) The Exim Maintainers 2021 - 2024 */
+/* Copyright (c) University of Cambridge 1995 - 2020 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* See the file NOTICE for conditions of use and distribution. */
 
 
@@ -16,6 +18,7 @@ with the issue. */
 #define HAVE_MMAP
 #define HAVE_BSD_GETLOADAVG
 #define HAVE_SYS_STATVFS_H
+#define HAVE_GETIFADDRS
 #define NO_IP_VAR_H
 #define SIG_IGN_WORKS
 
@@ -71,8 +74,9 @@ then change the 0 to 1 in the next block. */
 # define LLONG_MAX LONG_LONG_MAX
 #endif
 
-#if _POSIX_C_SOURCE >= 200809L || _ATFILE_SOUCE
+#if _POSIX_C_SOURCE >= 200809L || _ATFILE_SOURCE
 # define EXIM_HAVE_OPENAT
+# define EXIM_HAVE_FUTIMENS
 #endif
 
 /* TCP Fast Open support */
@@ -87,5 +91,17 @@ then change the 0 to 1 in the next block. */
 # define TCPI_OPT_SYN_DATA 32
 #endif
 
+/* "Abstract" Unix-socket names */
+#define EXIM_HAVE_ABSTRACT_UNIX_SOCKETS
+
+/* inotify(7) etc syscalls */
+#define EXIM_HAVE_INOTIFY
+
+/* Needed for uClibc */
+#ifndef NS_MAXMSG
+# define NS_MAXMSG 65535
+#endif
+
+#define EXIM_HAVE_STRCHRNUL
 
 /* End */

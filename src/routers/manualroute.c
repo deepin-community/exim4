@@ -2,11 +2,15 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "../exim.h"
+
+#ifdef ROUTER_MANUALROUTE
 #include "rf_functions.h"
 #include "manualroute.h"
 
@@ -15,17 +19,17 @@
 
 optionlist manualroute_router_options[] = {
   { "host_all_ignored", opt_stringptr,
-      (void *)(offsetof(manualroute_router_options_block, host_all_ignored)) },
+      OPT_OFF(manualroute_router_options_block, host_all_ignored) },
   { "host_find_failed", opt_stringptr,
-      (void *)(offsetof(manualroute_router_options_block, host_find_failed)) },
+      OPT_OFF(manualroute_router_options_block, host_find_failed) },
   { "hosts_randomize",  opt_bool,
-      (void *)(offsetof(manualroute_router_options_block, hosts_randomize)) },
+      OPT_OFF(manualroute_router_options_block, hosts_randomize) },
   { "route_data",       opt_stringptr,
-      (void *)(offsetof(manualroute_router_options_block, route_data)) },
+      OPT_OFF(manualroute_router_options_block, route_data) },
   { "route_list",       opt_stringptr,
-      (void *)(offsetof(manualroute_router_options_block, route_list)) },
+      OPT_OFF(manualroute_router_options_block, route_list) },
   { "same_domain_copy_routing", opt_bool|opt_public,
-      (void *)(offsetof(router_instance, same_domain_copy_routing)) }
+      OPT_OFF(router_instance, same_domain_copy_routing) }
 };
 
 /* Size of the options list. An extern variable has to be used so that its
@@ -91,38 +95,33 @@ manualroute_router_init(router_instance *rblock)
 {
 manualroute_router_options_block *ob =
   (manualroute_router_options_block *)(rblock->options_block);
-int i;
 
 /* Host_find_failed must be a recognized word */
 
-for (i = 0; i < hff_count; i++)
-  {
+for (int i = 0; i < hff_count; i++)
   if (Ustrcmp(ob->host_find_failed, hff_names[i]) == 0)
     {
     ob->hff_code = hff_codes[i];
     break;
     }
-  }
 if (ob->hff_code < 0)
   log_write(0, LOG_PANIC_DIE|LOG_CONFIG_FOR, "%s router:\n  "
     "unrecognized setting for host_find_failed option", rblock->name);
 
-for (i = 1; i < hff_count; i++)   /* NB starts at 1 to skip "ignore" */
-  {
+for (int i = 1; i < hff_count; i++)   /* NB starts at 1 to skip "ignore" */
   if (Ustrcmp(ob->host_all_ignored, hff_names[i]) == 0)
     {
     ob->hai_code = hff_codes[i];
     break;
     }
-  }
 if (ob->hai_code < 0)
   log_write(0, LOG_PANIC_DIE|LOG_CONFIG_FOR, "%s router:\n  "
     "unrecognized setting for host_all_ignored option", rblock->name);
 
 /* One of route_list or route_data must be specified */
 
-if ((ob->route_list == NULL && ob->route_data == NULL) ||
-    (ob->route_list != NULL && ob->route_data != NULL))
+if (  !ob->route_list && !ob->route_data
+   || ob->route_list && ob->route_data)
   log_write(0, LOG_PANIC_DIE|LOG_CONFIG_FOR, "%s router:\n  "
     "route_list or route_data (but not both) must be specified",
     rblock->name);
@@ -157,17 +156,17 @@ static BOOL
 parse_route_item(const uschar *s, const uschar **domain, const uschar **hostlist,
   const uschar **options)
 {
-while (*s != 0 && isspace(*s)) s++;
+Uskip_whitespace(&s);
 
 if (domain)
   {
   if (!*s) return FALSE;            /* missing data */
   *domain = string_dequote(&s);
-  while (*s && isspace(*s)) s++;
+  Uskip_whitespace(&s);
   }
 
 *hostlist = string_dequote(&s);
-while (*s && isspace(*s)) s++;
+Uskip_whitespace(&s);
 *options = s;
 return TRUE;
 }
@@ -252,9 +251,6 @@ transport_instance *transport = NULL;
 BOOL individual_transport_set = FALSE;
 BOOL randomize = ob->hosts_randomize;
 
-addr_new = addr_new;           /* Keep picky compilers happy */
-addr_succeed = addr_succeed;
-
 DEBUG(D_route) debug_printf("%s router called for %s\n  domain = %s\n",
   rblock->name, addr->address, addr->domain);
 
@@ -266,7 +262,7 @@ if (ob->route_list)
   int sep = -(';');             /* Default is semicolon */
   listptr = ob->route_list;
 
-  while ((route_item = string_nextinlist(&listptr, &sep, NULL, 0)) != NULL)
+  while ((route_item = string_nextinlist(&listptr, &sep, NULL, 0)))
     {
     int rc;
 
@@ -297,6 +293,7 @@ string, decline. */
 
 else
   {
+  GET_OPTION("route_data");
   if (!(route_item = rf_expand_data(addr, ob->route_data, &rc)))
     return rc;
   (void) parse_route_item(route_item, NULL, &hostlist, &options);
@@ -336,8 +333,9 @@ lookup_type = LK_DEFAULT;
 while (*options)
   {
   unsigned n;
-  const uschar *s = options;
-  while (*options != 0 && !isspace(*options)) options++;
+  const uschar * s = options;
+
+  Uskip_nonwhite(&options);
   n = options-s;
 
   if (Ustrncmp(s, "randomize", n) == 0) randomize = TRUE;
@@ -371,7 +369,7 @@ while (*options)
   if (*options)
     {
     options++;
-    while (*options != 0 && isspace(*options)) options++;
+    Uskip_whitespace(&options);
     }
   }
 
@@ -406,7 +404,7 @@ if (transport && transport->info->local)
   if (hostlist[0])
     {
     host_item *h;
-    addr->host_list = h = store_get(sizeof(host_item));
+    addr->host_list = h = store_get(sizeof(host_item), GET_UNTAINTED);
     h->name = string_copy(hostlist);
     h->address = NULL;
     h->port = PORT_NONE;
@@ -475,7 +473,7 @@ if (!addr->host_list)
 defined for these hosts. It will be a remote one, as a local transport is
 dealt with above. However, we don't need one if verifying only. */
 
-if (transport == NULL && verify == v_none)
+if (!transport && verify == v_none)
     {
     log_write(0, LOG_MAIN, "Error in %s router: no transport defined",
       rblock->name);
@@ -493,5 +491,6 @@ addr->transport = transport;
 return OK;
 }
 
-#endif   /*!MACRO_PREDEF*/
+#endif	/*!MACRO_PREDEF*/
+#endif	/*ROUTER_MANUALROUTE*/
 /* End of routers/manualroute.c */

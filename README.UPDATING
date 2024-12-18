@@ -26,6 +26,72 @@ The rest of this document contains information about changes in 4.xx releases
 that might affect a running system.
 
 
+Exim version 4.95
+-----------------
+
+Various length limits have been applied to Exim's parsing of its command-line.
+These are all set to be at least as long as any valid input, so we do not believe
+that any real use-cases have been affected by this.
+
+The names of various drivers (authenticators, routers, transports, ...) have
+always been limited to 64 characters, but before this release the names were
+silently truncated, inviting problems.  Now the length limit should be enforced.
+If this affects you, then please rename to use shorter names.
+
+The default maximum number of recipients of a single email has changed from
+"unlimited" (ie: as much as CPU and memory will allow, until something breaks
+badly) to 50,000.  You can raise or lower this as you see fit, but we strongly
+caution against using zero/unlimited.
+
+
+Exim version 4.94
+-----------------
+
+Some Transports now refuse to use tainted data in constructing their delivery
+location; this WILL BREAK configurations which are not updated accordingly.
+In particular: any Transport use of $local_part which has been relying upon
+check_local_user far away in the Router to make it safe, should be updated to
+replace $local_part with $local_part_data.
+
+Attempting to remove, in router or transport, a header name that ends with
+an asterisk (which is a standards-legal name) will now result in all headers
+named starting with the string before the asterisk being removed.  We recommend
+staying away from such names, if they are private ones (and in case of future
+enhancements, alao header names that look like REs).
+
+
+Exim version 4.93
+-----------------
+
+For a detailed list of changes that might affect Exim's operation with
+an unchanged configuration, please see the doc/ChangeLog file.
+
+Build:
+
+ * SUPPORT_DMARC replaces EXPERIMENTAL_DMARC
+
+ * DISABLE_TLS replaces SUPPORT_TLS
+
+ * Bump the version for the local_scan API.
+
+Runtime:
+
+ * smtp transport option hosts_try_fastopen defaults to "*".
+
+ * DNSSec is requested (not required) for all queries. (This seemes to
+   ask for trouble if your resolver is a systemd-resolved.)
+
+ * Generic router option retry_use_local_part defaults to "true" under specific
+   pre-conditions.
+
+ * Introduce a tainting mechanism for values read from untrusted sources.
+
+ * Use longer file names for temporary spool files (this avoids
+   name conflicts with spool on a shared file system).
+
+ * Use dsn_from main config option (was ignored previously).
+
+
 Exim version 4.92
 -----------------
 

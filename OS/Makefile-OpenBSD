@@ -1,9 +1,12 @@
 # Exim: OS-specific make file for OpenBSD
+# Copyright (c) The Exim Maintainers 2022 - 2023
+# SPDX-License-Identifier: GPL-2.0-or-later
 
 CHOWN_COMMAND=/usr/sbin/chown
 CHGRP_COMMAND=/usr/sbin/chgrp
 CHMOD_COMMAND=/bin/chmod
 
+CC=cc
 CFLAGS=-O2 -Wall -Wno-parentheses -Wno-self-assign -Wno-logical-op-parentheses
 
 LIBS=-lm
@@ -21,8 +24,9 @@ EXIWHAT_EGREP_ARG='/exim( |$$)'
 EXIWHAT_KILL_SIGNAL=-USR1
 
 HAVE_IPV6=YES
+CFLAGS += -DNO_EXECINFO
 
-# OpenBSD always ships with Berkeley DB
-USE_DB=yes
+# OpenBSD ships with a too-old Berkeley DB.  NDBM is the default if we don't specify one.
+#USE_DB=yes
 
 # End

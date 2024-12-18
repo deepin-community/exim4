@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2023 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Functions in support of the use of maildirsize files for handling quotas in
 maildir directories. Some of the rules are a bit baroque:
@@ -139,26 +141,17 @@ for (i = 0; i < 4; i++)
 /* If the basic path matches maildirfolder_create_regex, we are dealing with
 a subfolder, and should ensure that a maildirfolder file exists. */
 
-if (maildirfolder_create_regex != NULL)
+if (maildirfolder_create_regex)
   {
-  const uschar *error;
-  int offset;
-  const pcre *regex;
+  const pcre2_code * re;
 
   DEBUG(D_transport) debug_printf("checking for maildirfolder requirement\n");
 
-  regex = pcre_compile(CS maildirfolder_create_regex, PCRE_COPT,
-    (const char **)&error, &offset, NULL);
-
-  if (regex == NULL)
-    {
-    addr->message = string_sprintf("appendfile: regular expression "
-      "error: %s at offset %d while compiling %s", error, offset,
-      maildirfolder_create_regex);
+  if (!(re = regex_compile(maildirfolder_create_regex,
+	      MCS_NOFLAGS, &addr->message, pcre_gen_cmp_ctx)))
     return FALSE;
-    }
 
-  if (pcre_exec(regex, NULL, CS path, Ustrlen(path), 0, 0, NULL, 0) >= 0)
+  if (regex_match(re, path, -1, NULL))
     {
     uschar *fname = string_sprintf("%s/maildirfolder", path);
     if (Ustat(fname, &statbuf) == 0)
@@ -251,20 +244,18 @@ Returns:      the sum of the sizes of the messages
 
 off_t
 maildir_compute_size(uschar *path, int *filecount, time_t *latest,
-  const pcre *regex, const pcre *dir_regex, BOOL timestamp_only)
+  const pcre2_code *regex, const pcre2_code *dir_regex, BOOL timestamp_only)
 {
 DIR *dir;
 off_t sum = 0;
-struct dirent *ent;
-struct stat statbuf;
 
-dir = opendir(CS path);
-if (dir == NULL) return 0;
+if (!(dir = exim_opendir(path)))
+  return 0;
 
-while ((ent = readdir(dir)) != NULL)
+for (struct dirent *ent; ent = readdir(dir); )
   {
-  uschar *name = US ent->d_name;
-  uschar buffer[1024];
+  uschar * s, * name = US ent->d_name;
+  struct stat statbuf;
 
   if (Ustrcmp(name, ".") == 0 || Ustrcmp(name, "..") == 0) continue;
 
@@ -272,8 +263,7 @@ while ((ent = readdir(dir)) != NULL)
   scan. We do the regex match first, because that avoids a stat() for names
   we aren't interested in. */
 
-  if (dir_regex != NULL &&
-      pcre_exec(dir_regex, NULL, CS name, Ustrlen(name), 0, 0, NULL, 0) < 0)
+  if (dir_regex && !regex_match(dir_regex, name, -1, NULL))
     {
     DEBUG(D_transport)
       debug_printf("skipping %s/%s: dir_regex does not match\n", path, name);
@@ -282,26 +272,19 @@ while ((ent = readdir(dir)) != NULL)
 
   /* The name is OK; stat it. */
 
-  if (!string_format(buffer, sizeof(buffer), "%s/%s", path, name))
-    {
-    DEBUG(D_transport)
-      debug_printf("maildir_compute_size: name too long: dir=%s name=%s\n",
-        path, name);
-    continue;
-    }
-
-  if (Ustat(buffer, &statbuf) < 0)
+  s = string_sprintf("%s/%s", path, name);
+  if (Ustat(s, &statbuf) < 0)
     {
     DEBUG(D_transport)
       debug_printf("maildir_compute_size: stat error %d for %s: %s\n", errno,
-        buffer, strerror(errno));
+        s, strerror(errno));
     continue;
     }
 
   if ((statbuf.st_mode & S_IFMT) != S_IFDIR)
     {
     DEBUG(D_transport)
-      debug_printf("skipping %s/%s: not a directory\n", path, name);
+      debug_printf("skipping %s/%s: not a directory\n", s, name);
     continue;
     }
 
@@ -312,18 +295,14 @@ while ((ent = readdir(dir)) != NULL)
   /* If this is a maildir folder, call this function recursively. */
 
   if (name[0] == '.')
-    {
-    sum += maildir_compute_size(buffer, filecount, latest, regex, dir_regex,
+    sum += maildir_compute_size(s, filecount, latest, regex, dir_regex,
       timestamp_only);
-    }
 
   /* Otherwise it must be a folder that contains messages (e.g. new or cur), so
   we need to get its size, unless all we are interested in is the timestamp. */
 
   else if (!timestamp_only)
-    {
-    sum += check_dir_size(buffer, filecount, regex);
-    }
+    sum += check_dir_size(s, filecount, regex);
   }
 
 closedir(dir);
@@ -372,7 +351,7 @@ Returns:           >=0  a file descriptor for an open maildirsize file
 
 int
 maildir_ensure_sizefile(uschar *path, appendfile_transport_options_block *ob,
-  const pcre *regex, const pcre *dir_regex, off_t *returned_size,
+  const pcre2_code *regex, const pcre2_code *dir_regex, off_t *returned_size,
   int *returned_filecount)
 {
 int count, fd;
@@ -392,8 +371,7 @@ the same thing. */
 filename = string_sprintf("%s/maildirsize", path);
 
 DEBUG(D_transport) debug_printf("looking for maildirsize in %s\n", path);
-fd = Uopen(filename, O_RDWR|O_APPEND, ob->mode ? ob->mode : 0600);
-if (fd < 0)
+if ((fd = Uopen(filename, O_RDWR|O_APPEND, ob->mode ? ob->mode : 0600)) < 0)
   {
   if (errno != ENOENT) return -1;
   DEBUG(D_transport)
@@ -405,8 +383,7 @@ if (fd < 0)
 still correct, and that the size of the file is still small enough. If so,
 compute the maildir size from the file. */
 
-count = read(fd, buffer, sizeof(buffer));
-if (count >= sizeof(buffer))
+if ((count = read(fd, buffer, sizeof(buffer))) >= sizeof(buffer))
   {
   DEBUG(D_transport)
     debug_printf("maildirsize file too big (%d): recalculating\n", count);

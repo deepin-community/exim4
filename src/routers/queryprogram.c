@@ -2,10 +2,14 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
+
+#ifdef ROUTER_QUERYPROGRAM	/* Remainder of file */
 #include "rf_functions.h"
 #include "queryprogram.h"
 
@@ -15,23 +19,23 @@
 
 optionlist queryprogram_router_options[] = {
   { "*expand_command_group", opt_bool | opt_hidden,
-      (void *)(offsetof(queryprogram_router_options_block, expand_cmd_gid)) },
+      OPT_OFF(queryprogram_router_options_block, expand_cmd_gid) },
   { "*expand_command_user", opt_bool | opt_hidden,
-      (void *)(offsetof(queryprogram_router_options_block, expand_cmd_uid)) },
+      OPT_OFF(queryprogram_router_options_block, expand_cmd_uid) },
   { "*set_command_group",   opt_bool | opt_hidden,
-      (void *)(offsetof(queryprogram_router_options_block, cmd_gid_set)) },
+      OPT_OFF(queryprogram_router_options_block, cmd_gid_set) },
   { "*set_command_user",    opt_bool | opt_hidden,
-      (void *)(offsetof(queryprogram_router_options_block, cmd_uid_set)) },
+      OPT_OFF(queryprogram_router_options_block, cmd_uid_set) },
   { "command",      opt_stringptr,
-      (void *)(offsetof(queryprogram_router_options_block, command)) },
+      OPT_OFF(queryprogram_router_options_block, command) },
   { "command_group",opt_expand_gid,
-      (void *)(offsetof(queryprogram_router_options_block, cmd_gid)) },
+      OPT_OFF(queryprogram_router_options_block, cmd_gid) },
   { "command_user", opt_expand_uid,
-      (void *)(offsetof(queryprogram_router_options_block, cmd_uid)) },
+      OPT_OFF(queryprogram_router_options_block, cmd_uid) },
   { "current_directory", opt_stringptr,
-      (void *)(offsetof(queryprogram_router_options_block, current_directory)) },
+      OPT_OFF(queryprogram_router_options_block, current_directory) },
   { "timeout",      opt_time,
-      (void *)(offsetof(queryprogram_router_options_block, timeout)) }
+      OPT_OFF(queryprogram_router_options_block, timeout) }
 };
 
 /* Size of the options list. An extern variable has to be used so that its
@@ -85,13 +89,13 @@ queryprogram_router_options_block *ob =
 
 /* A command must be given */
 
-if (ob->command == NULL)
+if (!ob->command)
   log_write(0, LOG_PANIC_DIE|LOG_CONFIG_FOR, "%s router:\n  "
     "a command specification is required", rblock->name);
 
 /* A uid/gid must be supplied */
 
-if (!ob->cmd_uid_set && ob->expand_cmd_uid == NULL)
+if (!ob->cmd_uid_set && !ob->expand_cmd_uid)
   log_write(0, LOG_PANIC_DIE|LOG_CONFIG_FOR, "%s router:\n  "
     "command_user must be specified", rblock->name);
 }
@@ -232,6 +236,7 @@ errors address and extra header stuff. */
 
 bzero(&addr_prop, sizeof(addr_prop));
 addr_prop.address_data = deliver_address_data;
+tree_dup((tree_node **)&addr_prop.variables, addr->prop.variables);
 
 rc = rf_get_errors_address(addr, rblock, verify, &addr_prop.errors_address);
 if (rc != OK) return rc;
@@ -240,41 +245,31 @@ rc = rf_get_munge_headers(addr, rblock, &addr_prop.extra_headers,
   &addr_prop.remove_headers);
 if (rc != OK) return rc;
 
-#ifdef EXPERIMENTAL_SRS
-addr_prop.srs_sender = NULL;
-#endif
-
 /* Get the fixed or expanded uid under which the command is to run
 (initialization ensures that one or the other is set). */
 
-if (!ob->cmd_uid_set)
-  {
-  if (!route_find_expanded_user(ob->expand_cmd_uid, rblock->name, US"router",
-      &upw, &uid, &(addr->message)))
+if (  !ob->cmd_uid_set
+   && !route_find_expanded_user(ob->expand_cmd_uid, rblock->name, US"router",
+	&upw, &uid, &(addr->message)))
     return DEFER;
-  }
 
 /* Get the fixed or expanded gid, or take the gid from the passwd entry. */
 
 if (!ob->cmd_gid_set)
-  {
-  if (ob->expand_cmd_gid != NULL)
+  if (ob->expand_cmd_gid)
     {
     if (route_find_expanded_group(ob->expand_cmd_gid, rblock->name,
         US"router", &gid, &(addr->message)))
       return DEFER;
     }
-  else if (upw != NULL)
-    {
+  else if (upw)
     gid = upw->pw_gid;
-    }
   else
     {
     addr->message = string_sprintf("command_user set without command_group "
       "for %s router", rblock->name);
     return DEFER;
     }
-  }
 
 DEBUG(D_route) debug_printf("requires uid=%ld gid=%ld current_directory=%s\n",
   (long int)uid, (long int)gid, current_directory);
@@ -294,23 +289,20 @@ if (curr_uid != root_uid && (uid != curr_uid || gid != curr_gid))
 
 /* Set up the command to run */
 
+GET_OPTION("command");
 if (!transport_set_up_command(&argvptr, /* anchor for arg list */
     ob->command,                        /* raw command */
-    TRUE,                               /* expand the arguments */
+    TSUC_EXPAND_ARGS,                   /* arguments expanded but must not be tainted */
     0,                                  /* not relevant when... */
     NULL,                               /* no transporting address */
     US"queryprogram router",            /* for error messages */
-    &(addr->message)))                  /* where to put error message */
-  {
+    &addr->message))                    /* where to put error message */
   return DEFER;
-  }
 
 /* Create the child process, making it a group leader. */
 
-pid = child_open_uid(argvptr, NULL, 0077, puid, pgid, &fd_in, &fd_out,
-  current_directory, TRUE);
-
-if (pid < 0)
+if ((pid = child_open_uid(argvptr, NULL, 0077, puid, pgid, &fd_in, &fd_out,
+			  current_directory, TRUE, US"queryprogram-cmd")) < 0)
   {
   addr->message = string_sprintf("%s router couldn't create child process: %s",
     rblock->name, strerror(errno));
@@ -371,10 +363,10 @@ buffer[len] = 0;
 DEBUG(D_route) debug_printf("command wrote: %s\n", buffer);
 
 rword = buffer;
-while (isspace(*rword)) rword++;
+Uskip_whitespace(&rword);
 rdata = rword;
-while (*rdata != 0 && !isspace(*rdata)) rdata++;
-if (*rdata != 0) *rdata++ = 0;
+Uskip_nonwhite(&rdata);
+if (*rdata) *rdata++ = '\0';
 
 /* The word must be a known yield name. If it is "REDIRECT", the rest of the
 line is redirection data, as for a .forward file. It may not contain filter
@@ -402,7 +394,7 @@ if (strcmpic(rword, US"REDIRECT") == 0)
     NULL,                        /* sieve subaddress not relevant */
     &ugid,                       /* uid/gid (but not set) */
     &generated,                  /* where to hang the results */
-    &(addr->message),            /* where to put messages */
+    &addr->message,              /* where to put messages */
     NULL,                        /* don't skip syntax errors */
     &filtertype,                 /* not used; will always be FILTER_FORWARD */
     string_sprintf("%s router", rblock->name));
@@ -414,28 +406,28 @@ if (strcmpic(rword, US"REDIRECT") == 0)
     response after verifying. */
 
     case FF_DEFER:
-    if (addr->message == NULL) addr->message = US"forced defer";
+      if (!addr->message) addr->message = US"forced defer";
       else addr->user_message = addr->message;
-    return DEFER;
+      return DEFER;
 
     case FF_FAIL:
-    add_generated(rblock, addr_new, addr, generated, &addr_prop);
-    if (addr->message == NULL) addr->message = US"forced rejection";
+      add_generated(rblock, addr_new, addr, generated, &addr_prop);
+      if (!addr->message) addr->message = US"forced rejection";
       else addr->user_message = addr->message;
-    return FAIL;
+      return FAIL;
 
     case FF_DELIVERED:
-    break;
+      break;
 
     case FF_NOTDELIVERED:    /* an empty redirection list is bad */
-    addr->message = US"no addresses supplied";
+      addr->message = US"no addresses supplied";
     /* Fall through */
 
     case FF_ERROR:
     default:
-    addr->basic_errno = ERRNO_BADREDIRECT;
-    addr->message = string_sprintf("error in redirect data: %s", addr->message);
-    return DEFER;
+      addr->basic_errno = ERRNO_BADREDIRECT;
+      addr->message = string_sprintf("error in redirect data: %s", addr->message);
+      return DEFER;
     }
 
   /* Handle the generated addresses, if any. */
@@ -473,25 +465,20 @@ if (strcmpic(rword, US"accept") != 0)
   }
 
 /* The command yielded "ACCEPT". The rest of the string is a number of keyed
-fields from which we can fish out values using the "extract" expansion
-function. To use this feature, we must put the string into the $value variable,
-i.e. set lookup_value. */
+fields from which we can fish out values using the equivalent of the "extract"
+expansion function. */
 
-lookup_value = rdata;
-s = expand_string(US"${extract{data}{$value}}");
-if (*s != 0) addr_prop.address_data = string_copy(s);
-
-s = expand_string(US"${extract{transport}{$value}}");
-lookup_value = NULL;
+if ((s = expand_getkeyed(US"data", rdata)) && *s)
+  addr_prop.address_data = string_copy(s);
 
 /* If we found a transport name, find the actual transport */
 
-if (*s != 0)
+if ((s = expand_getkeyed(US"transport", rdata)) && *s)
   {
   transport_instance *transport;
-  for (transport = transports; transport != NULL; transport = transport->next)
+  for (transport = transports; transport; transport = transport->next)
     if (Ustrcmp(transport->name, s) == 0) break;
-  if (transport == NULL)
+  if (!transport)
     {
     addr->message = string_sprintf("unknown transport name %s yielded by "
       "command", s);
@@ -507,7 +494,7 @@ the last argument not being NULL. */
 
 else
   {
-  if (!rf_get_transport(rblock->transport_name, &(rblock->transport), addr,
+  if (!rf_get_transport(rblock->transport_name, &rblock->transport, addr,
        rblock->name, US"transport"))
     return DEFER;
   addr->transport = rblock->transport;
@@ -515,16 +502,12 @@ else
 
 /* See if a host list is given, and if so, look up the addresses. */
 
-lookup_value = rdata;
-s = expand_string(US"${extract{hosts}{$value}}");
-
-if (*s != 0)
+if ((s = expand_getkeyed(US"hosts", rdata)) && *s)
   {
   int lookup_type = LK_DEFAULT;
-  uschar *ss = expand_string(US"${extract{lookup}{$value}}");
-  lookup_value = NULL;
+  uschar * ss = expand_getkeyed(US"lookup", rdata);
 
-  if (*ss != 0)
+  if (ss && *ss)
     {
     if (Ustrcmp(ss, "byname") == 0) lookup_type = LK_BYNAME;
     else if (Ustrcmp(ss, "bydns") == 0) lookup_type = LK_BYDNS;
@@ -551,9 +534,9 @@ addr->prop = addr_prop;
 
 /* Queue the address for local or remote delivery. */
 
-return rf_queue_add(addr, addr_local, addr_remote, rblock, pw)?
-  OK : DEFER;
+return rf_queue_add(addr, addr_local, addr_remote, rblock, pw) ? OK : DEFER;
 }
 
-#endif   /*!MACRO_PREDEF*/
+#endif	/*!MACRO_PREDEF*/
+#endif	/*ROUTER_QUERYPROGRAM*/
 /* End of routers/queryprogram.c */

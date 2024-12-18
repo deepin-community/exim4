@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2019 - 2022 */
 /* Copyright (c) University of Cambridge 1995 - 2012 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Copyright (c) Twitter Inc 2012 */
 
@@ -17,9 +19,18 @@ typedef struct {
   uschar *server_realm;
   uschar *server_mech;
   uschar *server_password;
+  uschar *server_key;
+  uschar *server_s_key;
   uschar *server_scram_iter;
   uschar *server_scram_salt;
+
+  uschar *client_username;
+  uschar *client_password;
+  uschar *client_authz;
+  uschar *client_spassword;
+
   BOOL    server_channelbinding;
+  BOOL	  client_channelbinding;
 } auth_gsasl_options_block;
 
 /* Data for reading the authenticator-specific options. */
@@ -35,8 +46,9 @@ extern auth_gsasl_options_block auth_gsasl_option_defaults;
 
 extern void auth_gsasl_init(auth_instance *);
 extern int auth_gsasl_server(auth_instance *, uschar *);
-extern int auth_gsasl_client(auth_instance *, smtp_inblock *,
+extern int auth_gsasl_client(auth_instance *, void *,
 				int, uschar *, int);
-extern void auth_gsasl_version_report(FILE *f);
+extern gstring * auth_gsasl_version_report(gstring *);
+extern void auth_gsasl_macros(void);
 
 /* End of gsasl_exim.h */

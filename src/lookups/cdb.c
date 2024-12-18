@@ -6,7 +6,9 @@
  * Exim - CDB database lookup module
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  *
+ * Copyright (c) The Exim Maintainers 2020 - 2022
  * Copyright (c) 1998 Nigel Metheringham, Planet Online Ltd
+ * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -136,109 +138,99 @@ cdb_bread(int fd,
 static uint32
 cdb_unpack(uschar *buf)
 {
-  uint32 num;
-  num =  buf[3]; num <<= 8;
-  num += buf[2]; num <<= 8;
-  num += buf[1]; num <<= 8;
-  num += buf[0];
-  return num;
+uint32 num;
+num =  buf[3]; num <<= 8;
+num += buf[2]; num <<= 8;
+num += buf[1]; num <<= 8;
+num += buf[0];
+return num;
 }
 
 static void cdb_close(void *handle);
 
 static void *
-cdb_open(uschar *filename,
-         uschar **errmsg)
+cdb_open(const uschar * filename, uschar ** errmsg)
 {
-  int fileno;
-  struct cdb_state *cdbp;
-  struct stat statbuf;
-  void * mapbuf;
+int fileno;
+struct cdb_state *cdbp;
+struct stat statbuf;
+void * mapbuf;
 
-  fileno = Uopen(filename, O_RDONLY, 0);
-  if (fileno == -1) {
-    int save_errno = errno;
-    *errmsg = string_open_failed(errno, "%s for cdb lookup", filename);
-    errno = save_errno;
-    return NULL;
+if ((fileno = Uopen(filename, O_RDONLY, 0)) < 0)
+  {
+  *errmsg = string_open_failed("%s for cdb lookup", filename);
+  return NULL;
   }
 
-  if (fstat(fileno, &statbuf) == 0) {
-    /* If this is a valid file, then it *must* be at least
-     * CDB_HASH_TABLE bytes long */
-    if (statbuf.st_size < CDB_HASH_TABLE) {
-      int save_errno = errno;
-      *errmsg = string_open_failed(errno,
-                                  "%s too short for cdb lookup",
-                                  filename);
-      errno = save_errno;
-      return NULL;
-    }
-  } else {
-    int save_errno = errno;
-    *errmsg = string_open_failed(errno,
-                                "fstat(%s) failed - cannot do cdb lookup",
-                                filename);
-    errno = save_errno;
-    return NULL;
+if (fstat(fileno, &statbuf) != 0)
+  {
+  *errmsg = string_open_failed("fstat(%s) failed - cannot do cdb lookup",
+			      filename);
+  return NULL;
   }
 
-  /* Having got a file open we need the structure to put things in */
-  cdbp = store_get(sizeof(struct cdb_state));
-  /* store_get() does not return if memory was not available... */
-  /* preload the structure.... */
-  cdbp->fileno = fileno;
-  cdbp->filelen = statbuf.st_size;
-  cdbp->cdb_map = NULL;
-  cdbp->cdb_offsets = NULL;
+/* If this is a valid file, then it *must* be at least
+CDB_HASH_TABLE bytes long */
 
-  /* if we are allowed to we use mmap here.... */
+if (statbuf.st_size < CDB_HASH_TABLE)
+  {
+  *errmsg = string_open_failed("%s too short for cdb lookup", filename);
+  return NULL;
+  }
+
+/* Having got a file open we need the structure to put things in */
+cdbp = store_get(sizeof(struct cdb_state), GET_UNTAINTED);
+/* store_get() does not return if memory was not available... */
+/* preload the structure.... */
+cdbp->fileno = fileno;
+cdbp->filelen = statbuf.st_size;
+cdbp->cdb_map = NULL;
+cdbp->cdb_offsets = NULL;
+
+/* if we are allowed to we use mmap here.... */
 #ifdef HAVE_MMAP
-  mapbuf = mmap(NULL,
-               statbuf.st_size,
-               PROT_READ,
-               MAP_SHARED,
-               fileno,
-               0);
-  if (mapbuf != MAP_FAILED) {
-    /* We have an mmap-ed section.  Now we can just use it */
-    cdbp->cdb_map = mapbuf;
-    /* The offsets can be set to the same value since they should
-     * effectively be cached as well
-     */
-    cdbp->cdb_offsets = mapbuf;
+if ((mapbuf = mmap(NULL, statbuf.st_size, PROT_READ, MAP_SHARED, fileno, 0))
+    != MAP_FAILED)
+  {
+  /* We have an mmap-ed section.  Now we can just use it */
+  cdbp->cdb_map = mapbuf;
+  /* The offsets can be set to the same value since they should
+   * effectively be cached as well
+   */
+  cdbp->cdb_offsets = mapbuf;
 
-    /* Now return the state struct */
-    return(cdbp);
-  } else {
-    /* If we got here the map failed.  Basically we can ignore
-     * this since we fall back to slower methods....
-     * However lets debug log it...
-     */
-    DEBUG(D_lookup) debug_printf("cdb mmap failed - %d\n", errno);
+  /* Now return the state struct */
+  return(cdbp);
   }
+
+/* If we got here the map failed.  Basically we can ignore this since we fall
+back to slower methods....  However lets debug log it...  */
+
+DEBUG(D_lookup) debug_printf_indent("cdb mmap failed - %d\n", errno);
 #endif /* HAVE_MMAP */
 
-  /* In this case we have either not got MMAP allowed, or it failed */
+/* In this case we have either not got MMAP allowed, or it failed */
 
-  /* get a buffer to stash the basic offsets in - this should speed
-   * things up a lot - especially on multiple lookups */
-  cdbp->cdb_offsets = store_get(CDB_HASH_TABLE);
+/* get a buffer to stash the basic offsets in - this should speed
+things up a lot - especially on multiple lookups */
 
-  /* now fill the buffer up... */
-  if (cdb_bread(fileno, cdbp->cdb_offsets, CDB_HASH_TABLE) == -1) {
-    /* read of hash table failed, oh dear, oh.....
-     * time to give up I think....
-     * call the close routine (deallocs the memory), and return NULL */
-    *errmsg = string_open_failed(errno,
-                                "cannot read header from %s for cdb lookup",
-                                filename);
-    cdb_close(cdbp);
-    return NULL;
+cdbp->cdb_offsets = store_get(CDB_HASH_TABLE, GET_UNTAINTED);
+
+/* now fill the buffer up... */
+
+if (cdb_bread(fileno, cdbp->cdb_offsets, CDB_HASH_TABLE) == -1)
+  {
+  /* read of hash table failed, oh dear, oh.....  time to give up I think....
+  call the close routine (deallocs the memory), and return NULL */
+
+  *errmsg = string_open_failed("cannot read header from %s for cdb lookup",
+			      filename);
+  cdb_close(cdbp);
+  return NULL;
   }
 
-  /* Everything else done - return the cache structure */
-  return cdbp;
+/* Everything else done - return the cache structure */
+return cdbp;
 }
 
 
@@ -248,22 +240,12 @@ cdb_open(uschar *filename,
 *************************************************/
 
 static BOOL
-cdb_check(void *handle,
-         uschar *filename,
-         int modemask,
-         uid_t *owners,
-         gid_t *owngroups,
-         uschar **errmsg)
+cdb_check(void * handle, const uschar * filename, int modemask,
+  uid_t * owners, gid_t * owngroups, uschar ** errmsg)
 {
-  struct cdb_state * cdbp = handle;
-  return lf_check_file(cdbp->fileno,
-                       filename,
-                       S_IFREG,
-                       modemask,
-                       owners,
-                       owngroups,
-                       "cdb",
-                       errmsg) == 0;
+struct cdb_state * cdbp = handle;
+return lf_check_file(cdbp->fileno, filename, S_IFREG, modemask,
+		     owners, owngroups, "cdb", errmsg) == 0;
 }
 
 
@@ -273,13 +255,9 @@ cdb_check(void *handle,
 *************************************************/
 
 static int
-cdb_find(void *handle,
-        uschar *filename,
-        const uschar *keystring,
-        int  key_len,
-        uschar **result,
-        uschar **errmsg,
-        uint *do_cache)
+cdb_find(void * handle, const uschar * filename, const uschar * keystring,
+  int key_len, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
 struct cdb_state * cdbp = handle;
 uint32 item_key_len,
@@ -293,10 +271,6 @@ hash_offset_entry,
 hash_offset,
 hash_offlen,
 hash_slotnm;
-int loop;
-
-/* Keep picky compilers happy */
-do_cache = do_cache;
 
 key_hash = cdb_hash(keystring, key_len);
 
@@ -319,7 +293,7 @@ if ((hash_offset + (hash_offlen * CDB_HASH_ENTRY)) > cdbp->filelen)
   {
   *errmsg = string_sprintf("cdb: corrupt cdb file %s (too short)",
 		      filename);
-  DEBUG(D_lookup) debug_printf("%s\n", *errmsg);
+  DEBUG(D_lookup) debug_printf_indent("%s\n", *errmsg);
   return DEFER;
   }
 
@@ -335,7 +309,7 @@ if (cdbp->cdb_map != NULL)
   uschar * cur_pos = cur_offset + cdbp->cdb_map;
   uschar * end_pos = end_offset + cdbp->cdb_map;
 
-  for (loop = 0; (loop < hash_offlen); ++loop)
+  for (int loop = 0; (loop < hash_offlen); ++loop)
     {
     item_hash = cdb_unpack(cur_pos);
     cur_pos += 4;
@@ -367,9 +341,10 @@ if (cdbp->cdb_map != NULL)
 
 	   item_ptr += item_key_len;
 
-	   /* ... and the returned result */
+	   /* ... and the returned result.  Assume it is not
+	   tainted, lacking any way of telling.  */
 
-	   *result = store_get(item_dat_len + 1);
+	   *result = store_get(item_dat_len + 1, GET_UNTAINTED);
 	   memcpy(*result, item_ptr, item_dat_len);
 	   (*result)[item_dat_len] = 0;
 	   return OK;
@@ -386,7 +361,7 @@ if (cdbp->cdb_map != NULL)
 
 #endif /* HAVE_MMAP */
 
-for (loop = 0; (loop < hash_offlen); ++loop)
+for (int loop = 0; (loop < hash_offlen); ++loop)
   {
   uschar packbuf[8];
 
@@ -412,31 +387,32 @@ for (loop = 0; (loop < hash_offlen); ++loop)
 
     if (item_key_len == key_len)
       {					/* finally check if key matches */
-      uschar * item_key = store_get(key_len);
+      rmark reset_point = store_mark();
+      uschar * item_key = store_get(key_len, GET_TAINTED); /* keys liable to be tainted */
 
       if (cdb_bread(cdbp->fileno, item_key, key_len) == -1) return DEFER;
-      if (Ustrncmp(keystring, item_key, key_len) == 0) {
+      if (Ustrncmp(keystring, item_key, key_len) == 0)
+        {
+        /* Reclaim some store */
+        store_reset(reset_point);
 
-       /* Reclaim some store */
-       store_reset(item_key);
+        /* matches - get data length */
+        item_dat_len = cdb_unpack(packbuf + 4);
 
-       /* matches - get data length */
-       item_dat_len = cdb_unpack(packbuf + 4);
+        /* then we build a new result string.  We know we have enough
+        memory so disable Coverity errors about the tainted item_dat_ken */
 
-       /* then we build a new result string.  We know we have enough
-       memory so disable Coverity errors about the tainted item_dat_ken */
+        *result = store_get(item_dat_len + 1, GET_UNTAINTED);
+        /* coverity[tainted_data] */
+        if (cdb_bread(cdbp->fileno, *result, item_dat_len) == -1)
+	  return DEFER;
 
-       *result = store_get(item_dat_len + 1);
-       /* coverity[tainted_data] */
-       if (cdb_bread(cdbp->fileno, *result, item_dat_len) == -1)
-	 return DEFER;
-
-       /* coverity[tainted_data] */
-       (*result)[item_dat_len] = 0;
-       return OK;
-      }
+        /* coverity[tainted_data] */
+        (*result)[item_dat_len] = 0;
+        return OK;
+        }
       /* Reclaim some store */
-      store_reset(item_key);
+      store_reset(reset_point);
       }
     }
   cur_offset += 8;
@@ -462,14 +438,15 @@ cdb_close(void *handle)
 struct cdb_state * cdbp = handle;
 
 #ifdef HAVE_MMAP
- if (cdbp->cdb_map) {
-   munmap(CS cdbp->cdb_map, cdbp->filelen);
-   if (cdbp->cdb_map == cdbp->cdb_offsets)
+if (cdbp->cdb_map)
+  {
+  munmap(CS cdbp->cdb_map, cdbp->filelen);
+  if (cdbp->cdb_map == cdbp->cdb_offsets)
      cdbp->cdb_offsets = NULL;
- }
+  }
 #endif /* HAVE_MMAP */
 
- (void)close(cdbp->fileno);
+(void)close(cdbp->fileno);
 }
 
 
@@ -482,25 +459,26 @@ struct cdb_state * cdbp = handle;
 
 #include "../version.h"
 
-void
-cdb_version_report(FILE *f)
+gstring *
+cdb_version_report(gstring * g)
 {
 #ifdef DYNLOOKUP
-fprintf(f, "Library version: CDB: Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g, "Library version: CDB: Exim version %s\n", EXIM_VERSION_STR);
 #endif
+return g;
 }
 
 
 lookup_info cdb_lookup_info = {
-  US"cdb",                       /* lookup name */
-  lookup_absfile,                /* uses absolute file name */
-  cdb_open,                      /* open function */
-  cdb_check,                     /* check function */
-  cdb_find,                      /* find function */
-  cdb_close,                     /* close function */
-  NULL,                          /* no tidy function */
-  NULL,                          /* no quoting function */
-  cdb_version_report             /* version reporting */
+  .name = US"cdb",			/* lookup name */
+  .type = lookup_absfile,		/* absolute file name */
+  .open = cdb_open,			/* open function */
+  .check = cdb_check,			/* check function */
+  .find = cdb_find,			/* find function */
+  .close = cdb_close,			/* close function */
+  .tidy = NULL,				/* no tidy function */
+  .quote = NULL,			/* no quoting function */
+  .version_report = cdb_version_report             /* version reporting */
 };
 
 #ifdef DYNLOOKUP

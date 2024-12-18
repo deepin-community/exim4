@@ -3,7 +3,9 @@
 *************************************************/
 
 /* Copyright (c) University of Cambridge 1995 - 2018 */
+/* Copyright (c) The Exim Maintainers 2020 - 2021 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 
@@ -66,43 +68,41 @@ static int
 pam_converse (int num_msg, PAM_CONVERSE_ARG2_TYPE **msg,
   struct pam_response **resp, void *appdata_ptr)
 {
-int i;
 int sep = 0;
 struct pam_response *reply;
 
-if (pam_arg_ended) return PAM_CONV_ERR;
+/* It seems that PAM frees reply[] */
 
-reply = malloc(sizeof(struct pam_response) * num_msg);
+if (  pam_arg_ended
+   || !(reply = malloc(sizeof(struct pam_response) * num_msg)))
+  return PAM_CONV_ERR;
 
-if (reply == NULL) return PAM_CONV_ERR;
-
-for (i = 0; i < num_msg; i++)
+for (int i = 0; i < num_msg; i++)
   {
   uschar *arg;
   switch (msg[i]->msg_style)
     {
     case PAM_PROMPT_ECHO_ON:
     case PAM_PROMPT_ECHO_OFF:
-    arg = string_nextinlist(&pam_args, &sep, big_buffer, big_buffer_size);
-    if (arg == NULL)
-      {
-      arg = US"";
-      pam_arg_ended = TRUE;
-      }
-    reply[i].resp = CS string_copy_malloc(arg); /* PAM frees resp */
-    reply[i].resp_retcode = PAM_SUCCESS;
-    break;
+      if (!(arg = string_nextinlist(&pam_args, &sep, NULL, 0)))
+	{
+	arg = US"";
+	pam_arg_ended = TRUE;
+	}
+      reply[i].resp = strdup(CCS arg); /* Use libc malloc, PAM frees resp directly*/
+      reply[i].resp_retcode = PAM_SUCCESS;
+      break;
 
     case PAM_TEXT_INFO:    /* Just acknowledge messages */
     case PAM_ERROR_MSG:
-    reply[i].resp_retcode = PAM_SUCCESS;
-    reply[i].resp = NULL;
-    break;
+      reply[i].resp_retcode = PAM_SUCCESS;
+      reply[i].resp = NULL;
+      break;
 
     default:  /* Must be an error of some sort... */
-    free (reply);
-    pam_conv_had_error = TRUE;
-    return PAM_CONV_ERR;
+      free(reply);
+      pam_conv_had_error = TRUE;
+      return PAM_CONV_ERR;
     }
   }
 
@@ -155,7 +155,7 @@ pam_arg_ended = FALSE;
 fail. PAM doesn't support authentication with an empty user (it prompts for it,
 causing a potential mis-interpretation). */
 
-user = string_nextinlist(&pam_args, &sep, big_buffer, big_buffer_size);
+user = string_nextinlist(&pam_args, &sep, NULL, 0);
 if (user == NULL || user[0] == 0) return FAIL;
 
 /* Start off PAM interaction */

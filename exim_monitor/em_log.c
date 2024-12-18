@@ -2,8 +2,10 @@
 *                 Exim Monitor                   *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* This module contains code for scanning the main log,
 extracting information from it, and displaying a "tail". */
@@ -106,7 +108,9 @@ length = Ustrlen(buffer);
 #ifdef ANONYMIZE
   {
   uschar *p = buffer + 9;
-  if (p[6] == '-' && p[13] == '-') p += 17;
+  if (  p[MESSAGE_ID_TIME_LEN] == '-'
+     && p[MESSAGE_ID_TIME_LEN + MESSAGE_ID_PID_LEN + 1] == '-')
+      p += MESSAGE_ID_LENGTH + 1;
 
   while (p < buffer + length)
     {
@@ -227,9 +231,9 @@ if (LOG != NULL)
     {
     uschar *id;
     uschar *p = buffer;
-    void *reset_point;
+    rmark reset_point;
     int length = Ustrlen(buffer);
-    int i;
+    pcre2_match_data * md = pcre2_match_data_create(1, NULL);
 
     /* Skip totally blank lines (paranoia: there shouldn't be any) */
 
@@ -240,33 +244,31 @@ if (LOG != NULL)
     it for various regular expression matches and take appropriate
     action. Get the current store point so we can reset to it. */
 
-    reset_point = store_get(0);
+    reset_point = store_mark();
 
     /* First, update any stripchart data values, noting that the zeroth
     stripchart is the queue length, which is handled elsewhere, and the
     1st may the a size monitor. */
 
-    for (i = stripchart_varstart; i < stripchart_number; i++)
-      {
-      if (pcre_exec(stripchart_regex[i], NULL, CS buffer, length, 0, PCRE_EOPT,
-            NULL, 0) >= 0)
+    for (int i = stripchart_varstart; i < stripchart_number; i++)
+      if (pcre2_match(stripchart_regex[i], (PCRE2_SPTR)buffer, length,
+			0, PCRE_EOPT, md, NULL) >= 0)
         stripchart_total[i]++;
-      }
 
     /* Munge the log entry and display shortened form on one line.
     We omit the date and show only the time. Remove any time zone offset.
     Take note of the presence of [pid]. */
 
-    if (pcre_exec(yyyymmdd_regex,NULL,CS buffer,length,0,PCRE_EOPT,NULL,0) >= 0)
+    if (pcre2_match(yyyymmdd_regex, (PCRE2_SPTR) buffer, length, 0, PCRE_EOPT,
+		      md, NULL) >= 0)
       {
       int pidlength = 0;
-      if ((buffer[20] == '+' || buffer[20] == '-') &&
-          isdigit(buffer[21]) && buffer[25] == ' ')
+      if (  (buffer[20] == '+' || buffer[20] == '-')
+         && isdigit(buffer[21]) && buffer[25] == ' ')
         memmove(buffer + 20, buffer + 26, Ustrlen(buffer + 26) + 1);
       if (buffer[20] == '[')
-        {
-        while (Ustrchr("[]0123456789", buffer[20+pidlength++]) != NULL);
-        }
+        while (Ustrchr("[]0123456789", buffer[20+pidlength++]) != NULL)
+	  ;
       id = string_copyn(buffer + 20 + pidlength, MESSAGE_ID_LENGTH);
       show_log("%s", buffer+11);
       }
@@ -275,6 +277,7 @@ if (LOG != NULL)
       id = US"";
       show_log("%s", buffer);
       }
+    pcre2_match_data_free(md);
 
     /* Deal with frozen and unfrozen messages */
 
@@ -291,22 +294,20 @@ if (LOG != NULL)
 
     if ((p = Ustrstr(buffer, "==")) != NULL)
       {
-      queue_item *qq = find_queue(id, queue_noop, 0);
-      if (qq != NULL)
+      queue_item * qq = find_queue(id, queue_noop, 0);
+      if (qq)
         {
         dest_item *d;
         uschar *q, *r;
         p += 2;
         while (isspace(*p)) p++;
         q = p;
-        while (*p != 0 && !isspace(*p))
+        while (*p && !isspace(*p))
           {
           if (*p++ != '\"') continue;
-          while (*p != 0)
-            {
+          while (*p)
             if (*p == '\\') p += 2;
-              else if (*p++ == '\"') break;
-            }
+            else if (*p++ == '\"') break;
           }
         *p++ = 0;
         if ((r = strstric(q, qualify_domain, FALSE)) != NULL &&
@@ -364,9 +365,10 @@ link count of zero on the currently open file. */
 if (log_datestamping)
   {
   uschar log_file_wanted[256];
-  /* Do *not* use "%s" here, we need the %D datestamp in the log_file to
-   *   be expanded! */
-  string_format(log_file_wanted, sizeof(log_file_wanted), CS log_file);
+  /* Do *not* use "%s" here, we need the %D datestamp in the log_file string to
+  be expanded.  The trailing NULL arg is to quieten preprocessors that need at
+  least one arg for a variadic set in a macro. */
+  string_format(log_file_wanted, sizeof(log_file_wanted), CS log_file, NULL);
   if (Ustrcmp(log_file_wanted, log_file_open) != 0)
     {
     if (LOG != NULL)

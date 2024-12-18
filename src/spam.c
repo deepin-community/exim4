@@ -2,9 +2,11 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
-/* Copyright (c) Tom Kistner <tom@duncanthrax.net> 2003 - 2015
+/*
+ * Copyright (c) The Exim Maintainers 2016 - 2022
+ * Copyright (c) Tom Kistner <tom@duncanthrax.net> 2003 - 2015
  * License: GPL
- * Copyright (c) The Exim Maintainers 2016 - 2018
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 /* Code for calling spamassassin's spamd. Called from acl.c. */
@@ -18,7 +20,7 @@ uschar spam_score_int_buffer[16];
 uschar spam_bar_buffer[128];
 uschar spam_action_buffer[32];
 uschar spam_report_buffer[32600];
-uschar prev_user_name[128] = "";
+uschar * prev_user_name = NULL;
 int spam_ok = 0;
 int spam_rc = 0;
 uschar *prev_spamd_address_work = NULL;
@@ -35,7 +37,7 @@ spamd->is_failed = FALSE;
 spamd->weight = SPAMD_WEIGHT;
 spamd->timeout = SPAMD_TIMEOUT;
 spamd->retry = 0;
-spamd->priority = 1;
+spamd->priority = SPAMD_PRIORITY;
 return 0;
 }
 
@@ -137,22 +139,12 @@ spamd_get_server(spamd_address_container ** spamds, int num_servers)
 {
 unsigned int i;
 spamd_address_container * sd;
-long rnd, weights;
+long weights;
 unsigned pri;
-static BOOL srandomed = FALSE;
 
 /* speedup, if we have only 1 server */
 if (num_servers == 1)
   return (spamds[0]->is_failed ? -1 : 0);
-
-/* init ranmod */
-if (!srandomed)
-  {
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  srandom((unsigned int)(tv.tv_usec/1000));
-  srandomed = TRUE;
-  }
 
 /* scan for highest pri */
 for (pri = 0, i = 0; i < num_servers; i++)
@@ -170,11 +162,11 @@ for (weights = 0, i = 0; i < num_servers; i++)
 if (weights == 0)	/* all servers failed */
   return -1;
 
-for (rnd = random() % weights, i = 0; i < num_servers; i++)
+for (long rnd = random_number(weights), i = 0; i < num_servers; i++)
   {
   sd = spamds[i];
   if (!sd->is_failed && sd->priority == pri)
-    if ((rnd -= sd->weight) <= 0)
+    if ((rnd -= sd->weight) < 0)
       return i;
   }
 
@@ -190,7 +182,6 @@ spam(const uschar **listptr)
 int sep = 0;
 const uschar *list = *listptr;
 uschar *user_name;
-uschar user_name_buffer[128];
 unsigned long mbox_size;
 FILE *mbox_file;
 client_conn_ctx spamd_cctx = {.sock = -1};
@@ -205,12 +196,6 @@ uschar *p,*q;
 int override = 0;
 time_t start;
 size_t read, wrote;
-#ifndef NO_POLL_H
-struct pollfd pollfd;
-#else                               /* Patch posted by Erik ? for OS X */
-struct timeval select_tv;         /* and applied by PH */
-fd_set select_fd;
-#endif
 uschar *spamd_address_work;
 spamd_address_container * sd;
 
@@ -218,17 +203,14 @@ spamd_address_container * sd;
 result = 0;
 
 /* find the username from the option list */
-if ((user_name = string_nextinlist(&list, &sep,
-				   user_name_buffer,
-				   sizeof(user_name_buffer))) == NULL)
+if (!(user_name = string_nextinlist(&list, &sep, NULL, 0)))
   {
   /* no username given, this means no scanning should be done */
   return FAIL;
   }
 
 /* if username is "0" or "false", do not scan */
-if ( (Ustrcmp(user_name,"0") == 0) ||
-     (strcmpic(user_name,US"false") == 0) )
+if (Ustrcmp(user_name, "0") == 0 || strcmpic(user_name, US"false") == 0)
   return FAIL;
 
 /* if there is an additional option, check if it is "true" */
@@ -237,19 +219,15 @@ if (strcmpic(list,US"true") == 0)
   override = 1;
 
 /* expand spamd_address if needed */
-if (*spamd_address == '$')
-  {
-  spamd_address_work = expand_string(spamd_address);
-  if (spamd_address_work == NULL)
-    {
-    log_write(0, LOG_MAIN|LOG_PANIC,
-      "%s spamd_address starts with $, but expansion failed: %s",
-      loglabel, expand_string_message);
-    return DEFER;
-    }
-  }
-else
+if (*spamd_address != '$')
   spamd_address_work = spamd_address;
+else if (!(spamd_address_work = expand_string(spamd_address)))
+  {
+  log_write(0, LOG_MAIN|LOG_PANIC,
+    "%s spamd_address starts with $, but expansion failed: %s",
+    loglabel, expand_string_message);
+  return DEFER;
+  }
 
 DEBUG(D_acl) debug_printf_indent("spamd: addrlist '%s'\n", spamd_address_work);
 
@@ -293,7 +271,7 @@ start = time(NULL);
     uschar * s;
 
     DEBUG(D_acl) debug_printf_indent("spamd: addr entry '%s'\n", address);
-    sd = (spamd_address_container *)store_get(sizeof(spamd_address_container));
+    sd = store_get(sizeof(spamd_address_container), GET_UNTAINTED);
 
     for (sublist = address, args = 0, spamd_param_init(sd);
 	 (s = string_nextinlist(&sublist, &sublist_sep, NULL, 0));
@@ -344,7 +322,7 @@ start = time(NULL);
     for (;;)
       {
       /*XXX could potentially use TFO early-data here */
-      if (  (spamd_cctx.sock = ip_streamsocket(sd->hostspec, &errstr, 5)) >= 0
+      if (  (spamd_cctx.sock = ip_streamsocket(sd->hostspec, &errstr, 5, NULL)) >= 0
          || sd->retry <= 0
 	 )
 	break;
@@ -380,7 +358,7 @@ if (sd->is_rspamd)
     "\r\nFrom: <", sender_address,
     ">\r\nRecipient-Number: ", string_sprintf("%d\r\n", recipients_count));
 
-  for (i = 0; i < recipients_count; i ++)
+  for (int i = 0; i < recipients_count; i++)
     req_str = string_append(req_str, 3,
       "Rcpt: <", recipients_list[i].address, ">\r\n");
   if ((s = expand_string(US"$sender_helo_name")) && *s)
@@ -396,13 +374,12 @@ if (sd->is_rspamd)
   }
 else
   {				/* spamassassin variant */
-  (void)string_format(spamd_buffer,
-	  sizeof(spamd_buffer),
-	  "REPORT SPAMC/1.2\r\nUser: %s\r\nContent-length: %ld\r\n\r\n",
-	  user_name,
-	  mbox_size);
+  int n;
+  uschar * s = string_sprintf(
+	  "REPORT SPAMC/1.2\r\nUser: %s\r\nContent-length: %ld\r\n\r\n%n",
+	  user_name, mbox_size, &n);
   /* send our request */
-  wrote = send(spamd_cctx.sock, spamd_buffer, Ustrlen(spamd_buffer), 0);
+  wrote = send(spamd_cctx.sock, s, n, 0);
   }
 
 if (wrote == -1)
@@ -414,19 +391,19 @@ if (wrote == -1)
   }
 
 /* now send the file */
-/* spamd sometimes accepts connections but doesn't read data off
- * the connection.  We make the file descriptor non-blocking so
- * that the write will only write sufficient data without blocking
- * and we poll the descriptor to make sure that we can write without
- * blocking.  Short writes are gracefully handled and if the whole
- * transaction takes too long it is aborted.
- * Note: poll() is not supported in OSX 10.2 and is reported to be
- *       broken in more recent versions (up to 10.4).
+/* spamd sometimes accepts connections but doesn't read data off the connection.
+We make the file descriptor non-blocking so that the write will only write
+sufficient data without blocking and we poll the descriptor to make sure that we
+can write without blocking.  Short writes are gracefully handled and if the
+whole transaction takes too long it is aborted.
+
+Note: poll() is not supported in OSX 10.2 and is reported to be broken in more
+      recent versions (up to 10.4). Workaround using select() removed 2021/11 (jgh).
  */
-#ifndef NO_POLL_H
-pollfd.fd = spamd_cctx.sock;
-pollfd.events = POLLOUT;
+#ifdef NO_POLL_H
+# error Need poll(2) support
 #endif
+
 (void)fcntl(spamd_cctx.sock, F_SETFL, O_NONBLOCK);
 do
   {
@@ -435,19 +412,7 @@ do
     {
     offset = 0;
 again:
-#ifndef NO_POLL_H
-    result = poll(&pollfd, 1, 1000);
-
-/* Patch posted by Erik ? for OS X and applied by PH */
-#else
-    select_tv.tv_sec = 1;
-    select_tv.tv_usec = 0;
-    FD_ZERO(&select_fd);
-    FD_SET(spamd_cctx.sock, &select_fd);
-    result = select(spamd_cctx.sock+1, NULL, &select_fd, NULL, &select_tv);
-#endif
-/* End Erik's patch */
-
+    result = poll_one_fd(spamd_cctx.sock, POLLOUT, 1000);
     if (result == -1 && errno == EINTR)
       goto again;
     else if (result < 1)
@@ -565,7 +530,7 @@ else
     }
 
   Ustrcpy(spam_action_buffer,
-    spamd_score >= spamd_threshold ? "reject" : "no action");
+    spamd_score >= spamd_threshold ? US"reject" : US"no action");
   }
 
 /* Create report. Since this is a multiline string,
@@ -633,7 +598,7 @@ if (spamd_address_work != spamd_address)
   prev_spamd_address_work = string_copy(spamd_address_work);
 
 /* remember user name and "been here" for it */
-Ustrcpy(prev_user_name, user_name);
+prev_user_name = user_name;
 spam_ok = 1;
 
 return override

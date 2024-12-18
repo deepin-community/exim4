@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Miscellaneous string-handling functions. Some are not required for
 utilities and tests, and are cut out by the COMPILE_UTILITY macro. */
@@ -28,125 +30,141 @@ Arguments:
   maskptr   NULL if no mask is permitted to follow
             otherwise, points to an int where the offset of '/' is placed
             if there is no / followed by trailing digits, *maskptr is set 0
+  errp      NULL if no diagnostic information is required, and if the netmask
+            length should not be checked. Otherwise it is set pointing to a short
+            descriptive text.
 
 Returns:    0 if the string is not a textual representation of an IP address
             4 if it is an IPv4 address
             6 if it is an IPv6 address
+
+The legacy string_is_ip_address() function follows below.
 */
 
 int
-string_is_ip_address(const uschar *s, int *maskptr)
+string_is_ip_addressX(const uschar * ip_addr, int * maskptr, const uschar ** errp)
 {
-int i;
-int yield = 4;
+uschar * slash, * percent, * endp = NULL;
+long int mask = 0;
+const uschar * addr = NULL;
+int af;
+union { /* we do not need this, but inet_pton() needs a place for storage */
+  struct in_addr sa4;
+  struct in6_addr sa6;
+} sa;
 
-/* If an optional mask is permitted, check for it. If found, pass back the
-offset. */
+/* If there is a slash, but we didn't request a (optional) netmask,
+we return failure, as we do if the mask isn't a pure numerical value,
+or if it is negative. The actual length is checked later, once we know
+the address family. */
 
-if (maskptr)
+if (slash = Ustrchr(ip_addr, '/'))
   {
-  const uschar *ss = s + Ustrlen(s);
-  *maskptr = 0;
-  if (s != ss && isdigit(*(--ss)))
+  uschar * rest;
+
+  if (!maskptr)
     {
-    while (ss > s && isdigit(ss[-1])) ss--;
-    if (ss > s && *(--ss) == '/') *maskptr = ss - s;
-    }
-  }
-
-/* A colon anywhere in the string => IPv6 address */
-
-if (Ustrchr(s, ':') != NULL)
-  {
-  BOOL had_double_colon = FALSE;
-  BOOL v4end = FALSE;
-  int count = 0;
-
-  yield = 6;
-
-  /* An IPv6 address must start with hex digit or double colon. A single
-  colon is invalid. */
-
-  if (*s == ':' && *(++s) != ':') return 0;
-
-  /* Now read up to 8 components consisting of up to 4 hex digits each. There
-  may be one and only one appearance of double colon, which implies any number
-  of binary zero bits. The number of preceding components is held in count. */
-
-  for (count = 0; count < 8; count++)
-    {
-    /* If the end of the string is reached before reading 8 components, the
-    address is valid provided a double colon has been read. This also applies
-    if we hit the / that introduces a mask or the % that introduces the
-    interface specifier (scope id) of a link-local address. */
-
-    if (*s == 0 || *s == '%' || *s == '/') return had_double_colon ? yield : 0;
-
-    /* If a component starts with an additional colon, we have hit a double
-    colon. This is permitted to appear once only, and counts as at least
-    one component. The final component may be of this form. */
-
-    if (*s == ':')
-      {
-      if (had_double_colon) return 0;
-      had_double_colon = TRUE;
-      s++;
-      continue;
-      }
-
-    /* If the remainder of the string contains a dot but no colons, we
-    can expect a trailing IPv4 address. This is valid if either there has
-    been no double-colon and this is the 7th component (with the IPv4 address
-    being the 7th & 8th components), OR if there has been a double-colon
-    and fewer than 6 components. */
-
-    if (Ustrchr(s, ':') == NULL && Ustrchr(s, '.') != NULL)
-      {
-      if ((!had_double_colon && count != 6) ||
-          (had_double_colon && count > 6)) return 0;
-      v4end = TRUE;
-      yield = 6;
-      break;
-      }
-
-    /* Check for at least one and not more than 4 hex digits for this
-    component. */
-
-    if (!isxdigit(*s++)) return 0;
-    if (isxdigit(*s) && isxdigit(*(++s)) && isxdigit(*(++s))) s++;
-
-    /* If the component is terminated by colon and there is more to
-    follow, skip over the colon. If there is no more to follow the address is
-    invalid. */
-
-    if (*s == ':' && *(++s) == 0) return 0;
+    if (errp) *errp = US"netmask found, but not requested";
+    return 0;
     }
 
-  /* If about to handle a trailing IPv4 address, drop through. Otherwise
-  all is well if we are at the end of the string or at the mask or at a percent
-  sign, which introduces the interface specifier (scope id) of a link local
-  address. */
+  mask = Ustrtol(slash+1, &rest, 10);
+  if (*rest || mask < 0)
+    {
+    if (errp) *errp = US"netmask not numeric or <0";
+    return 0;
+    }
 
-  if (!v4end)
-    return (*s == 0 || *s == '%' ||
-           (*s == '/' && maskptr != NULL && *maskptr != 0))? yield : 0;
+  *maskptr = slash - ip_addr;	/* offset of the slash */
+  endp = slash;
   }
+else if (maskptr)
+  *maskptr = 0;			/* no slash found */
 
-/* Test for IPv4 address, which may be the tail-end of an IPv6 address. */
+/* The interface-ID suffix (%<id>) is optional (for IPv6). If it
+exists, we check it syntactically. Later, if we know the address
+family is IPv4, we might reject it.
+The interface-ID is mutually exclusive with the netmask, to the
+best of my knowledge. */
 
-for (i = 0; i < 4; i++)
+if (percent = Ustrchr(ip_addr, '%'))
   {
-  long n;
-  uschar * end;
-
-  if (i != 0 && *s++ != '.') return 0;
-  n = strtol(CCS s, CSS &end, 10);
-  if (n > 255 || n < 0 || end <= s || end > s+3) return 0;
-  s = end;
+  if (slash)
+    {
+    if (errp) *errp = US"interface-ID and netmask are mutually exclusive";
+    return 0;
+    }
+  for (uschar *p = percent+1; *p; p++)
+    if (!isalnum(*p) && !ispunct(*p))
+      {
+      if (errp) *errp = US"interface-ID must match [[:alnum:][:punct:]]";
+      return 0;
+      }
+  endp = percent;
   }
 
-return !*s || (*s == '/' && maskptr && *maskptr != 0) ? yield : 0;
+/* inet_pton() can't parse netmasks and interface IDs, so work on a shortened copy
+allocated on the current stack */
+
+if (endp)
+  {
+  ptrdiff_t l = endp - ip_addr;
+  if (l > 255)
+    {
+    if (errp) *errp = US"rudiculous long ip address string";
+    return 0;
+    }
+  addr = string_copyn(ip_addr, l);
+  }
+else
+  addr = ip_addr;
+
+af = Ustrchr(addr, ':') ? AF_INET6 : AF_INET;
+if (!inet_pton(af, CCS addr, &sa))
+  {
+  if (errp) *errp = af == AF_INET6 ? US"IP address string not parsable as IPv6"
+				   : US"IP address string not parsable IPv4";
+  return 0;
+  }
+
+/* we do not check the values of the mask here, as
+this is done on the callers side (but I don't understand why), so
+actually I'd like to do it here, but it breaks at least testcase 0002 */
+
+switch (af)
+  {
+  case AF_INET6:
+      if (errp && mask > 128)
+	{
+	*errp = US"IPv6 netmask value must not be >128";
+	return 0;
+	}
+      return 6;
+  case AF_INET:
+      if (percent)
+	{
+	if (errp) *errp = US"IPv4 address string must not have an interface-ID";
+	return 0;
+	}
+      if (errp && mask > 32)
+	{
+	*errp = US"IPv4 netmask value must not be >32";
+	return 0;
+	}
+      return 4;
+  default:
+      if (errp) *errp = US"unknown address family (should not happen)";
+      return 0;
+  }
 }
+
+
+int
+string_is_ip_address(const uschar * ip_addr, int * maskptr)
+{
+return string_is_ip_addressX(ip_addr, maskptr, NULL);
+}
+
 #endif  /* COMPILE_UTILITY */
 
 
@@ -169,7 +187,7 @@ Returns:      pointer to the buffer
 uschar *
 string_format_size(int size, uschar *buffer)
 {
-if (size == 0) Ustrcpy(buffer, "     ");
+if (size == 0) Ustrcpy(buffer, US"     ");
 else if (size < 1024) sprintf(CS buffer, "%5d", size);
 else if (size < 10*1024)
   sprintf(CS buffer, "%4.1fK", (double)size / 1024.0);
@@ -190,24 +208,42 @@ return buffer;
 *************************************************/
 
 /* Convert a long integer into an ASCII base 62 string. For Cygwin the value of
-BASE_62 is actually 36. Always return exactly 6 characters plus zero, in a
-static area.
+BASE_62 is actually 36. Always return exactly 6 characters plus a NUL, in a
+static area.  This is enough for a 32b input, for 62  (for 64b we would want 11+nul);
+but with 36 we lose half the input range of a 32b input.
 
 Argument: a long integer
 Returns:  pointer to base 62 string
 */
 
 uschar *
-string_base62(unsigned long int value)
+string_base62_32(unsigned long int value)
 {
 static uschar yield[7];
-uschar *p = yield + sizeof(yield) - 1;
+uschar * p = yield + sizeof(yield) - 1;
 *p = 0;
 while (p > yield)
   {
-  *(--p) = base62_chars[value % BASE_62];
+  *--p = base62_chars[value % BASE_62];
   value /= BASE_62;
   }
+return yield;
+}
+
+uschar *
+string_base62_64(unsigned long int value)
+{
+static uschar yield[12];
+uschar * p = yield + sizeof(yield) - 1;
+*p = '\0';
+while (p > yield)
+  if (value)
+    {
+    *--p = base62_chars[value % BASE_62];
+    value /= BASE_62;
+    }
+  else
+    *--p = '0';
 return yield;
 }
 #endif  /* COMPILE_UTILITY */
@@ -282,27 +318,30 @@ return ch;
 /* This function is called for critical strings. It checks for any
 non-printing characters, and if any are found, it makes a new copy
 of the string with suitable escape sequences. It is most often called by the
-macro string_printing(), which sets allow_tab TRUE.
+macro string_printing(), which sets flags to 0.
 
 Arguments:
   s             the input string
-  allow_tab     TRUE to allow tab as a printing character
+  flags		Bit 0: convert tabs.  Bit 1: convert spaces.
 
 Returns:        string with non-printers encoded as printing sequences
 */
 
 const uschar *
-string_printing2(const uschar *s, BOOL allow_tab)
+string_printing2(const uschar *s, int flags)
 {
 int nonprintcount = 0;
 int length = 0;
 const uschar *t = s;
 uschar *ss, *tt;
 
-while (*t != 0)
+while (*t)
   {
   int c = *t++;
-  if (!mac_isprint(c) || (!allow_tab && c == '\t')) nonprintcount++;
+  if (  !mac_isprint(c)
+     || flags & SP_TAB && c == '\t'
+     || flags & SP_SPACE && c == ' '
+     ) nonprintcount++;
   length++;
   }
 
@@ -311,17 +350,19 @@ if (nonprintcount == 0) return s;
 /* Get a new block of store guaranteed big enough to hold the
 expanded string. */
 
-ss = store_get(length + nonprintcount * 3 + 1);
+tt = ss = store_get(length + nonprintcount * 3 + 1, s);
 
 /* Copy everything, escaping non printers. */
 
-t = s;
-tt = ss;
-
-while (*t != 0)
+for (t = s; *t; )
   {
   int c = *t;
-  if (mac_isprint(c) && (allow_tab || c != '\t')) *tt++ = *t++; else
+  if (  mac_isprint(c)
+     && (!(flags & SP_TAB) || c != '\t')
+     && (!(flags & SP_SPACE) || c != ' ')
+     )
+    *tt++ = *t++;
+  else
     {
     *tt++ = '\\';
     switch (*t)
@@ -367,7 +408,7 @@ p = Ustrchr(s, '\\');
 if (!p) return s;
 
 len = Ustrlen(s) + 1;
-ss = store_get(len);
+ss = store_get(len, s);
 
 q = ss;
 off = p - s;
@@ -412,65 +453,30 @@ return ss;
 
 
 
+#if (defined(HAVE_LOCAL_SCAN) || defined(EXPAND_DLFUNC)) \
+	&& !defined(MACRO_PREDEF) && !defined(COMPILE_UTILITY)
 /*************************************************
 *            Copy and save string                *
 *************************************************/
 
-/* This function assumes that memcpy() is faster than strcpy().
-
-Argument: string to copy
-Returns:  copy of string in new store
-*/
-
-uschar *
-string_copy(const uschar *s)
-{
-int len = Ustrlen(s) + 1;
-uschar *ss = store_get(len);
-memcpy(ss, s, len);
-return ss;
-}
-
-
-
-/*************************************************
-*     Copy and save string in malloc'd store     *
-*************************************************/
-
-/* This function assumes that memcpy() is faster than strcpy().
-
-Argument: string to copy
-Returns:  copy of string in new store
-*/
-
-uschar *
-string_copy_malloc(const uschar *s)
-{
-int len = Ustrlen(s) + 1;
-uschar *ss = store_malloc(len);
-memcpy(ss, s, len);
-return ss;
-}
-
-
-
-/*************************************************
-*       Copy, lowercase and save string          *
-*************************************************/
-
 /*
 Argument: string to copy
-Returns:  copy of string in new store, with letters lowercased
+Returns:  copy of string in new store with the same taint status
 */
 
 uschar *
-string_copylc(const uschar *s)
+string_copy_function(const uschar * s)
 {
-uschar *ss = store_get(Ustrlen(s) + 1);
-uschar *p = ss;
-while (*s != 0) *p++ = tolower(*s++);
-*p = 0;
-return ss;
+return string_copy_taint(s, s);
+}
+
+/* As above, but explicitly specifying the result taint status
+*/
+
+uschar *
+string_copy_taint_function(const uschar * s, const void * proto_mem)
+{
+return string_copy_taint(s, proto_mem);
 }
 
 
@@ -490,36 +496,29 @@ Returns:    copy of string in new store
 */
 
 uschar *
-string_copyn(const uschar *s, int n)
+string_copyn_function(const uschar * s, int n)
 {
-uschar *ss = store_get(n + 1);
-Ustrncpy(ss, s, n);
-ss[n] = 0;
-return ss;
+return string_copyn(s, n);
 }
+#endif
 
 
 /*************************************************
-* Copy, lowercase, and save string, given length *
+*     Copy and save string in malloc'd store     *
 *************************************************/
 
-/* It is assumed the data contains no zeros. A zero is added
-onto the end.
+/* This function assumes that memcpy() is faster than strcpy().
 
-Arguments:
-  s         string to copy
-  n         number of characters
-
-Returns:    copy of string in new store, with letters lowercased
+Argument: string to copy
+Returns:  copy of string in new store
 */
 
 uschar *
-string_copynlc(uschar *s, int n)
+string_copy_malloc(const uschar * s)
 {
-uschar *ss = store_get(n + 1);
-uschar *p = ss;
-while (n-- > 0) *p++ = tolower(*s++);
-*p = 0;
+int len = Ustrlen(s) + 1;
+uschar * ss = store_malloc(len);
+memcpy(ss, s, len);
 return ss;
 }
 
@@ -537,37 +536,37 @@ Returns:   pointer to the possibly altered string
 */
 
 uschar *
-string_split_message(uschar *msg)
+string_split_message(uschar * msg)
 {
 uschar *s, *ss;
 
-if (msg == NULL || Ustrlen(msg) <= 75) return msg;
+if (!msg || Ustrlen(msg) <= 75) return msg;
 s = ss = msg = string_copy(msg);
 
 for (;;)
   {
   int i = 0;
-  while (i < 75 && *ss != 0 && *ss != '\n') ss++, i++;
-  if (*ss == 0) break;
+  while (i < 75 && *ss && *ss != '\n') ss++, i++;
+  if (!*ss) break;
   if (*ss == '\n')
     s = ++ss;
   else
     {
-    uschar *t = ss + 1;
-    uschar *tt = NULL;
+    uschar * t = ss + 1;
+    uschar * tt = NULL;
     while (--t > s + 35)
       {
       if (*t == ' ')
         {
         if (t[-1] == ':') { tt = t; break; }
-        if (tt == NULL) tt = t;
+        if (!tt) tt = t;
         }
       }
 
-    if (tt == NULL)          /* Can't split behind - try ahead */
+    if (!tt)          /* Can't split behind - try ahead */
       {
       t = ss + 1;
-      while (*t != 0)
+      while (*t)
         {
         if (*t == ' ' || *t == '\n')
           { tt = t; break; }
@@ -575,7 +574,7 @@ for (;;)
         }
       }
 
-    if (tt == NULL) break;   /* Can't find anywhere to split */
+    if (!tt) break;   /* Can't find anywhere to split */
     *tt = '\n';
     s = ss = tt+1;
     }
@@ -603,26 +602,22 @@ Returns:    copy of string in new store, de-escaped
 */
 
 uschar *
-string_copy_dnsdomain(uschar *s)
+string_copy_dnsdomain(uschar * s)
 {
-uschar *yield;
-uschar *ss = yield = store_get(Ustrlen(s) + 1);
+uschar * yield;
+uschar * ss = yield = store_get(Ustrlen(s) + 1, GET_TAINTED);	/* always treat as tainted */
 
-while (*s != 0)
+while (*s)
   {
   if (*s != '\\')
-    {
     *ss++ = *s++;
-    }
   else if (isdigit(s[1]))
     {
     *ss++ = (s[1] - '0')*100 + (s[2] - '0')*10 + s[3] - '0';
     s += 4;
     }
-  else if (*(++s) != 0)
-    {
+  else if (*++s)
     *ss++ = *s++;
-    }
   }
 
 *ss = 0;
@@ -646,15 +641,15 @@ Returns:   the new string
 */
 
 uschar *
-string_dequote(const uschar **sptr)
+string_dequote(const uschar ** sptr)
 {
-const uschar *s = *sptr;
-uschar *t, *yield;
+const uschar * s = * sptr;
+uschar * t, * yield;
 
 /* First find the end of the string */
 
 if (*s != '\"')
-  while (*s != 0 && !isspace(*s)) s++;
+  Uskip_nonwhite(&s);
 else
   {
   s++;
@@ -668,25 +663,22 @@ else
 
 /* Get enough store to copy into */
 
-t = yield = store_get(s - *sptr + 1);
+t = yield = store_get(s - *sptr + 1, *sptr);
 s = *sptr;
 
 /* Do the copy */
 
 if (*s != '\"')
-  {
-  while (*s != 0 && !isspace(*s)) *t++ = *s++;
-  }
+  while (*s && !isspace(*s)) *t++ = *s++;
 else
   {
   s++;
-  while (*s != 0 && *s != '\"')
+  while (*s && *s != '\"')
     {
-    if (*s == '\\') *t++ = string_interpret_escape(&s);
-      else *t++ = *s;
+    *t++ = *s == '\\' ? string_interpret_escape(&s) : *s;
     s++;
     }
-  if (*s != 0) s++;
+  if (*s) s++;
   }
 
 /* Update the pointer and return the terminated copy */
@@ -704,45 +696,48 @@ return yield;
 *************************************************/
 
 /* The formatting is done by string_vformat, which checks the length of
-everything.
+everything.  Taint is taken from the worst of the arguments.
 
 Arguments:
   format    a printf() format - deliberately char * rather than uschar *
               because it will most usually be a literal string
+  func	    caller, for debug
+  line	    caller, for debug
   ...       arguments for format
 
 Returns:    pointer to fresh piece of store containing sprintf'ed string
 */
 
 uschar *
-string_sprintf(const char *format, ...)
+string_sprintf_trc(const char * format, const uschar * func, unsigned line, ...)
 {
 #ifdef COMPILE_UTILITY
 uschar buffer[STRING_SPRINTF_BUFFER_SIZE];
-gstring g = { .size = STRING_SPRINTF_BUFFER_SIZE, .ptr = 0, .s = buffer };
-gstring * gp = &g;
+gstring gs = { .size = STRING_SPRINTF_BUFFER_SIZE, .ptr = 0, .s = buffer };
+gstring * g = &gs;
+unsigned flags = 0;
 #else
-gstring * gp = string_get(STRING_SPRINTF_BUFFER_SIZE);
+gstring * g = NULL;
+unsigned flags = SVFMT_REBUFFER|SVFMT_EXTEND;
 #endif
-gstring * gp2;
-va_list ap;
 
-va_start(ap, format);
-gp2 = string_vformat(gp, FALSE, format, ap);
-gp->s[gp->ptr] = '\0';
+va_list ap;
+va_start(ap, line);
+g = string_vformat_trc(g, func, line, STRING_SPRINTF_BUFFER_SIZE,
+	flags, format, ap);
 va_end(ap);
 
-if (!gp2)
+if (!g)
   log_write(0, LOG_MAIN|LOG_PANIC_DIE,
     "string_sprintf expansion was longer than %d; format string was (%s)\n"
-    "expansion started '%.32s'",
-    gp->size, format, gp->s);
+    " called from %s %d\n",
+    STRING_SPRINTF_BUFFER_SIZE, format, func, line);
 
 #ifdef COMPILE_UTILITY
-return string_copy(gp->s);
+return string_copyn(g->s, g->ptr);
 #else
-gstring_reset_unused(gp);
-return gp->s;
+gstring_release_unused(g);
+return string_from_gstring(g);
 #endif
 }
 
@@ -762,7 +757,7 @@ Returns:    < 0, = 0, or > 0, according to the comparison
 */
 
 int
-strncmpic(const uschar *s, const uschar *t, int n)
+strncmpic(const uschar * s, const uschar * t, int n)
 {
 while (n--)
   {
@@ -786,9 +781,9 @@ Returns:    < 0, = 0, or > 0, according to the comparison
 */
 
 int
-strcmpic(const uschar *s, const uschar *t)
+strcmpic(const uschar * s, const uschar * t)
 {
-while (*s != 0)
+while (*s)
   {
   int c = tolower(*s++) - tolower(*t++);
   if (c != 0) return c;
@@ -812,11 +807,11 @@ Arguments:
 Returns:         pointer to substring in string, or NULL if not found
 */
 
-uschar *
-strstric(uschar *s, uschar *t, BOOL space_follows)
+const uschar *
+strstric_c(const uschar * s, const uschar * t, BOOL space_follows)
 {
-uschar *p = t;
-uschar *yield = NULL;
+const uschar * p = t;
+const uschar * yield = NULL;
 int cl = tolower(*p);
 int cu = toupper(*p);
 
@@ -824,8 +819,8 @@ while (*s)
   {
   if (*s == cl || *s == cu)
     {
-    if (yield == NULL) yield = s;
-    if (*(++p) == 0)
+    if (!yield) yield = s;
+    if (!*++p)
       {
       if (!space_follows || s[1] == ' ' || s[1] == '\n' ) return yield;
       yield = NULL;
@@ -835,7 +830,7 @@ while (*s)
     cu = toupper(*p);
     s++;
     }
-  else if (yield != NULL)
+  else if (yield)
     {
     yield = NULL;
     p = t;
@@ -847,12 +842,17 @@ while (*s)
 return NULL;
 }
 
+uschar *
+strstric(uschar * s, uschar * t, BOOL space_follows)
+{
+return US strstric_c(s, t, space_follows);
+}
 
 
 #ifdef COMPILE_UTILITY
 /* Dummy version for this function; it should never be called */
 static void
-gstring_grow(gstring * g, int p, int count)
+gstring_grow(gstring * g, int count)
 {
 assert(FALSE);
 }
@@ -895,17 +895,24 @@ Arguments:
   separator  a pointer to the separator character in an int (see above)
   buffer     where to put a copy of the next string in the list; or
                NULL if the next string is returned in new memory
+	     Note that if the list is tainted then a provided buffer must be
+	     also (else we trap, with a message referencing the callsite).
+	     If we do the allocation, taint is handled there.
   buflen     when buffer is not NULL, the size of buffer; otherwise ignored
+
+  func	     caller, for debug
+  line	     caller, for debug
 
 Returns:     pointer to buffer, containing the next substring,
              or NULL if no more substrings
 */
 
 uschar *
-string_nextinlist(const uschar **listptr, int *separator, uschar *buffer, int buflen)
+string_nextinlist_trc(const uschar ** listptr, int * separator, uschar * buffer,
+  int buflen, const uschar * func, int line)
 {
 int sep = *separator;
-const uschar *s = *listptr;
+const uschar * s = *listptr;
 BOOL sep_is_special;
 
 if (!s) return NULL;
@@ -941,10 +948,13 @@ if (!*s) return NULL;
 sep_is_special = iscntrl(sep);
 
 /* Handle the case when a buffer is provided. */
+/*XXX need to also deal with qouted-requirements mismatch */
 
 if (buffer)
   {
   int p = 0;
+  if (is_tainted(s) && !is_tainted(buffer))
+    die_tainted(US"string_nextinlist", func, line);
   for (; *s; s++)
     {
     if (*s == sep && (*(++s) != sep || sep_is_special)) break;
@@ -958,7 +968,6 @@ if (buffer)
 
 else
   {
-  const uschar *ss;
   gstring * g = NULL;
 
   /* We know that *s != 0 at this point. However, it might be pointing to a
@@ -967,28 +976,32 @@ else
   start of a string. Avoid getting working memory for an empty item. */
 
   if (*s == sep)
-    {
-    s++;
-    if (*s != sep || sep_is_special)
+    if (*++s != sep || sep_is_special)
       {
       *listptr = s;
       return string_copy(US"");
       }
-    }
 
   /* Not an empty string; the first character is guaranteed to be a data
   character. */
 
   for (;;)
     {
-    for (ss = s + 1; *ss && *ss != sep; ss++) ;
+    const uschar * ss;
+    for (ss = s + 1; *ss && *ss != sep; ) ss++;
     g = string_catn(g, s, ss-s);
     s = ss;
     if (!*s || *++s != sep || sep_is_special) break;
     }
-  while (g->ptr > 0 && isspace(g->s[g->ptr-1])) g->ptr--;
+
+  /* Trim trailing spaces from the returned string */
+
+  /* while (g->ptr > 0 && isspace(g->s[g->ptr-1])) g->ptr--; */
+  while (  g->ptr > 0 && isspace(g->s[g->ptr-1])
+	&& (g->ptr == 1 || g->s[g->ptr-2] != '\\') )
+    g->ptr--;
   buffer = string_from_gstring(g);
-  gstring_reset_unused(g);
+  gstring_release_unused_trc(g, CCS func, line);
   }
 
 /* Update the current pointer and return the new string */
@@ -1098,46 +1111,19 @@ return list;
 
 
 /************************************************/
-/* Create a growable-string with some preassigned space */
-
-gstring *
-string_get(unsigned size)
-{
-gstring * g = store_get(sizeof(gstring) + size);
-g->size = size;
-g->ptr = 0;
-g->s = US(g + 1);
-return g;
-}
-
-/* NUL-terminate the C string in the growable-string, and return it. */
-
-uschar *
-string_from_gstring(gstring * g)
-{
-if (!g) return NULL;
-g->s[g->ptr] = '\0';
-return g->s;
-}
-
-void
-gstring_reset_unused(gstring * g)
-{
-store_reset(g->s + (g->size = g->ptr + 1));
-}
-
-
-/* Add more space to a growable-string.
+/* Add more space to a growable-string.  The caller should check
+first if growth is required.  The gstring struct is modified on
+return; specifically, the string-base-pointer may have been changed.
 
 Arguments:
   g		the growable-string
-  p		current end of data
-  count		amount to grow by, offset from p
+  count		amount needed for g->ptr to increase by
 */
 
 static void
-gstring_grow(gstring * g, int p, int count)
+gstring_grow(gstring * g, int count)
 {
+int p = g->ptr;
 int oldsize = g->size;
 
 /* Mostly, string_cat() is used to build small strings of a few hundred
@@ -1150,16 +1136,15 @@ unsigned inc = oldsize < 4096 ? 127 : 1023;
 
 if (g->ptr < 0 || g->ptr > g->size || g->size >= INT_MAX/2)
   log_write(0, LOG_MAIN|LOG_PANIC_DIE,
-      "internal error in gstring_grow (ptr %d size %d)", g->ptr, g->size);
+    "internal error in gstring_grow (ptr %d size %d)", g->ptr, g->size);
 
 if (count <= 0) return;
 
 if (count >= INT_MAX/2 - g->ptr)
   log_write(0, LOG_MAIN|LOG_PANIC_DIE,
-      "internal error in gstring_grow (ptr %d count %d)", g->ptr, count);
+    "internal error in gstring_grow (ptr %d count %d)", g->ptr, count);
 
-
-g->size = ((p + count + inc) & ~inc) + 1;
+g->size = (p + count + inc + 1) & ~inc;		/* one for a NUL */
 
 /* Try to extend an existing allocation. If the result of calling
 store_extend() is false, either there isn't room in the current memory block,
@@ -1187,44 +1172,57 @@ terminated, because the number of characters to add is given explicitly. It is
 sometimes called to extract parts of other strings.
 
 Arguments:
-  string   points to the start of the string that is being built, or NULL
-             if this is a new string that has no contents yet
+  g	   growable-string that is being built, or NULL if not assigned yet
   s        points to characters to add
   count    count of characters to add; must not exceed the length of s, if s
              is a C string.
 
-Returns:   pointer to the start of the string, changed if copied for expansion.
+Returns:   growable string, changed if copied for expansion.
            Note that a NUL is not added, though space is left for one. This is
            because string_cat() is often called multiple times to build up a
            string - there's no point adding the NUL till the end.
+	   NULL is a possible return.
 
 */
 /* coverity[+alloc] */
 
 gstring *
-string_catn(gstring * g, const uschar *s, int count)
+string_catn(gstring * g, const uschar * s, int count)
 {
 int p;
 
 if (count < 0)
   log_write(0, LOG_MAIN|LOG_PANIC_DIE,
-      "internal error in string_catn (count %d)", count);
+    "internal error in string_catn (count %d)", count);
+if (count == 0) return g;
 
+/*debug_printf("string_catn '%.*s'\n", count, s);*/
 if (!g)
   {
   unsigned inc = count < 4096 ? 127 : 1023;
-  unsigned size = ((count + inc) &  ~inc) + 1;
-  g = string_get(size);
+  unsigned size = ((count + inc) &  ~inc) + 1;	/* round up requested count */
+  g = string_get_tainted(size, s);
+  }
+else if (!g->s)			/* should not happen */
+  {
+  g->s = string_copyn(s, count);
+  g->ptr = count;
+  g->size = count;	/*XXX suboptimal*/
+  return g;
+  }
+else if (is_incompatible(g->s, s))
+  {
+/* debug_printf("rebuf A\n"); */
+  gstring_rebuffer(g, s);
   }
 
 if (g->ptr < 0 || g->ptr > g->size)
   log_write(0, LOG_MAIN|LOG_PANIC_DIE,
-      "internal error in string_catn (ptr %d size %d)", g->ptr, g->size);
+    "internal error in string_catn (ptr %d size %d)", g->ptr, g->size);
 
 p = g->ptr;
-
 if (count >= g->size - p)
-  gstring_grow(g, p, count);
+  gstring_grow(g, count);
 
 /* Because we always specify the exact number of characters to copy, we can
 use memcpy(), which is likely to be more efficient than strncopy() because the
@@ -1233,13 +1231,6 @@ latter has to check for zero bytes. */
 memcpy(g->s + p, s, count);
 g->ptr = p + count;
 return g;
-}
-
-
-gstring *
-string_cat(gstring *string, const uschar *s)
-{
-return string_catn(string, s, Ustrlen(s));
 }
 
 
@@ -1252,30 +1243,29 @@ return string_catn(string, s, Ustrlen(s));
 It calls string_cat() to do the dirty work.
 
 Arguments:
-  string   expanding-string that is being built, or NULL
-             if this is a new string that has no contents yet
+  g	   growable-string that is being built, or NULL if not yet assigned
   count    the number of strings to append
   ...      "count" uschar* arguments, which must be valid zero-terminated
              C strings
 
-Returns:   pointer to the start of the string, changed if copied for expansion.
+Returns:   growable string, changed if copied for expansion.
            The string is not zero-terminated - see string_cat() above.
 */
 
 __inline__ gstring *
-string_append(gstring *string, int count, ...)
+string_append(gstring * g, int count, ...)
 {
 va_list ap;
 
 va_start(ap, count);
 while (count-- > 0)
   {
-  uschar *t = va_arg(ap, uschar *);
-  string = string_cat(string, t);
+  uschar * t = va_arg(ap, uschar *);
+  g = string_cat(g, t);
   }
 va_end(ap);
 
-return string;
+return g;
 }
 #endif
 
@@ -1308,12 +1298,14 @@ Returns:       TRUE if the result fitted in the buffer
 */
 
 BOOL
-string_format(uschar * buffer, int buflen, const char * format, ...)
+string_format_trc(uschar * buffer, int buflen,
+  const uschar * func, unsigned line, const char * format, ...)
 {
-gstring g = { .size = buflen, .ptr = 0, .s = buffer }, *gp;
+gstring g = { .size = buflen, .ptr = 0, .s = buffer }, * gp;
 va_list ap;
 va_start(ap, format);
-gp = string_vformat(&g, FALSE, format, ap);
+gp = string_vformat_trc(&g, func, line, STRING_SPRINTF_BUFFER_SIZE,
+	0, format, ap);
 va_end(ap);
 g.s[g.ptr] = '\0';
 return !!gp;
@@ -1322,26 +1314,47 @@ return !!gp;
 
 
 
+/* Build or append to a growing-string, sprintf-style.
 
-/* Bulid or append to a growing-string, sprintf-style.
+Arguments:
+	g	a growable-string
+	func	called-from function name, for debug
+	line	called-from file line number, for debug
+	limit	maximum string size
+	flags	see below
+	format	printf-like format string
+	ap	variable-args pointer
 
-If the "extend" argument is true, the string passed in can be NULL,
-empty, or non-empty.
+Flags:
+	SVFMT_EXTEND            buffer can be created or extended as needed
+	SVFMT_REBUFFER          buffer can be recopied to tainted mem as needed
+	SVFMT_TAINT_NOCHK       do not check inputs for taint
 
-If the "extend" argument is false, the string passed in may not be NULL,
+If the "extend" flag is true, the string passed in can be NULL,
+empty, or non-empty.  Growing is subject to an overall limit given
+by the limit argument.
+
+If the "extend" flag is false, the string passed in may not be NULL,
 will not be grown, and is usable in the original place after return.
 The return value can be NULL to signify overflow.
 
-Returns the possibly-new (if copy for growth was needed) string,
-not nul-terminated.
+Field width:		decimal digits, or *
+Precision:		dot, followed by decimal digits or *
+Length modifiers:	h  L  l  ll  z
+Conversion specifiers:	n d o u x X p f e E g G % c s S T W V Y D M
+Alternate-form:		%#s is silent about a null string
+
+Returns the possibly-new (if copy for growth or taint-handling was needed)
+string, not nul-terminated.
 */
 
 gstring *
-string_vformat(gstring * g, BOOL extend, const char *format, va_list ap)
+string_vformat_trc(gstring * g, const uschar * func, unsigned line,
+  unsigned size_limit, unsigned flags, const char * format, va_list ap)
 {
 enum ltypes { L_NORMAL=1, L_SHORT=2, L_LONG=3, L_LONGLONG=4, L_LONGDOUBLE=5, L_SIZE=6 };
 
-int width, precision, off, lim;
+int width, precision, off, lim, need;
 const char * fp = format;	/* Deliberately not unsigned */
 
 string_datestamp_offset = -1;	/* Datestamp not inserted */
@@ -1349,12 +1362,22 @@ string_datestamp_length = 0;	/* Datestamp not inserted */
 string_datestamp_type = 0;	/* Datestamp not inserted */
 
 #ifdef COMPILE_UTILITY
-assert(!extend);
+assert(!(flags & SVFMT_EXTEND));
 assert(g);
 #else
 
 /* Ensure we have a string, to save on checking later */
 if (!g) g = string_get(16);
+
+if (!(flags & SVFMT_TAINT_NOCHK) && is_incompatible(g->s, format))
+  {
+#ifndef MACRO_PREDEF
+  if (!(flags & SVFMT_REBUFFER))
+    die_tainted(US"string_vformat", func, line);
+#endif
+/* debug_printf("rebuf B\n"); */
+  gstring_rebuffer(g, format);
+  }
 #endif	/*!COMPILE_UTILITY*/
 
 lim = g->size - 1;	/* leave one for a nul */
@@ -1365,7 +1388,7 @@ off = g->ptr;		/* remember initial offset in gstring */
 while (*fp)
   {
   int length = L_NORMAL;
-  int *nptr;
+  int * nptr;
   int slen;
   const char *null = "NULL";		/* ) These variables */
   const char *item_start, *s;		/* ) are deliberately */
@@ -1377,10 +1400,10 @@ while (*fp)
   if (*fp != '%')
     {
     /* Avoid string_copyn() due to COMPILE_UTILITY */
-    if (g->ptr >= lim - 1)
+    if ((need = g->ptr + 1) > lim)
       {
-      if (!extend) return NULL;
-      gstring_grow(g, g->ptr, 1);
+      if (!(flags & SVFMT_EXTEND) || need > size_limit) return NULL;
+      gstring_grow(g, 1);
       lim = g->size - 1;
       }
     g->s[g->ptr++] = (uschar) *fp++;
@@ -1449,10 +1472,10 @@ while (*fp)
     case 'x':
     case 'X':
       width = length > L_LONG ? 24 : 12;
-      if (g->ptr >= lim - width)
+      if ((need = g->ptr + width) > lim)
 	{
-	if (!extend) return NULL;
-	gstring_grow(g, g->ptr, width);
+	if (!(flags & SVFMT_EXTEND) || need >= size_limit) return NULL;
+	gstring_grow(g, width);
 	lim = g->size - 1;
 	gp = CS g->s + g->ptr;
 	}
@@ -1479,10 +1502,10 @@ while (*fp)
     case 'p':
       {
       void * ptr;
-      if (g->ptr >= lim - 24)
+      if ((need = g->ptr + 24) > lim)
 	{
-	if (!extend) return NULL;
-	gstring_grow(g, g->ptr, 24);
+	if (!(flags & SVFMT_EXTEND || need >= size_limit)) return NULL;
+	gstring_grow(g, 24);
 	lim = g->size - 1;
 	gp = CS g->s + g->ptr;
 	}
@@ -1512,10 +1535,10 @@ while (*fp)
     case 'g':
     case 'G':
       if (precision < 0) precision = 6;
-      if (g->ptr >= lim - precision - 8)
+      if ((need = g->ptr + precision + 8) > lim)
 	{
-	if (!extend) return NULL;
-	gstring_grow(g, g->ptr, precision+8);
+	if (!(flags & SVFMT_EXTEND || need >= size_limit)) return NULL;
+	gstring_grow(g, precision+8);
 	lim = g->size - 1;
 	gp = CS g->s + g->ptr;
 	}
@@ -1530,20 +1553,20 @@ while (*fp)
     /* String types */
 
     case '%':
-      if (g->ptr >= lim - 1)
+      if ((need = g->ptr + 1) > lim)
 	{
-	if (!extend) return NULL;
-	gstring_grow(g, g->ptr, 1);
+	if (!(flags & SVFMT_EXTEND || need >= size_limit)) return NULL;
+	gstring_grow(g, 1);
 	lim = g->size - 1;
 	}
       g->s[g->ptr++] = (uschar) '%';
       break;
 
     case 'c':
-      if (g->ptr >= lim - 1)
+      if ((need = g->ptr + 1) > lim)
 	{
-	if (!extend) return NULL;
-	gstring_grow(g, g->ptr, 1);
+	if (!(flags & SVFMT_EXTEND || need >= size_limit)) return NULL;
+	gstring_grow(g, 1);
 	lim = g->size - 1;
 	}
       g->s[g->ptr++] = (uschar) va_arg(ap, int);
@@ -1565,6 +1588,88 @@ while (*fp)
       slen = string_datestamp_length;
       goto INSERT_STRING;
 
+    case 'Y':			/* gstring pointer */
+      {
+      gstring * zg = va_arg(ap, gstring *);
+      if (zg) { s = CS zg->s; slen = gstring_length(zg); }
+      else    { s = null;     slen = Ustrlen(s); }
+      goto INSERT_GSTRING;
+      }
+#ifndef COMPILE_UTILITY
+    case 'V':			/* Maybe convert ascii-art to UTF-8 chars */
+      {
+      gstring * zg = NULL;
+      s = va_arg(ap, char *);
+      if (IS_DEBUG(D_noutf8))
+	for ( ; *s; s++)
+	  zg = string_catn(zg, CUS (*s == 'K' ? "|" : s), 1);
+      else
+	for ( ; *s; s++) switch (*s)
+	  {
+	  case '\\': zg = string_catn(zg, US UTF8_UP_RIGHT,	  3); break;
+	  case '/':  zg = string_catn(zg, US UTF8_DOWN_RIGHT,	  3); break;
+	  case '-':
+	  case '_':  zg = string_catn(zg, US UTF8_HORIZ,	  3); break;
+	  case '|':  zg = string_catn(zg, US UTF8_VERT,		  3); break;
+	  case 'K':  zg = string_catn(zg, US UTF8_VERT_RIGHT,	  3); break;
+	  case '<':  zg = string_catn(zg, US UTF8_LEFT_TRIANGLE,  3); break;
+	  case '>':  zg = string_catn(zg, US UTF8_RIGHT_TRIANGLE, 3); break;
+	  default:   zg = string_catn(zg, CUS s, 1);		      break;
+	  }
+
+      if (!zg)
+	break;
+      s = CS zg->s;
+      slen = gstring_length(zg);
+      goto INSERT_GSTRING;
+      }
+
+    case 'W':			/* Maybe mark up ctrls, spaces & newlines */
+      s = va_arg(ap, char *);
+      if (Ustrpbrk(s, " \n") && !IS_DEBUG(D_noutf8))
+	{
+	gstring * zg = NULL;
+	int p = precision;
+	for ( ; *s; s++)
+	  {
+	  /* Take a given precision as applying to the input; expand
+	  it for the transformed result */
+
+	  if (p >= 0 && --p < 0) break;
+	  switch (*s)
+	    {
+	    case ' ':
+	      zg = string_catn(zg, CUS UTF8_LIGHT_SHADE, 3);
+	      if (precision >= 0) precision += 2;
+	      break;
+	    case '\n':
+	      zg = string_catn(zg, CUS UTF8_L_ARROW_HOOK "\n", 4);
+	      if (precision >= 0) precision += 3;
+	      break;
+	    default:
+	      if (*s <= ' ')
+		{	/* base of UTF8 symbols for ASCII control chars */
+		uschar ctrl_symbol[3] = {[0]=0xe2, [1]=0x90, [2]=0x80};
+		ctrl_symbol[2] |= *s;
+		zg = string_catn(zg, ctrl_symbol, 3);
+		if (precision >= 0) precision += 2;
+		}
+	      else
+		zg = string_catn(zg, CUS s, 1);
+	      break;
+	    }
+	  }
+	if (zg) { s = CS zg->s; slen = gstring_length(zg); }
+	else    { s = null;     slen = Ustrlen(s); }
+	}
+      else
+	{
+	if (!s) s = null;
+	slen = Ustrlen(s);
+	}
+      goto INSERT_GSTRING;
+
+#endif
     case 's':
     case 'S':                   /* Forces *lower* case */
     case 'T':                   /* Forces *upper* case */
@@ -1572,6 +1677,20 @@ while (*fp)
 
       if (!s) s = null;
       slen = Ustrlen(s);
+
+    INSERT_GSTRING:		/* Come to from %Y above */
+
+      if (!(flags & SVFMT_TAINT_NOCHK) && is_incompatible(g->s, s))
+	if (flags & SVFMT_REBUFFER)
+	  {
+/* debug_printf("%s %d: untainted workarea, tainted %%s :- rebuffer\n", __FUNCTION__, __LINE__); */
+	  gstring_rebuffer(g, s);
+	  gp = CS g->s + g->ptr;
+	  }
+#ifndef MACRO_PREDEF
+	else
+	  die_tainted(US"string_vformat", func, line);
+#endif
 
     INSERT_STRING:              /* Come to from %D or %M above */
 
@@ -1588,7 +1707,7 @@ while (*fp)
 	}
 
       /* If a width is not specified and the precision is specified, set
-      the width to the precision, or the string length if shorted. */
+      the width to the precision, or the string length if shorter. */
 
       else if (precision >= 0)
 	width = precision < slen ? precision : slen;
@@ -1598,10 +1717,10 @@ while (*fp)
       else
 	width = precision = slen;
 
-      if (!extend)
+      if ((need = g->ptr + width) >= size_limit || !(flags & SVFMT_EXTEND))
 	{
 	if (g->ptr == lim) return NULL;
-	if (g->ptr >= lim - width)
+	if (need > lim)
 	  {
 	  truncated = TRUE;
 	  width = precision = lim - g->ptr - 1;
@@ -1609,9 +1728,9 @@ while (*fp)
 	  if (precision < 0) precision = 0;
 	  }
 	}
-      else if (g->ptr >= lim - width)
+      else if (need > lim)
 	{
-	gstring_grow(g, g->ptr, width);
+	gstring_grow(g, width);
 	lim = g->size - 1;
 	gp = CS g->s + g->ptr;
 	}
@@ -1637,25 +1756,15 @@ while (*fp)
     }
   }
 
+if (g->ptr > g->size)
+  log_write(0, LOG_MAIN|LOG_PANIC_DIE,
+    "string_format internal error: caller %s %d", func, line);
 return g;
 }
 
 
 
 #ifndef COMPILE_UTILITY
-
-gstring *
-string_fmt_append(gstring * g, const char *format, ...)
-{
-va_list ap;
-va_start(ap, format);
-g = string_vformat(g, TRUE, format, ap);
-va_end(ap);
-return g;
-}
-
-
-
 /*************************************************
 *       Generate an "open failed" message        *
 *************************************************/
@@ -1665,15 +1774,17 @@ string supplied as data, adds the strerror() text, and if the failure was
 "Permission denied", reads and includes the euid and egid.
 
 Arguments:
-  eno           the value of errno after the failure
   format        a text format string - deliberately not uschar *
+  func		caller, for debug
+  line		caller, for debug
   ...           arguments for the format string
 
 Returns:        a message, in dynamic store
 */
 
 uschar *
-string_open_failed(int eno, const char *format, ...)
+string_open_failed_trc(const uschar * func, unsigned line,
+  const char * format, ...)
 {
 va_list ap;
 gstring * g = string_get(1024);
@@ -1686,23 +1797,28 @@ specified messages. If it does, the message just gets truncated, and there
 doesn't seem much we can do about that. */
 
 va_start(ap, format);
-(void) string_vformat(g, FALSE, format, ap);
-string_from_gstring(g);
-gstring_reset_unused(g);
+(void) string_vformat_trc(g, func, line, STRING_SPRINTF_BUFFER_SIZE,
+	SVFMT_REBUFFER, format, ap);
 va_end(ap);
 
-return eno == EACCES
-  ? string_sprintf("%s: %s (euid=%ld egid=%ld)", g->s, strerror(eno),
-    (long int)geteuid(), (long int)getegid())
-  : string_sprintf("%s: %s", g->s, strerror(eno));
+g = string_catn(g, US": ", 2);
+g = string_cat(g, US strerror(errno));
+
+if (errno == EACCES)
+  {
+  int save_errno = errno;
+  g = string_fmt_append(g, " (euid=%ld egid=%ld)",
+    (long int)geteuid(), (long int)getegid());
+  errno = save_errno;
+  }
+gstring_release_unused(g);
+return string_from_gstring(g);
 }
-#endif  /* COMPILE_UTILITY */
 
 
 
 
 
-#ifndef COMPILE_UTILITY
 /* qsort(3), currently used to sort the environment variables
 for -bP environment output, needs a function to compare two pointers to string
 pointers. Here it is. */
@@ -1729,6 +1845,7 @@ int main(void)
 uschar buffer[256];
 
 printf("Testing is_ip_address\n");
+store_init();
 
 while (fgets(CS buffer, sizeof(buffer), stdin) != NULL)
   {
@@ -1785,7 +1902,7 @@ while (fgets(CS buffer, sizeof(buffer), stdin) != NULL)
   int llflag = 0;
   int n = 0;
   int count;
-  int countset = 0;
+  BOOL countset = FASE;
   uschar format[256];
   uschar outbuf[256];
   uschar *s;
@@ -1827,7 +1944,7 @@ while (fgets(CS buffer, sizeof(buffer), stdin) != NULL)
     else if (Ustrcmp(ss, "*") == 0)
       {
       args[n++] = (void *)(&count);
-      countset = 1;
+      countset = TRUE;
       }
 
     else
@@ -1860,3 +1977,5 @@ return 0;
 #endif
 
 /* End of string.c */
+/* vi: aw ai sw=2
+*/

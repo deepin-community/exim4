@@ -2,44 +2,36 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
+
+#ifdef ROUTER_DNSLOOKUP		/* Remainder of file */
 #include "rf_functions.h"
 #include "dnslookup.h"
 
 
 
 /* Options specific to the dnslookup router. */
+#define LOFF(field) OPT_OFF(dnslookup_router_options_block, field)
 
 optionlist dnslookup_router_options[] = {
-  { "check_secondary_mx", opt_bool,
-      (void *)(offsetof(dnslookup_router_options_block, check_secondary_mx)) },
-  { "check_srv",          opt_stringptr,
-      (void *)(offsetof(dnslookup_router_options_block, check_srv)) },
-  { "fail_defer_domains", opt_stringptr,
-      (void *)(offsetof(dnslookup_router_options_block, fail_defer_domains)) },
-  { "ipv4_only",          opt_stringptr,
-      (void *)(offsetof(dnslookup_router_options_block, ipv4_only)) },
-  { "ipv4_prefer",        opt_stringptr,
-      (void *)(offsetof(dnslookup_router_options_block, ipv4_prefer)) },
-  { "mx_domains",         opt_stringptr,
-      (void *)(offsetof(dnslookup_router_options_block, mx_domains)) },
-  { "mx_fail_domains",    opt_stringptr,
-      (void *)(offsetof(dnslookup_router_options_block, mx_fail_domains)) },
-  { "qualify_single",     opt_bool,
-      (void *)(offsetof(dnslookup_router_options_block, qualify_single)) },
-  { "rewrite_headers",    opt_bool,
-      (void *)(offsetof(dnslookup_router_options_block, rewrite_headers)) },
-  { "same_domain_copy_routing", opt_bool|opt_public,
-      (void *)(offsetof(router_instance, same_domain_copy_routing)) },
-  { "search_parents",     opt_bool,
-      (void *)(offsetof(dnslookup_router_options_block, search_parents)) },
-  { "srv_fail_domains",   opt_stringptr,
-      (void *)(offsetof(dnslookup_router_options_block, srv_fail_domains)) },
-  { "widen_domains",      opt_stringptr,
-      (void *)(offsetof(dnslookup_router_options_block, widen_domains)) }
+  { "check_secondary_mx", opt_bool,		LOFF(check_secondary_mx) },
+  { "check_srv",          opt_stringptr,	LOFF(check_srv) },
+  { "fail_defer_domains", opt_stringptr,	LOFF(fail_defer_domains) },
+  { "ipv4_only",          opt_stringptr,	LOFF(ipv4_only) },
+  { "ipv4_prefer",        opt_stringptr,	LOFF(ipv4_prefer) },
+  { "mx_domains",         opt_stringptr,	LOFF(mx_domains) },
+  { "mx_fail_domains",    opt_stringptr,	LOFF(mx_fail_domains) },
+  { "qualify_single",     opt_bool,		LOFF(qualify_single) },
+  { "rewrite_headers",    opt_bool,		LOFF(rewrite_headers) },
+  { "same_domain_copy_routing", opt_bool|opt_public, OPT_OFF(router_instance, same_domain_copy_routing) },
+  { "search_parents",     opt_bool,		LOFF(search_parents) },
+  { "srv_fail_domains",   opt_stringptr,	LOFF(srv_fail_domains) },
+  { "widen_domains",      opt_stringptr,	LOFF(widen_domains) }
 };
 
 /* Size of the options list. An extern variable has to be used so that its
@@ -161,18 +153,12 @@ host_item h;
 int rc;
 int widen_sep = 0;
 int whichrrs = HOST_FIND_BY_MX | HOST_FIND_BY_A | HOST_FIND_BY_AAAA;
-dnslookup_router_options_block *ob =
+dnslookup_router_options_block * ob =
   (dnslookup_router_options_block *)(rblock->options_block);
-uschar *srv_service = NULL;
-uschar *widen = NULL;
-const uschar *pre_widen = addr->domain;
-const uschar *post_widen = NULL;
-const uschar *fully_qualified_name;
-const uschar *listptr;
+uschar * srv_service = NULL, * widen = NULL;
+const uschar * pre_widen = addr->domain, * post_widen = NULL;
+const uschar * fully_qualified_name, * listptr;
 uschar widen_buffer[256];
-
-addr_new = addr_new;          /* Keep picky compilers happy */
-addr_succeed = addr_succeed;
 
 DEBUG(D_route)
   debug_printf("%s router called for %s\n  domain = %s\n",
@@ -180,8 +166,8 @@ DEBUG(D_route)
 
 /* If an SRV check is required, expand the service name */
 
+GET_OPTION("check_srv");
 if (ob->check_srv)
-  {
   if (  !(srv_service = expand_string(ob->check_srv))
      && !f.expand_string_forcedfail)
     {
@@ -189,8 +175,8 @@ if (ob->check_srv)
       rblock->name, ob->check_srv, expand_string_message);
     return DEFER;
     }
-  else whichrrs |= HOST_FIND_BY_SRV;
-  }
+  else
+    whichrrs |= HOST_FIND_BY_SRV;
 
 /* Set up the first of any widening domains. The code further down copes with
 either pre- or post-widening, but at present there is no way to turn on
@@ -218,6 +204,7 @@ if (  ob->widen_domains
    && (verify != v_sender || !ob->rewrite_headers || addr->parent))
   {
   listptr = ob->widen_domains;
+  /* not expanded so should never be tainted */
   widen = string_nextinlist(&listptr, &widen_sep, widen_buffer,
     sizeof(widen_buffer));
 
@@ -247,6 +234,7 @@ for (;;)
   else if (widen)
     {
     h.name = string_sprintf("%s.%s", addr->domain, widen);
+    /* not expanded so should never be tainted */
     widen = string_nextinlist(&listptr, &widen_sep, widen_buffer,
       sizeof(widen_buffer));
     DEBUG(D_route) debug_printf("%s router widened %s to %s\n", rblock->name,
@@ -289,7 +277,7 @@ for (;;)
 
   /* Unfortunately, we cannot set the mx_only option in advance, because the
   DNS lookup may extend an unqualified name. Therefore, we must do the test
-  stoubsequently. We use the same logic as that for widen_domains above to avoid
+  subsequently. We use the same logic as that for widen_domains above to avoid
   requesting a header rewrite that cannot work. */
 
   if (verify != v_sender || !ob->rewrite_headers || addr->parent)
@@ -298,10 +286,15 @@ for (;;)
     if (ob->search_parents) flags |= HOST_FIND_SEARCH_PARENTS;
     }
 
-  rc = host_find_bydns(&h, CUS rblock->ignore_target_hosts, flags,
-    srv_service, ob->srv_fail_domains, ob->mx_fail_domains,
-    &rblock->dnssec,
-    &fully_qualified_name, &removed);
+  DEBUG(D_route) debug_printf_indent("main lookup for domain\n");
+   {
+    expand_level++;
+    rc = host_find_bydns(&h, CUS rblock->ignore_target_hosts, flags,
+      srv_service, ob->srv_fail_domains, ob->mx_fail_domains,
+      &rblock->dnssec,
+      &fully_qualified_name, &removed);
+    expand_level--;
+   }
 
   if (removed) setflag(addr, af_local_host_removed);
 
@@ -374,7 +367,7 @@ for (;;)
   As a common cause of this problem is MX records with IP addresses on the
   RHS, give a special message in this case. */
 
-  if (h.mx >= 0 && h.address == NULL)
+  if (h.mx >= 0 && !h.address)
     {
     setflag(addr, af_pass_message);   /* This is not a security risk */
     if (h.name[0] == 0)
@@ -468,7 +461,7 @@ if (rc != OK) return rc;
 /* Get store in which to preserve the original host item, chained on
 to the address. */
 
-addr->host_list = store_get(sizeof(host_item));
+addr->host_list = store_get(sizeof(host_item), GET_UNTAINTED);
 addr->host_list[0] = h;
 
 /* Fill in the transport and queue the address for delivery. */
@@ -483,7 +476,8 @@ return rf_queue_add(addr, addr_local, addr_remote, rblock, pw)?
   OK : DEFER;
 }
 
-#endif   /*!MACRO_PREDEF*/
+#endif	/*!MACRO_PREDEF*/
+#endif	/*ROUTER_DNSLOOKUP*/
 /* End of routers/dnslookup.c */
 /* vi: aw ai sw=2
 */

@@ -3,7 +3,9 @@
 *************************************************/
 
 /* Copyright (c) University of Cambridge 1995 - 2015 */
+/* Copyright (c) The Exim Maintainers 2020 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* This module contains interface functions to the two Cyrus authentication
 daemons. The original one was "pwcheck", which gives its name to the source
@@ -49,7 +51,7 @@ if (pw == NULL)
 DEBUG(D_auth)
   debug_printf("Running pwcheck authentication for user \"%s\"\n", s);
 
-switch (pwcheck_verify_password(CS s, CS pw, (const char **)(&reply)))
+switch (pwcheck_verify_password(CS s, CS pw, CCSS &reply))
   {
   case PWCHECK_OK:
   DEBUG(D_auth) debug_printf("pwcheck: success (%s)\n", reply);

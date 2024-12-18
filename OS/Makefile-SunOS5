@@ -1,6 +1,6 @@
 # Exim: OS-specific make file for SunOS5
-
-CFLAGS=-O
+# Copyright (c) The Exim Maintainers 2020 - 2023
+# SPDX-License-Identifier: GPL-2.0-or-later
 
 HAVE_ICONV=yes
 
@@ -20,5 +20,7 @@ XLFLAGS=-L$(X11)/lib -R$(X11)/lib
 X11LIB=$(X11)/lib
 
 OS_C_INCLUDES=setenv.c
+CFLAGS += -D_XOPEN_SOURCE -D_XOPEN_SOURCE_EXTENDED=1 -D__EXTENSIONS__
+CFLAGS += -DNO_EXECINFO
 
 # End

@@ -34,12 +34,10 @@ LANG=C
 export LANG
 
 #read default file
-QUEUERUNNER='combined'
-QUEUEINTERVAL='30m'
+EXIMDAEMONOPTS='-bd -q30m'
 UPEX4OPTS=''
 [ -f /etc/default/exim4 ] && . /etc/default/exim4
 PIDFILE="/run/exim4/exim.pid"
-QRPIDFILE="/run/exim4/eximqr.pid"
 
 upex4conf() {
   UPEX4CONF="update-exim4.conf"
@@ -54,14 +52,6 @@ upex4conf() {
   done
   IFS="$OLDIFS"
 }
-
-# Exit if exim runs from /etc/inetd.conf
-if [ -f /etc/inetd.conf ] && grep -E -q '^[[:space:]]*((\*|[[:alnum:].-]+):)?smtp[[:space:]]' /etc/inetd.conf
-then
-  upex4conf
-  exit 0
-fi
-
 
 DAEMON="/usr/sbin/exim4"
 NAME="exim4"
@@ -83,60 +73,13 @@ start_exim()
 {
   [ -e /run/exim4 ] || \
     install -d -oDebian-exim -gDebian-exim -m750 /run/exim4
-  case ${QUEUERUNNER} in
-    combined)
-      start_daemon -p "$PIDFILE" \
-        "$DAEMON" -bd "-q${QFLAGS}${QUEUEINTERVAL}" \
-        ${COMMONOPTIONS} \
-        ${QUEUERUNNEROPTIONS} \
-        ${SMTPLISTENEROPTIONS}
-      log_progress_msg "exim4"
-      ;;
-    separate)
-      start_daemon -p "$PIDFILE" \
-        "$DAEMON" -bd \
-        ${COMMONOPTIONS} \
-        ${SMTPLISTENEROPTIONS}
-      log_progress_msg "exim4_listener"
-      start_daemon -p "$QRPIDFILE" \
-        "$DAEMON" -oP $QRPIDFILE \
-        "-q${QFLAGS}${QUEUEINTERVAL}" \
-        ${COMMONOPTIONS} \
-        ${QUEUERUNNEROPTIONS}
-      log_progress_msg "exim4_queuerunner"
-      ;;
-    queueonly)
-      start_daemon -p "$PIDFILE" \
-        "$DAEMON" -oP $PIDFILE \
-        "-q${QFLAGS}${QUEUEINTERVAL}" \
-        ${COMMONOPTIONS} \
-        ${QUEUERUNNEROPTIONS}
-      log_progress_msg "exim4_queuerunner"
-      ;;
-    no|ppp)
-      start_daemon -p "$PIDFILE" \
-        "$DAEMON" -bd \
-        ${COMMONOPTIONS} \
-        ${SMTPLISTENEROPTIONS}
-      log_progress_msg "exim4_listener"
-      ;;
-    nodaemon)
-      ;;    
-  esac
+  start_daemon -p "$PIDFILE" \
+    "$DAEMON" $EXIMDAEMONOPTS
+  log_progress_msg "exim4"
 }
 
 stop_exim()
 {
-# we try to kill eximqr and exim SMTP listener, no matter what
-# ${QUEUERUNNER} is set to, we could have switched since starting.
-  if [ -f "$QRPIDFILE" ]; then
-    start-stop-daemon --stop --retry 5 --quiet --oknodo --remove-pidfile \
-      --pidfile "$QRPIDFILE" \
-      --exec "$DAEMON"
-    # exim does not remove the pidfile
-    if [ $? -eq 2 ] ; then rm -f "$QRPIDFILE" ; fi
-    log_progress_msg "exim4_queuerunner"
-  fi
   if [ -f "$PIDFILE" ]; then
     start-stop-daemon --stop --retry 5 --quiet --oknodo --remove-pidfile \
       --pidfile "$PIDFILE" \
@@ -149,24 +92,10 @@ stop_exim()
 
 reload_exim()
 {
-  case ${QUEUERUNNER} in
-    combined|no|ppp|queueonly)
-      start-stop-daemon --stop --signal HUP --quiet --oknodo \
-        --pidfile "$PIDFILE" \
-        --exec "$DAEMON"
-      log_progress_msg "exim4"
-      ;;
-    separate)
-      start-stop-daemon --stop --signal HUP --quiet --oknodo \
-        --pidfile "$PIDFILE" \
-        --exec "$DAEMON"
-      log_progress_msg "exim4_listener"
-      start-stop-daemon --stop --signal HUP --quiet --oknodo \
-        --pidfile "$QRPIDFILE" \
-        --exec "$DAEMON"
-      log_progress_msg "exim4_queuerunner"
-      ;;
-  esac
+  start-stop-daemon --stop --signal HUP --quiet --oknodo \
+    --pidfile "$PIDFILE" \
+    --exec "$DAEMON"
+  log_progress_msg "exim4"
 }
 
 kill_all_exims()
@@ -180,32 +109,13 @@ kill_all_exims()
 
 status()
 {
-  # the exit value of this function reflects the status of the SMTP
-  # service. Output shows the status of the queue runner as well.
-  SMTPNAME="SMTP listener daemon"
-  QRNAME="separate queue runner daemon"
-  if [ "${QUEUERUNNER}" = "combined" ]; then
-      SMTPNAME="combined SMTP listener and queue runner daemon"
-  elif [ "${QUEUERUNNER}" = "queueonly" ]; then
-    SMTPNAME="separate queue runner daemon"
-  fi
-  log_action_begin_msg "checking $QRNAME"
-  if pidofproc -p "$QRPIDFILE" "$DAEMON" >/dev/null; then
-    log_action_end_msg 0 "running"
-  else
-    if [ -e "$QRPIDFILE" ]; then
-      log_action_end_msg 1 "$QRNAME failed"
-    else
-      log_action_end_msg 0 "not running"
-    fi
-  fi
-  log_action_begin_msg "checking $SMTPNAME"
+  log_action_begin_msg "checking $NAME"
   if pidofproc -p "$PIDFILE" "$DAEMON" >/dev/null; then
     log_action_end_msg 0 "running"
     exit 0
   else
     if [ -e "$PIDFILE" ]; then
-      log_action_end_msg 1 "$SMTPNAME failed"
+      log_action_end_msg 1 "$NAME failed"
       exit 1
     else
       log_action_end_msg 0 "not running"

@@ -6,7 +6,7 @@ This package was put together from the original sources which are
 maintained by Philip Hazel <ph10@cus.cam.ac.uk>, and which were
 obtained from
 
-	ftp://ftp.csx.cam.ac.uk/pub/software/email/exim/
+	https://downloads.exim.org/exim4/
 
 Some modifications to the Makefiles have been made to fit with the Linux
 FHS.
@@ -55,9 +55,10 @@ important feedback:
 
 
 -----------------------------------------------------------------
-exim is copyright (c) 1995 - 2018 University of Cambridge.
+exim is Copyright (c) 1995 - 2018 University of Cambridge.
+        Copyright (c) 2006-2024 The Exim Maintainers
 
-The original licence is as follows (from the file NOTICE in the upstream
+The original license is as follows (from the file NOTICE in the upstream
 distribution); a copy of the GNU GPL version 2 is available in
 /usr/share/common-licenses/GPL-2 on Debian systems.
 
@@ -219,10 +220,9 @@ src/pdkim/*
 
 PDKIM - a RFC4871 (DKIM) implementation
 http://duncanthrax.net/pdkim/
-Copyright (C) 2009      Tom Kistner <tom@duncanthrax.net>
-
-No longer includes code from the PolarSSL project.
-Copyright (C) 2016 Jeremy Harris <jgh@exim.org>
+Copyright (c) The Exim Maintainers 1995 - 2024
+Copyright (C) 2009 - 2016  Tom Kistner <tom@duncanthrax.net>
+Copyright (C) 2016 - 2020  Jeremy Harris <jgh@exim.org>
 
 This copy of PDKIM is included with Exim. For a standalone distribution,
 visit http://duncanthrax.net/pdkim/.

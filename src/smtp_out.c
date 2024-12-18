@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* A number of functions for driving outgoing SMTP calls. */
 
@@ -26,7 +28,7 @@ Arguments:
                which case the function does nothing
   host_af    AF_INET or AF_INET6 for the outgoing IP address
   addr       the mail address being handled (for setting errors)
-  interface  point this to the interface
+  interface  point this to the interface if there is one defined
   msg        to add to any error message
 
 Returns:     TRUE on success, FALSE on failure, with error message
@@ -52,13 +54,24 @@ if (!(expint = expand_string(istring)))
   return FALSE;
   }
 
-while (isspace(*expint)) expint++;
-if (*expint == 0) return TRUE;
-
-while ((iface = string_nextinlist(&expint, &sep, big_buffer,
-          big_buffer_size)))
+if (is_tainted(expint))
   {
-  if (string_is_ip_address(iface, NULL) == 0)
+  log_write(0, LOG_MAIN|LOG_PANIC,
+    "attempt to use tainted value '%s' from '%s' for interface",
+    expint, istring);
+  addr->transport_return = PANIC;
+  addr->message = string_sprintf("failed to expand \"interface\" "
+      "option for %s: configuration error", msg);
+  return FALSE;
+  }
+
+Uskip_whitespace(&expint);
+if (!*expint) return TRUE;
+
+while ((iface = string_nextinlist(&expint, &sep, NULL, 0)))
+  {
+  int if_af = string_is_ip_address(iface, NULL);
+  if (if_af == 0)
     {
     addr->transport_return = PANIC;
     addr->message = string_sprintf("\"%s\" is not a valid IP "
@@ -67,11 +80,11 @@ while ((iface = string_nextinlist(&expint, &sep, big_buffer,
     return FALSE;
     }
 
-  if (((Ustrchr(iface, ':') == NULL)? AF_INET:AF_INET6) == host_af)
+  if ((if_af == 4 ? AF_INET : AF_INET6) == host_af)
     break;
   }
 
-if (iface) *interface = string_copy(iface);
+*interface = iface;
 return TRUE;
 }
 
@@ -141,10 +154,50 @@ return TRUE;
 
 
 #ifdef TCP_FASTOPEN
+/* Try to record if TFO was attmepted and if it was successfully used.  */
+
 static void
 tfo_out_check(int sock)
 {
-# if defined(TCP_INFO) && defined(EXIM_HAVE_TCPI_UNACKED)
+static BOOL done_once = FALSE;
+
+if (done_once) return;
+done_once = TRUE;
+
+# ifdef __FreeBSD__
+struct tcp_info tinfo;
+socklen_t len = sizeof(tinfo);
+
+/* A getsockopt TCP_FASTOPEN unfortunately returns "was-used" for a TFO/R as
+well as a TFO/C.  Use what we can of the Linux hack below; reliability issues ditto. */
+switch (tcp_out_fastopen)
+  {
+  case TFO_ATTEMPTED_NODATA:
+    if (  getsockopt(sock, IPPROTO_TCP, TCP_INFO, &tinfo, &len) == 0
+       && tinfo.tcpi_state == TCPS_SYN_SENT
+       && tinfo.__tcpi_unacked > 0
+       )
+      {
+      DEBUG(D_transport|D_v)
+       debug_printf("TCP_FASTOPEN tcpi_unacked %d\n", tinfo.__tcpi_unacked);
+      tcp_out_fastopen = TFO_USED_NODATA;
+      }
+    break;
+  /*
+  case TFO_ATTEMPTED_DATA:
+  case TFO_ATTEMPTED_DATA:
+       if (tinfo.tcpi_options & TCPI_OPT_SYN_DATA)   XXX no equvalent as of 12.2
+  */
+  }
+
+switch (tcp_out_fastopen)
+  {
+  case TFO_ATTEMPTED_DATA:	tcp_out_fastopen = TFO_USED_DATA; break;
+  default: break; /* compiler quietening */
+  }
+
+# else	/* Linux & Apple */
+#  if defined(TCP_INFO) && defined(EXIM_HAVE_TCPI_UNACKED)
 struct tcp_info tinfo;
 socklen_t len = sizeof(tinfo);
 
@@ -191,41 +244,30 @@ switch (tcp_out_fastopen)
 	tcp_out_fastopen = TFO_NOT_USED;
 	}
     break;
+
+  default: break; /* compiler quietening */
   }
-# endif
+#  endif
+# endif	/* Linux & Apple */
 }
 #endif
 
 
-/* Arguments as for smtp_connect(), plus
-  early_data	if non-NULL, idenmpotent data to be sent -
-		preferably in the TCP SYN segment
-
-Returns:      connected socket number, or -1 with errno set
+/* Create and bind a socket, given the connect-args.
+Update those with the state.  Return the fd, or -1 with errno set.
 */
 
 int
-smtp_sock_connect(host_item * host, int host_af, int port, uschar * interface,
-  transport_instance * tb, int timeout, const blob * early_data)
+smtp_boundsock(smtp_connect_args * sc)
 {
+transport_instance * tb = sc->tblock;
 smtp_transport_options_block * ob =
   (smtp_transport_options_block *)tb->options_block;
 const uschar * dscp = ob->dscp;
-int dscp_value;
-int dscp_level;
-int dscp_option;
-int sock;
-int save_errno = 0;
-const blob * fastopen_blob = NULL;
+int sock, dscp_value, dscp_level, dscp_option;
 
-
-#ifndef DISABLE_EVENT
-deliver_host_address = host->address;
-deliver_host_port = port;
-if (event_raise(tb->event_action, US"tcp:connect", NULL)) return -1;
-#endif
-
-if ((sock = ip_socket(SOCK_STREAM, host_af)) < 0) return -1;
+if ((sock = ip_socket(SOCK_STREAM, sc->host_af)) < 0)
+  return -1;
 
 /* Set TCP_NODELAY; Exim does its own buffering. */
 
@@ -236,7 +278,8 @@ if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, US &on, sizeof(on)))
 /* Set DSCP value, if we can. For now, if we fail to set the value, we don't
 bomb out, just log it and continue in default traffic class. */
 
-if (dscp && dscp_lookup(dscp, host_af, &dscp_level, &dscp_option, &dscp_value))
+GET_OPTION("dscp");
+if (dscp && dscp_lookup(dscp, sc->host_af, &dscp_level, &dscp_option, &dscp_value))
   {
   HDEBUG(D_transport|D_acl|D_v)
     debug_printf_indent("DSCP \"%s\"=%x ", dscp, dscp_value);
@@ -245,7 +288,7 @@ if (dscp && dscp_lookup(dscp, host_af, &dscp_level, &dscp_option, &dscp_value))
       debug_printf_indent("failed to set DSCP: %s ", strerror(errno));
   /* If the kernel supports IPv4 and IPv6 on an IPv6 socket, we need to set the
   option for both; ignore failures here */
-  if (host_af == AF_INET6 &&
+  if (sc->host_af == AF_INET6 &&
       dscp_lookup(dscp, AF_INET, &dscp_level, &dscp_option, &dscp_value))
     (void) setsockopt(sock, dscp_level, dscp_option, &dscp_value, sizeof(dscp_value));
   }
@@ -253,63 +296,123 @@ if (dscp && dscp_lookup(dscp, host_af, &dscp_level, &dscp_option, &dscp_value))
 /* Bind to a specific interface if requested. Caller must ensure the interface
 is the same type (IPv4 or IPv6) as the outgoing address. */
 
-if (interface && ip_bind(sock, host_af, interface, 0) < 0)
+if (sc->interface)
   {
-  save_errno = errno;
-  HDEBUG(D_transport|D_acl|D_v)
-    debug_printf_indent("unable to bind outgoing SMTP call to %s: %s", interface,
-    strerror(errno));
+  union sockaddr_46 interface_sock;
+  EXIM_SOCKLEN_T size = sizeof(interface_sock);
+
+  if (  ip_bind(sock, sc->host_af, sc->interface, 0) < 0
+     || getsockname(sock, (struct sockaddr *) &interface_sock, &size) < 0
+     )
+    {
+    HDEBUG(D_transport|D_acl|D_v)
+      debug_printf_indent("unable to bind outgoing SMTP call to %s: %s\n", sc->interface,
+	strerror(errno));
+    close(sock);
+    return -1;
+    }
+  sending_ip_address = host_ntoa(-1, &interface_sock, NULL, &sending_port);
   }
+
+sc->sock = sock;
+return sock;
+}
+
+
+/* Arguments:
+  host        host item containing name and address and port
+  host_af     AF_INET or AF_INET6
+  port	      TCP port number
+  interface   outgoing interface address or NULL
+  tb          transport
+  timeout     timeout value or 0
+  early_data	if non-NULL, idempotent data to be sent -
+		preferably in the TCP SYN segment
+	      Special case: non-NULL but with NULL blob.data - caller is
+	      client-data-first (eg. TLS-on-connect) and a lazy-TCP-connect is
+	      acceptable.
+
+Returns:      connected socket number, or -1 with errno set
+*/
+
+int
+smtp_sock_connect(smtp_connect_args * sc, int timeout, const blob * early_data)
+{
+smtp_transport_options_block * ob =
+  (smtp_transport_options_block *)sc->tblock->options_block;
+int sock;
+int save_errno = 0;
+const blob * fastopen_blob = NULL;
+
+
+#ifndef DISABLE_EVENT
+deliver_host_address = sc->host->address;
+deliver_host_port = sc->host->port;
+if (event_raise(sc->tblock->event_action, US"tcp:connect", NULL, &errno)) return -1;
+#endif
+
+if (  (sock = sc->sock) < 0
+   && (sock = smtp_boundsock(sc)) < 0)
+  save_errno = errno;
+sc->sock = -1;
 
 /* Connect to the remote host, and add keepalive to the socket before returning
 it, if requested.  If the build supports TFO, request it - and if the caller
 requested some early-data then include that in the TFO request.  If there is
 early-data but no TFO support, send it after connecting. */
 
-else
+if (!save_errno)
   {
 #ifdef TCP_FASTOPEN
-  if (verify_check_given_host(CUSS &ob->hosts_try_fastopen, host) == OK)
-    fastopen_blob = early_data ? early_data : &tcp_fastopen_nodata;
+  /* See if TCP Fast Open usable.  Default is a traditional 3WHS connect */
+  expand_level++;
+  if (verify_check_given_host(CUSS &ob->hosts_try_fastopen, sc->host) == OK)
+    {
+    if (!early_data)
+      fastopen_blob = &tcp_fastopen_nodata;	/* TFO, with no data */
+    else if (early_data->data)
+      fastopen_blob = early_data;		/* TFO, with data */
+# ifdef TCP_FASTOPEN_CONNECT
+    else
+      {						/* expecting client data */
+      DEBUG(D_transport|D_acl|D_v) debug_printf(" set up lazy-connect\n");
+      setsockopt(sock, IPPROTO_TCP, TCP_FASTOPEN_CONNECT, US &on, sizeof(on));
+      /* fastopen_blob = NULL;		 lazy TFO, triggered by data write */
+      }
+# endif
+    }
+  expand_level--;
 #endif
 
-  if (ip_connect(sock, host_af, host->address, port, timeout, fastopen_blob) < 0)
+  if (ip_connect(sock, sc->host_af, sc->host->address, sc->host->port, timeout, fastopen_blob) < 0)
     save_errno = errno;
   else if (early_data && !fastopen_blob && early_data->data && early_data->len)
     {
+    /* We had some early-data to send, but couldn't do TFO */
     HDEBUG(D_transport|D_acl|D_v)
       debug_printf("sending %ld nonTFO early-data\n", (long)early_data->len);
 
-#ifdef TCP_QUICKACK
+#ifdef TCP_QUICKACK_notdef
     (void) setsockopt(sock, IPPROTO_TCP, TCP_QUICKACK, US &off, sizeof(off));
 #endif
     if (send(sock, early_data->data, early_data->len, 0) < 0)
       save_errno = errno;
     }
+#ifdef TCP_QUICKACK_notdef
+  /* Under TFO (with openssl & pipe-conn; testcase 4069, as of
+  5.10.8-100.fc32.x86_64) this seems to be inop.
+  Perhaps overwritten when we (client) go -> ESTABLISHED on seeing the 3rd-ACK?
+  For that case, added at smtp_reap_banner(). */
+  (void) setsockopt(sock, IPPROTO_TCP, TCP_QUICKACK, US &off, sizeof(off));
+#endif
   }
 
-/* Either bind() or connect() failed */
-
-if (save_errno != 0)
-  {
-  HDEBUG(D_transport|D_acl|D_v)
-    {
-    debug_printf_indent("failed: %s", CUstrerror(save_errno));
-    if (save_errno == ETIMEDOUT)
-      debug_printf(" (timeout=%s)", readconf_printtime(timeout));
-    debug_printf("\n");
-    }
-  (void)close(sock);
-  errno = save_errno;
-  return -1;
-  }
-
-/* Both bind() and connect() succeeded, and any early-data */
-
-else
+if (!save_errno)
   {
   union sockaddr_46 interface_sock;
   EXIM_SOCKLEN_T size = sizeof(interface_sock);
+
+  /* Both bind() and connect() succeeded, and any early-data */
 
   HDEBUG(D_transport|D_acl|D_v) debug_printf_indent("connected\n");
   if (getsockname(sock, (struct sockaddr *)(&interface_sock), &size) == 0)
@@ -322,12 +425,25 @@ else
     return -1;
     }
 
-  if (ob->keepalive) ip_keepalive(sock, host->address, TRUE);
+  if (ob->keepalive) ip_keepalive(sock, sc->host->address, TRUE);
 #ifdef TCP_FASTOPEN
   tfo_out_check(sock);
 #endif
   return sock;
   }
+
+/* Either bind() or connect() failed */
+
+HDEBUG(D_transport|D_acl|D_v)
+  {
+  debug_printf_indent(" failed: %s", CUstrerror(save_errno));
+  if (save_errno == ETIMEDOUT)
+    debug_printf(" (timeout=%s)", readconf_printtime(timeout));
+  debug_printf("\n");
+  }
+(void)close(sock);
+errno = save_errno;
+return -1;
 }
 
 
@@ -339,7 +455,7 @@ smtp_port_for_connect(host_item * host, int port)
 {
 if (host->port != PORT_NONE)
   {
-  HDEBUG(D_transport|D_acl|D_v)
+  HDEBUG(D_transport|D_acl|D_v) if (port != host->port)
     debug_printf_indent("Transport port=%d replaced by host-specific port=%d\n", port,
       host->port);
   port = host->port;
@@ -360,6 +476,9 @@ host->address will always be an IPv4 address.
 Arguments:
   sc	      details for making connection: host, af, interface, transport
   early_data  if non-NULL, data to be sent - preferably in the TCP SYN segment
+	      Special case: non-NULL but with NULL blob.data - caller is
+	      client-data-first (eg. TLS-on-connect) and a lazy-TCP-connect is
+	      acceptable.
 
 Returns:      connected socket number, or -1 with errno set
 */
@@ -379,7 +498,7 @@ HDEBUG(D_transport|D_acl|D_v)
 #ifdef SUPPORT_SOCKS
   if (ob->socks_proxy) s = string_sprintf("%svia proxy ", s);
 #endif
-  debug_printf_indent("Connecting to %s %s%s... ", sc->host->name, callout_address, s);
+  debug_printf_indent("Connecting to %s %s%s...\n", sc->host->name, callout_address, s);
   }
 
 /* Create and connect the socket */
@@ -389,7 +508,7 @@ if (ob->socks_proxy)
   {
   int sock = socks_sock_connect(sc->host, sc->host_af, port, sc->interface,
 				sc->tblock, ob->connect_timeout);
-
+  
   if (sock >= 0)
     {
     if (early_data && early_data->data && early_data->len)
@@ -412,8 +531,7 @@ if (ob->socks_proxy)
   }
 #endif
 
-return smtp_sock_connect(sc->host, sc->host_af, port, sc->interface,
-			  sc->tblock, ob->connect_timeout, early_data);
+return smtp_sock_connect(sc, ob->connect_timeout, early_data);
 }
 
 
@@ -438,13 +556,21 @@ flush_buffer(smtp_outblock * outblock, int mode)
 int rc;
 int n = outblock->ptr - outblock->buffer;
 BOOL more = mode == SCMD_MORE;
+client_conn_ctx * cctx;
 
 HDEBUG(D_transport|D_acl) debug_printf_indent("cmd buf flush %d bytes%s\n", n,
   more ? " (more expected)" : "");
 
-#ifdef SUPPORT_TLS
-if (outblock->cctx->tls_ctx)
-  rc = tls_write(outblock->cctx->tls_ctx, outblock->buffer, n, more);
+if (!(cctx = outblock->cctx))
+  {
+  log_write(0, LOG_MAIN|LOG_PANIC, "null conn-context pointer");
+  errno = 0;
+  return FALSE;
+  }
+
+#ifndef DISABLE_TLS
+if (cctx->tls_ctx)		/*XXX have seen a null cctx here, rvfy sending QUIT, hence check above */
+  rc = tls_write(cctx->tls_ctx, outblock->buffer, n, more);
 else
 #endif
 
@@ -458,21 +584,32 @@ else
     requirement: TFO with data can, in rare cases, replay the data to the
     receiver. */
 
-    if (  (outblock->cctx->sock = smtp_connect(outblock->conn_args, &early_data))
+    if (  (cctx->sock = smtp_connect(outblock->conn_args, &early_data))
        < 0)
       return FALSE;
     outblock->conn_args = NULL;
     rc = n;
     }
   else
-
-    rc = send(outblock->cctx->sock, outblock->buffer, n,
+    {
+    rc = send(cctx->sock, outblock->buffer, n,
 #ifdef MSG_MORE
 	      more ? MSG_MORE : 0
 #else
 	      0
 #endif
 	     );
+
+#if defined(__linux__)
+    /* This is a workaround for a current linux kernel bug: as of
+    5.6.8-200.fc31.x86_64  small (<MSS) writes get delayed by about 200ms,
+    This is despite NODELAY being active.
+    https://bugzilla.redhat.com/show_bug.cgi?id=1803806 */
+
+    if (!more)
+      setsockopt(cctx->sock, IPPROTO_TCP, TCP_CORK, &off, sizeof(off));
+#endif
+    }
   }
 
 if (rc <= 0)
@@ -488,6 +625,22 @@ return TRUE;
 
 
 
+/* This might be called both due to callout and then from delivery.
+Use memory that will not be released between those phases.
+*/
+static void
+smtp_debug_resp(const uschar * buf)
+{
+#ifndef DISABLE_CLIENT_CMD_LOG
+int old_pool = store_pool;
+store_pool = POOL_PERM;
+client_cmd_log = string_append_listele_n(client_cmd_log, ':', buf,
+  buf[3] == ' ' ? 3 : 4);
+store_pool = old_pool;
+#endif
+}
+
+
 /*************************************************
 *             Write SMTP command                 *
 *************************************************/
@@ -499,7 +652,7 @@ Arguments:
   sx	     SMTP connection, contains buffer for pipelining, and socket
   mode       buffer, write-with-more-likely, write
   format     a format, starting with one of
-             of HELO, MAIL FROM, RCPT TO, DATA, ".", or QUIT.
+             of HELO, MAIL FROM, RCPT TO, DATA, BDAT, ".", or QUIT.
 	     If NULL, flush pipeline buffer only.
   ...        data for the format
 
@@ -509,7 +662,7 @@ Returns:     0 if command added to pipelining buffer, with nothing transmitted
 */
 
 int
-smtp_write_command(void * sx, int mode, const char *format, ...)
+smtp_write_command(void * sx, int mode, const char * format, ...)
 {
 smtp_outblock * outblock = &((smtp_context *)sx)->outblock;
 int rc = 0;
@@ -519,12 +672,17 @@ if (format)
   gstring gs = { .size = big_buffer_size, .ptr = 0, .s = big_buffer };
   va_list ap;
 
+  /* Use taint-unchecked routines for writing into big_buffer, trusting that
+  we'll never expand the results.  Actually, the error-message use - leaving
+  the results in big_buffer for potential later use - is uncomfortably distant.
+  XXX Would be better to assume all smtp commands are short, use normal pool
+  alloc rather than big_buffer, and another global for the data-for-error. */
+
   va_start(ap, format);
-  if (!string_vformat(&gs, FALSE, CS format, ap))
+  if (!string_vformat(&gs, SVFMT_TAINT_NOCHK, CS format, ap))
     log_write(0, LOG_MAIN|LOG_PANIC_DIE, "overlong write_command in outgoing "
       "SMTP");
   va_end(ap);
-  string_from_gstring(&gs);
 
   if (gs.ptr > outblock->buffersize)
     log_write(0, LOG_MAIN|LOG_PANIC_DIE, "overlong write_command in outgoing "
@@ -536,7 +694,7 @@ if (format)
     if (!flush_buffer(outblock, SCMD_FLUSH)) return -1;
     }
 
-  Ustrncpy(CS outblock->ptr, gs.s, gs.ptr);
+  Ustrncpy(outblock->ptr, gs.s, gs.ptr);
   outblock->ptr += gs.ptr;
   outblock->cmd_count++;
   gs.ptr -= 2; string_from_gstring(&gs); /* remove \r\n for error message */
@@ -548,18 +706,18 @@ if (format)
 
   if (outblock->authenticating)
     {
-    uschar *p = big_buffer;
+    uschar * p = big_buffer;
     if (Ustrncmp(big_buffer, "AUTH ", 5) == 0)
       {
       p += 5;
-      while (isspace(*p)) p++;
-      while (!isspace(*p)) p++;
-      while (isspace(*p)) p++;
+      Uskip_whitespace(&p);
+      Uskip_nonwhite(&p);
+      Uskip_whitespace(&p);
       }
-    while (*p != 0) *p++ = '*';
+    while (*p) *p++ = '*';
     }
 
-  HDEBUG(D_transport|D_acl|D_v) debug_printf_indent("  SMTP>> %s\n", big_buffer);
+  smtp_debug_cmd(big_buffer, mode);
   }
 
 if (mode != SCMD_BUFFER)
@@ -640,7 +798,7 @@ for (;;)
 
   if((rc = ip_recv(cctx, inblock->buffer, inblock->buffersize, timelimit)) <= 0)
     {
-    DEBUG(D_deliver|D_transport|D_acl)
+    DEBUG(D_deliver|D_transport|D_acl|D_v)
       debug_printf_indent(errno ? "  SMTP(%s)<<\n" : "  SMTP(closed)<<\n",
 	strerror(errno));
     break;
@@ -695,20 +853,24 @@ smtp_read_response(void * sx0, uschar * buffer, int size, int okdigit,
 {
 smtp_context * sx = sx0;
 uschar * ptr = buffer;
-int count = 0, rc;
+int count = 0;
 time_t timelimit = time(NULL) + timeout;
+BOOL yield = FALSE;
 
 errno = 0;  /* Ensure errno starts out zero */
+buffer[0] = '\0';
 
-#ifdef EXPERIMENTAL_PIPE_CONNECT
+#ifndef DISABLE_PIPE_CONNECT
 if (sx->pending_BANNER || sx->pending_EHLO)
+  {
+  int rc;
   if ((rc = smtp_reap_early_pipe(sx, &count)) != OK)
     {
     DEBUG(D_transport) debug_printf("failed reaping pipelined cmd responsess\n");
-    buffer[0] = '\0';
     if (rc == DEFER) errno = ERRNO_TLSFAILURE;
-    return FALSE;
+    goto out;
     }
+  }
 #endif
 
 /* This is a loop to read and concatenate the lines that make up a multi-line
@@ -737,7 +899,7 @@ for (;;)
      (ptr[3] != '-' && ptr[3] != ' ' && ptr[3] != 0))
     {
     errno = ERRNO_SMTPFORMAT;    /* format error */
-    return FALSE;
+    goto out;
     }
 
   /* If the line we have just read is a terminal line, line, we are done.
@@ -755,7 +917,7 @@ for (;;)
   }
 
 #ifdef TCP_FASTOPEN
-  tfo_out_check(sx->cctx.sock);
+tfo_out_check(sx->cctx.sock);
 #endif
 
 /* Return a value that depends on the SMTP return code. On some systems a
@@ -765,7 +927,11 @@ distinguish between an unexpected return code and other errors such as
 timeouts, lost connections, etc. */
 
 errno = 0;
-return buffer[0] == okdigit;
+yield = buffer[0] == okdigit;
+
+out:
+  smtp_debug_resp(buffer);
+  return yield;
 }
 
 /* End of smtp_out.c */

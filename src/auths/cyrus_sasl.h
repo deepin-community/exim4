@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2022 */
 /* Copyright (c) University of Cambridge 1995 - 2012 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Copyright (c) A L Digital Ltd 2004 */
 
@@ -30,6 +32,6 @@ extern auth_cyrus_sasl_options_block auth_cyrus_sasl_option_defaults;
 extern void auth_cyrus_sasl_init(auth_instance *);
 extern int auth_cyrus_sasl_server(auth_instance *, uschar *);
 extern int auth_cyrus_sasl_client(auth_instance *, void *, int, uschar *, int);
-extern void auth_cyrus_sasl_version_report(FILE *f);
+extern gstring * auth_cyrus_sasl_version_report(gstring *);
 
 /* End of cyrus_sasl.h */

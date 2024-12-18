@@ -25,7 +25,7 @@ userforward:
   domains = +local_domains
   check_local_user
   file = $home/.forward
-  require_files = $local_part:$home/.forward
+  require_files = $local_part_data:$home/.forward
   no_verify
   no_expn
   check_ancestor

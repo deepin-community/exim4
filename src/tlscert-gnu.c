@@ -2,7 +2,9 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2022 */
 /* Copyright (c) Jeremy Harris 2014 - 2018 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* This file provides TLS/SSL support for Exim using the GnuTLS library,
 one of the available supported implementations.  This file is #included into
@@ -20,13 +22,16 @@ tls.c when USE_GNUTLS has been set.
 
 /*****************************************************
 *  Export/import a certificate, binary/printable
-*****************************************************/
-int
+******************************************************
+Return: boolean success
+*/
+
+BOOL
 tls_export_cert(uschar * buf, size_t buflen, void * cert)
 {
 size_t sz = buflen;
-void * reset_point = store_get(0);
-int fail;
+rmark reset_point = store_mark();
+BOOL fail;
 const uschar * cp;
 
 if ((fail = gnutls_x509_crt_export((gnutls_x509_crt_t)cert,
@@ -34,7 +39,7 @@ if ((fail = gnutls_x509_crt_export((gnutls_x509_crt_t)cert,
   {
   log_write(0, LOG_MAIN, "TLS error in certificate export: %s",
     gnutls_strerror(fail));
-  return 1;
+  return FALSE;
   }
 if ((cp = string_printing(buf)) != buf)
   {
@@ -43,16 +48,17 @@ if ((cp = string_printing(buf)) != buf)
     fail = 1;
   }
 store_reset(reset_point);
-return fail;
+return !fail;
 }
 
-int
+/* On error, NULL out the destination */
+BOOL
 tls_import_cert(const uschar * buf, void ** cert)
 {
-void * reset_point = store_get(0);
+rmark reset_point = store_mark();
 gnutls_datum_t datum;
 gnutls_x509_crt_t crt = *(gnutls_x509_crt_t *)cert;
-int fail = 0;
+int rc;
 
 if (crt)
   gnutls_x509_crt_deinit(crt);
@@ -63,17 +69,15 @@ gnutls_x509_crt_init(&crt);
 
 datum.data = string_unprinting(US buf);
 datum.size = Ustrlen(datum.data);
-if ((fail = gnutls_x509_crt_import(crt, &datum, GNUTLS_X509_FMT_PEM)))
+if ((rc = gnutls_x509_crt_import(crt, &datum, GNUTLS_X509_FMT_PEM)))
   {
   log_write(0, LOG_MAIN, "TLS error in certificate import: %s",
-    gnutls_strerror(fail));
-  fail = 1;
+    gnutls_strerror(rc));
+  crt = NULL;
   }
-else
-  *cert = (void *)crt;
-
+*cert = (void *)crt;
 store_reset(reset_point);
-return fail;
+return rc != 0;
 }
 
 void
@@ -112,7 +116,7 @@ size_t len = 32;
 if (mod && Ustrcmp(mod, "int") == 0)
   return string_sprintf("%u", (unsigned)t);
 
-cp = store_get(len);
+cp = store_get(len, GET_UNTAINTED);
 if (f.timestamps_utc)
   {
   uschar * tz = to_tz(US"GMT0");
@@ -146,7 +150,7 @@ if ((ret = gnutls_x509_crt_get_issuer_dn(cert, CS cp, &siz))
     != GNUTLS_E_SHORT_MEMORY_BUFFER)
   return g_err("gi0", __FUNCTION__, ret);
 
-cp = store_get(siz);
+cp = store_get(siz, GET_TAINTED);
 if ((ret = gnutls_x509_crt_get_issuer_dn(cert, CS cp, &siz)) < 0)
   return g_err("gi1", __FUNCTION__, ret);
 
@@ -173,16 +177,15 @@ uschar *
 tls_cert_serial_number(void * cert, uschar * mod)
 {
 uschar bin[50], txt[150];
+uschar * sp = bin;
 size_t sz = sizeof(bin);
-uschar * sp;
-uschar * dp;
 int ret;
 
 if ((ret = gnutls_x509_crt_get_serial((gnutls_x509_crt_t)cert,
     bin, &sz)))
   return g_err("gs0", __FUNCTION__, ret);
 
-for(dp = txt, sp = bin; sz; sz--)
+for(uschar * dp = txt; sz; sz--)
   dp += sprintf(CS dp, "%.2x", *sp++);
 for(sp = txt; sp[0]=='0' && sp[1]; ) sp++;	/* leading zeroes */
 return string_copy(sp);
@@ -201,7 +204,7 @@ if ((ret = gnutls_x509_crt_get_signature((gnutls_x509_crt_t)cert, CS cp1, &len))
     != GNUTLS_E_SHORT_MEMORY_BUFFER)
   return g_err("gs0", __FUNCTION__, ret);
 
-cp1 = store_get(len*4+1);
+cp1 = store_get(len*4+1, GET_TAINTED);
 if (gnutls_x509_crt_get_signature((gnutls_x509_crt_t)cert, CS cp1, &len) != 0)
   return g_err("gs1", __FUNCTION__, ret);
 
@@ -231,7 +234,7 @@ if ((ret = gnutls_x509_crt_get_dn(cert, CS cp, &siz))
     != GNUTLS_E_SHORT_MEMORY_BUFFER)
   return g_err("gs0", __FUNCTION__, ret);
 
-cp = store_get(siz);
+cp = store_get(siz, GET_TAINTED);
 if ((ret = gnutls_x509_crt_get_dn(cert, CS cp, &siz)) < 0)
   return g_err("gs1", __FUNCTION__, ret);
 
@@ -259,7 +262,7 @@ ret = gnutls_x509_crt_get_extension_by_oid ((gnutls_x509_crt_t)cert,
 if (ret != GNUTLS_E_SHORT_MEMORY_BUFFER)
   return g_err("ge0", __FUNCTION__, ret);
 
-cp1 = store_get(siz*4 + 1);
+cp1 = store_get(siz*4 + 1, GET_TAINTED);
 
 ret = gnutls_x509_crt_get_extension_by_oid ((gnutls_x509_crt_t)cert,
   CS oid, idx, CS cp1, &siz, &crit);
@@ -280,7 +283,6 @@ uschar *
 tls_cert_subject_altname(void * cert, uschar * mod)
 {
 gstring * list = NULL;
-int index;
 size_t siz;
 int ret;
 uschar sep = '\n';
@@ -288,19 +290,19 @@ uschar * tag = US"";
 uschar * ele;
 int match = -1;
 
-while (mod)
+if (mod) while (*mod)
   {
   if (*mod == '>' && *++mod) sep = *mod++;
-  else if (Ustrcmp(mod, "dns")==0) { match = GNUTLS_SAN_DNSNAME; mod += 3; }
-  else if (Ustrcmp(mod, "uri")==0) { match = GNUTLS_SAN_URI; mod += 3; }
-  else if (Ustrcmp(mod, "mail")==0) { match = GNUTLS_SAN_RFC822NAME; mod += 4; }
-  else continue;
+  else if (Ustrncmp(mod, "dns", 3)==0) { match = GNUTLS_SAN_DNSNAME; mod += 3; }
+  else if (Ustrncmp(mod, "uri", 3)==0) { match = GNUTLS_SAN_URI; mod += 3; }
+  else if (Ustrncmp(mod, "mail", 4)==0) { match = GNUTLS_SAN_RFC822NAME; mod += 4; }
+  else break;
 
   if (*mod++ != ',')
     break;
   }
 
-for(index = 0;; index++)
+for (int index = 0;; index++)
   {
   siz = 0;
   switch(ret = gnutls_x509_crt_get_subject_alt_name(
@@ -316,7 +318,7 @@ for(index = 0;; index++)
       return g_err("gs0", __FUNCTION__, ret);
     }
 
-  ele = store_get(siz+1);
+  ele = store_get(siz+1, GET_TAINTED);
   if ((ret = gnutls_x509_crt_get_subject_alt_name(
     (gnutls_x509_crt_t)cert, index, ele, &siz, NULL)) < 0)
     return g_err("gs1", __FUNCTION__, ret);
@@ -345,13 +347,12 @@ tls_cert_ocsp_uri(void * cert, uschar * mod)
 gnutls_datum_t uri;
 int ret;
 uschar sep = '\n';
-int index;
 gstring * list = NULL;
 
 if (mod)
   if (*mod == '>' && *++mod) sep = *mod++;
 
-for(index = 0;; index++)
+for (int index = 0;; index++)
   {
   ret = gnutls_x509_crt_get_authority_info_access((gnutls_x509_crt_t)cert,
 	  index, GNUTLS_IA_OCSP_URI, &uri, NULL);
@@ -379,18 +380,16 @@ uschar *
 tls_cert_crl_uri(void * cert, uschar * mod)
 {
 int ret;
-size_t siz;
 uschar sep = '\n';
-int index;
 gstring * list = NULL;
 uschar * ele;
 
 if (mod)
   if (*mod == '>' && *++mod) sep = *mod++;
 
-for(index = 0;; index++)
+for (int index = 0;; index++)
   {
-  siz = 0;
+  size_t siz = 0;
   switch(ret = gnutls_x509_crt_get_crl_dist_points(
     (gnutls_x509_crt_t)cert, index, NULL, &siz, NULL, NULL))
     {
@@ -402,7 +401,7 @@ for(index = 0;; index++)
       return g_err("gc0", __FUNCTION__, ret);
     }
 
-  ele = store_get(siz);
+  ele = store_get(siz, GET_TAINTED);
   if ((ret = gnutls_x509_crt_get_crl_dist_points(
       (gnutls_x509_crt_t)cert, index, ele, &siz, NULL, NULL)) < 0)
     return g_err("gc1", __FUNCTION__, ret);
@@ -425,7 +424,7 @@ int fail;
 
 if (  (fail = gnutls_x509_crt_export((gnutls_x509_crt_t)cert,
 	GNUTLS_X509_FMT_DER, cp, &len)) != GNUTLS_E_SHORT_MEMORY_BUFFER
-   || !(cp = store_get((int)len))
+   || !(cp = store_get((int)len, GET_TAINTED), TRUE)	/* tainted */
    || (fail = gnutls_x509_crt_export((gnutls_x509_crt_t)cert,
         GNUTLS_X509_FMT_DER, cp, &len))
    )
@@ -434,7 +433,7 @@ if (  (fail = gnutls_x509_crt_export((gnutls_x509_crt_t)cert,
     gnutls_strerror(fail));
   return NULL;
   }
-return b64encode(cp, (int)len);
+return b64encode(CUS cp, (int)len);
 }
 
 
@@ -445,17 +444,16 @@ int ret;
 size_t siz = 0;
 uschar * cp;
 uschar * cp2;
-uschar * cp3;
 
 if ((ret = gnutls_x509_crt_get_fingerprint(cert, algo, NULL, &siz))
     != GNUTLS_E_SHORT_MEMORY_BUFFER)
   return g_err("gf0", __FUNCTION__, ret);
 
-cp = store_get(siz*3+1);
+cp = store_get(siz*3+1, GET_TAINTED);
 if ((ret = gnutls_x509_crt_get_fingerprint(cert, algo, cp, &siz)) < 0)
   return g_err("gf1", __FUNCTION__, ret);
 
-for (cp3 = cp2 = cp+siz; cp < cp2; cp++)
+for (uschar * cp3 = cp2 = cp+siz; cp < cp2; cp++)
   cp3 += sprintf(CS cp3, "%02X", *cp);
 return cp2;
 }

@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2022 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Transport shim for dkim signing */
 
@@ -16,13 +18,14 @@
 static BOOL
 dkt_sign_fail(struct ob_dkim * dkim, int * errp)
 {
+GET_OPTION("dkim_strict");
 if (dkim->dkim_strict)
   {
   uschar * dkim_strict_result = expand_string(dkim->dkim_strict);
 
   if (dkim_strict_result)
-    if ( (strcmpic(dkim->dkim_strict, US"1") == 0) ||
-	 (strcmpic(dkim->dkim_strict, US"true") == 0) )
+    if (  strcmpic(dkim_strict_result, US"1") == 0
+       || strcmpic(dkim_strict_result, US"true") == 0)
       {
       /* Set errno to something halfway meaningful */
       *errp = EACCES;
@@ -83,7 +86,7 @@ else
 
     while (sread)
       {
-#ifdef SUPPORT_TLS
+#ifndef DISABLE_TLS
       wwritten = tls_out.active.sock == out_fd
 	? tls_write(tls_out.active.tls_ctx, p, sread, FALSE)
 	: write(out_fd, CS p, sread);
@@ -158,8 +161,8 @@ arc_sign_init();
 in wireformat. */
 
 dkim->dot_stuffed = f.spool_file_wireformat;
-if (!(dkim_signature = dkim_exim_sign(deliver_datafile, SPOOL_DATA_START_OFFSET,
-				    hdrs, dkim, &errstr)))
+if (!(dkim_signature = dkim_exim_sign(deliver_datafile,
+	      spool_data_start_offset(message_id), hdrs, dkim, &errstr)))
   if (!(rc = dkt_sign_fail(dkim, &errno)))
     {
     *err = errstr;
@@ -169,7 +172,7 @@ if (!(dkim_signature = dkim_exim_sign(deliver_datafile, SPOOL_DATA_START_OFFSET,
 #ifdef EXPERIMENTAL_ARC
 if (dkim->arc_signspec)			/* Prepend ARC headers */
   {
-  uschar * e;
+  uschar * e = NULL;
   if (!(dkim_signature = arc_sign(dkim->arc_signspec, dkim_signature, &e)))
     {
     *err = e;
@@ -382,6 +385,8 @@ BOOL
 dkim_transport_write_message(transport_ctx * tctx,
   struct ob_dkim * dkim, const uschar ** err)
 {
+BOOL yield;
+
 /* If we can't sign, just call the original function. */
 
 if (  !(dkim->dkim_private_key && dkim->dkim_domain && dkim->dkim_selector)
@@ -396,12 +401,16 @@ if (  !transport_filter_argv
    || !*transport_filter_argv
    || !**transport_filter_argv
    )
-  return dkt_direct(tctx, dkim, err);
+  yield = dkt_direct(tctx, dkim, err);
 
-/* Use the transport path to write a file, calculate a dkim signature,
-send the signature and then send the file. */
+else
+  /* Use the transport path to write a file, calculate a dkim signature,
+  send the signature and then send the file. */
 
-return dkt_via_kfile(tctx, dkim, err);
+  yield = dkt_via_kfile(tctx, dkim, err);
+
+tctx->addr->dkim_used = string_from_gstring(dkim_signing_record);
+return yield;
 }
 
 #endif	/* whole file */

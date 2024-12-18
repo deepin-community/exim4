@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2009 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 /* Code for the filter test function. */
@@ -45,11 +47,11 @@ body_len = 0;
 body_linecount = 0;
 header_size = message_size;
 
-if (!dot_ended && !feof(stdin))
+if (!dot_ended && !stdin_feof())
   {
   if (!f.dot_ends)
     {
-    while ((ch = getc(stdin)) != EOF)
+    while ((ch = stdin_getc(GETC_BUFFER_UNLIMITED)) != EOF)
       {
       if (ch == 0) body_zerocount++;
       if (ch == '\n') body_linecount++;
@@ -62,7 +64,7 @@ if (!dot_ended && !feof(stdin))
   else
     {
     int ch_state = 1;
-    while ((ch = getc(stdin)) != EOF)
+    while ((ch = stdin_getc(GETC_BUFFER_UNLIMITED)) != EOF)
       {
       if (ch == 0) body_zerocount++;
       switch (ch_state)
@@ -95,10 +97,11 @@ if (!dot_ended && !feof(stdin))
       if (s > message_body_end + message_body_visible) s = message_body_end;
       message_size++;
       }
-    READ_END: ch = ch;  /* Some compilers don't like null statements */
+    READ_END: ;
     }
   if (s == message_body_end || s[-1] != '\n') body_linecount++;
   }
+debug_printf("%s %d\n", __FUNCTION__, __LINE__);
 
 message_body[body_len] = 0;
 message_body_size = message_size - header_size;
@@ -112,7 +115,7 @@ if (body_len >= message_body_visible)
   int above = message_body_visible - below;
   if (above > 0)
     {
-    uschar *temp = store_get(below);
+    uschar * temp = store_get(below, GET_UNTAINTED);
     memcpy(temp, message_body_end, below);
     memmove(message_body_end, s+1, above);
     memcpy(message_body_end + above, temp, below);
@@ -161,7 +164,7 @@ Returns:      TRUE if no errors
 */
 
 BOOL
-filter_runtest(int fd, uschar *filename, BOOL is_system, BOOL dot_ended)
+filter_runtest(int fd, const uschar * filename, BOOL is_system, BOOL dot_ended)
 {
 int rc, filter_type;
 BOOL yield;
@@ -178,7 +181,7 @@ if (fstat(fd, &statbuf) != 0)
   return FALSE;
   }
 
-filebuf = store_get(statbuf.st_size + 1);
+filebuf = store_get(statbuf.st_size + 1, filename);
 rc = read(fd, filebuf, statbuf.st_size);
 (void)close(fd);
 
@@ -250,7 +253,7 @@ if (filter_type == FILTER_FORWARD)
 /* For a filter, set up the message_body variables and the message size if this
 is the first time this function has been called. */
 
-if (message_body == NULL) read_message_body(dot_ended);
+if (!message_body) read_message_body(dot_ended);
 
 /* Now pass the filter file to the function that interprets it. Because
 filter_test is not FILTER_NONE, the interpreter will output comments about what
@@ -269,10 +272,9 @@ if (is_system)
   }
 else
   {
-  yield = (filter_type == FILTER_SIEVE)?
-    sieve_interpret(filebuf, RDO_REWRITE, NULL, NULL, NULL, NULL, &generated, &error)
-    :
-    filter_interpret(filebuf, RDO_REWRITE, &generated, &error);
+  yield = filter_type == FILTER_SIEVE
+    ? sieve_interpret(filebuf, RDO_REWRITE, NULL, NULL, NULL, NULL, &generated, &error)
+    : filter_interpret(filebuf, RDO_REWRITE, &generated, &error);
   }
 
 return yield != FF_ERROR;

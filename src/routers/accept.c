@@ -2,11 +2,15 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "../exim.h"
+
+#ifdef ROUTER_ACCEPT		/* Remainder of file */
 #include "rf_functions.h"
 #include "accept.h"
 
@@ -15,7 +19,7 @@
 empty declarations ("undefined" in the Standard) we put in a dummy value. */
 
 optionlist accept_router_options[] = {
-  { "", opt_hidden, NULL }
+  { "", opt_hidden, {NULL} }
 };
 
 /* Size of the options list. An extern variable has to be used so that its
@@ -102,20 +106,17 @@ accept_router_options_block *ob =
   (accept_router_options_block *)(rblock->options_block);
 */
 int rc;
-uschar *errors_to;
-uschar *remove_headers;
-header_line *extra_headers;
-
-addr_new = addr_new;  /* Keep picky compilers happy */
-addr_succeed = addr_succeed;
+const uschar * errors_to;
+uschar * remove_headers;
+header_line * extra_headers;
 
 DEBUG(D_route) debug_printf("%s router called for %s\n  domain = %s\n",
   rblock->name, addr->address, addr->domain);
 
 /* Set up the errors address, if any. */
 
-rc = rf_get_errors_address(addr, rblock, verify, &errors_to);
-if (rc != OK) return rc;
+if ((rc = rf_get_errors_address(addr, rblock, verify, &errors_to)) != OK)
+  return rc;
 
 /* Set up the additional and removable headers for the address. */
 
@@ -134,8 +135,12 @@ addr->prop.errors_address = errors_to;
 addr->prop.extra_headers = extra_headers;
 addr->prop.remove_headers = remove_headers;
 
-return rf_queue_add(addr, addr_local, addr_remote, rblock, pw)? OK : DEFER;
+return rf_queue_add(addr, addr_local, addr_remote, rblock, pw) ? OK : DEFER;
 }
 
 #endif	/*!MACRO_PREDEF*/
+#endif	/*ROUTER_ACCEPT*/
+
 /* End of routers/accept.c */
+/* vi: aw ai sw=2
+*/

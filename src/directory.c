@@ -2,9 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2010 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2009 */
-/* Copyright (c) The Exim Maintainers 2010 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "exim.h"
 
@@ -35,7 +36,7 @@ Returns:    panic on failure if panic is set; otherwise return FALSE;
 */
 
 BOOL
-directory_make(const uschar *parent, const uschar *name,
+directory_make(const uschar * parent, const uschar * name,
                int mode, BOOL panic)
 {
 BOOL use_chown = parent == spool_directory && geteuid() == root_uid;
@@ -43,6 +44,9 @@ uschar * p;
 uschar c = 1;
 struct stat statbuf;
 uschar * path;
+
+if (is_tainted(name)) 
+  { p = US"create"; path = US name; errno = ERRNO_TAINT; goto bad; }
 
 if (parent)
   {
@@ -69,7 +73,7 @@ while (c && *p)
 
     /* Set the ownership if necessary. */
 
-    if (use_chown && Uchown(path, exim_uid, exim_gid))
+    if (use_chown && exim_chown(path, exim_uid, exim_gid))
       { p = US"set owner on"; goto bad; }
 
     /* It appears that any mode bits greater than 0777 are ignored by
@@ -85,7 +89,7 @@ return TRUE;
 
 bad:
   if (panic) log_write(0, LOG_MAIN|LOG_PANIC_DIE,
-    "Failed to %s directory \"%s\": %s\n", p, path, strerror(errno));
+    "Failed to %s directory \"%s\": %s\n", p, path, exim_errstr(errno));
   return FALSE;
 }
 
