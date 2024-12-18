@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
-/* Copyright (c) Jeremy Harris 1995 - 2018 */
+/* Copyright (c) The Exim Maintainers 2024 */
+/* Copyright (c) Jeremy Harris 1995 - 2020 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* This file provides an Exim authenticator driver for
 a server to verify a client SSL certificate
@@ -11,19 +13,21 @@ a server to verify a client SSL certificate
 
 
 #include "../exim.h"
+
+#ifdef AUTH_TLS		/* Remainder of file */
 #include "tls.h"
 
 /* Options specific to the tls authentication mechanism. */
 
 optionlist auth_tls_options[] = {
   { "server_param",     opt_stringptr,
-      (void *)(offsetof(auth_tls_options_block, server_param1)) },
+      OPT_OFF(auth_tls_options_block, server_param1) },
   { "server_param1",    opt_stringptr,
-      (void *)(offsetof(auth_tls_options_block, server_param1)) },
+      OPT_OFF(auth_tls_options_block, server_param1) },
   { "server_param2",    opt_stringptr,
-      (void *)(offsetof(auth_tls_options_block, server_param2)) },
+      OPT_OFF(auth_tls_options_block, server_param2) },
   { "server_param3",    opt_stringptr,
-      (void *)(offsetof(auth_tls_options_block, server_param3)) },
+      OPT_OFF(auth_tls_options_block, server_param3) },
 };
 
 /* Size of the options list. An extern variable has to be used so that its
@@ -90,5 +94,6 @@ return auth_check_serv_cond(ablock);
 }
 
 
-#endif   /*!MACRO_PREDEF*/
+#endif	/*!MACRO_PREDEF*/
+#endif	/*AUTH_TLS*/
 /* End of tls.c */

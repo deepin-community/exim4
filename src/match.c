@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Functions for matching strings */
 
@@ -18,9 +20,7 @@ typedef struct check_string_block {
   const uschar *origsubject;           /* caseful; keep these two first, in */
   const uschar *subject;               /* step with the block below */
   int    expand_setup;
-  BOOL   use_partial;
-  BOOL   caseless;
-  BOOL   at_is_special;
+  mcs_flags flags;			/* MCS_* defs in macros.h */
 } check_string_block;
 
 
@@ -31,7 +31,7 @@ typedef struct check_address_block {
   const uschar *origaddress;         /* caseful; keep these two first, in */
   uschar *address;                   /* step with the block above */
   int    expand_setup;
-  BOOL   caseless;
+  mcs_flags flags;			/* MCS_CASELESS, MCS_TEXTONLY_RE */
 } check_address_block;
 
 
@@ -92,20 +92,19 @@ Returns:       OK    if matched
 */
 
 static int
-check_string(void *arg, const uschar *pattern, const uschar **valueptr, uschar **error)
+check_string(void * arg, const uschar * pattern, const uschar ** valueptr,
+  uschar ** error)
 {
-const check_string_block *cb = arg;
+const check_string_block * cb = arg;
 int search_type, partial, affixlen, starflags;
 int expand_setup = cb->expand_setup;
-const uschar *affix;
+const uschar * affix, * opts;
 uschar *s;
 uschar *filename = NULL;
 uschar *keyquery, *result, *semicolon;
 void *handle;
 
-error = error;  /* Keep clever compilers from complaining */
-
-if (valueptr != NULL) *valueptr = NULL;  /* For non-lookup matches */
+if (valueptr) *valueptr = NULL;
 
 /* For regular expressions, use cb->origsubject rather than cb->subject so that
 it works if the pattern uses (?-i) to turn off case-independence, overriding
@@ -119,7 +118,7 @@ expand_nmax until the match is assured. */
 expand_nmax = -1;
 if (expand_setup == 0)
   {
-  expand_nstring[0] = s;
+  expand_nstring[0] = s;	/* $0 (might be) the matched subject in full */
   expand_nlength[0] = Ustrlen(s);
   }
 else if (expand_setup > 0) expand_setup--;
@@ -129,35 +128,38 @@ required. */
 
 if (pattern[0] == '^')
   {
-  const pcre *re = regex_must_compile(pattern, cb->caseless, FALSE);
-  return ((expand_setup < 0)?
-           pcre_exec(re, NULL, CCS s, Ustrlen(s), 0, PCRE_EOPT, NULL, 0) >= 0
-           :
-           regex_match_and_setup(re, s, 0, expand_setup)
-         )?
-         OK : FAIL;
+  const pcre2_code * re = regex_must_compile(pattern,
+      cb->flags & (MCS_CACHEABLE | MCS_CASELESS), FALSE);
+  if (expand_setup < 0
+      ? !regex_match(re, s, -1, NULL)
+      : !regex_match_and_setup(re, s, 0, expand_setup)
+     )
+    return FAIL;
+  if (valueptr) *valueptr = pattern;	/* "value" gets the RE */
+  return OK;
   }
 
 /* Tail match */
 
 if (pattern[0] == '*')
   {
-  BOOL yield;
   int slen = Ustrlen(s);
   int patlen;    /* Sun compiler doesn't like non-constant initializer */
 
   patlen = Ustrlen(++pattern);
   if (patlen > slen) return FAIL;
-  yield = cb->caseless?
-    (strncmpic(s + slen - patlen, pattern, patlen) == 0) :
-    (Ustrncmp(s + slen - patlen, pattern, patlen) == 0);
-  if (yield && expand_setup >= 0)
+  if (cb->flags & MCS_CASELESS
+      ? strncmpic(s + slen - patlen, pattern, patlen) != 0
+      : Ustrncmp(s + slen - patlen, pattern, patlen) != 0)
+    return FAIL;
+  if (expand_setup >= 0)
     {
-    expand_nstring[++expand_setup] = s;
+    expand_nstring[++expand_setup] = s;		/* write a $n, the matched subject variable-part */
     expand_nlength[expand_setup] = slen - patlen;
-    expand_nmax = expand_setup;
+    expand_nmax = expand_setup;			/* commit also $0, the matched subject */
     }
-  return yield? OK : FAIL;
+  if (valueptr) *valueptr = pattern - 1;	/* "value" gets the (original) pattern */
+  return OK;
   }
 
 /* Match a special item starting with @ if so enabled. On its own, "@" matches
@@ -165,7 +167,7 @@ the primary host name - implement this by changing the pattern. For the other
 cases we have to do some more work. If we don't recognize a special pattern,
 just fall through - the match will fail. */
 
-if (cb->at_is_special && pattern[0] == '@')
+if (cb->flags & MCS_AT_SPECIAL && pattern[0] == '@')
   {
   if (pattern[1] == 0)
     {
@@ -175,13 +177,16 @@ if (cb->at_is_special && pattern[0] == '@')
 
   if (Ustrcmp(pattern, "@[]") == 0)
     {
-    ip_address_item *ip;
     int slen = Ustrlen(s);
-    if (s[0] != '[' && s[slen-1] != ']') return FAIL;
-    for (ip = host_find_interfaces(); ip != NULL; ip = ip->next)
+    if (s[0] != '[' && s[slen-1] != ']') return FAIL;		/*XXX should this be || ? */
+    for (ip_address_item * ip = host_find_interfaces(); ip; ip = ip->next)
       if (Ustrncmp(ip->address, s+1, slen - 2) == 0
             && ip->address[slen - 2] == 0)
+	{
+	if (expand_setup >= 0) expand_nmax = expand_setup;	/* commit $0, the IP addr */
+	if (valueptr) *valueptr = pattern;	/* "value" gets the pattern */
         return OK;
+	}
     return FAIL;
     }
 
@@ -189,27 +194,23 @@ if (cb->at_is_special && pattern[0] == '@')
     {
     int rc;
     host_item h;
-    BOOL prim = FALSE;
-    BOOL secy = FALSE;
-    BOOL removed = FALSE;
+    BOOL prim = FALSE, secy = FALSE, removed = FALSE;
     const uschar *ss = pattern + 4;
     const uschar *ignore_target_hosts = NULL;
 
-    if (strncmpic(ss, US"any", 3) == 0) ss += 3;
+    if (strncmpic(ss, US"any", 3) == 0)
+      ss += 3;
     else if (strncmpic(ss, US"primary", 7) == 0)
-      {
-      ss += 7;
-      prim = TRUE;
-      }
+      { ss += 7; prim = TRUE; }
     else if (strncmpic(ss, US"secondary", 9) == 0)
-      {
-      ss += 9;
-      secy = TRUE;
-      }
-    else goto NOT_AT_SPECIAL;
+      { ss += 9; secy = TRUE; }
+    else
+      goto NOT_AT_SPECIAL;
 
-    if (strncmpic(ss, US"/ignore=", 8) == 0) ignore_target_hosts = ss + 8;
-      else if (*ss != 0) goto NOT_AT_SPECIAL;
+    if (strncmpic(ss, US"/ignore=", 8) == 0)
+      ignore_target_hosts = ss + 8;
+    else if (*ss)
+      goto NOT_AT_SPECIAL;
 
     h.next = NULL;
     h.name = s;
@@ -231,9 +232,12 @@ if (cb->at_is_special && pattern[0] == '@')
       return DEFER;
       }
 
-    if (rc == HOST_FOUND_LOCAL && !secy) return OK;
-    if (prim) return FAIL;
-    return removed? OK : FAIL;
+    if ((rc != HOST_FOUND_LOCAL || secy) && (prim || !removed))
+      return FAIL;
+
+    if (expand_setup >= 0) expand_nmax = expand_setup;	/* commit $0, the matched subject */
+    if (valueptr) *valueptr = pattern;	/* "value" gets the patterm */
+    return OK;
 
     /*** The above line used to be the following line, but this is incorrect,
     because host_find_bydns() may return HOST_NOT_FOUND if it removed some MX
@@ -253,10 +257,11 @@ NOT_AT_SPECIAL:
 
 if ((semicolon = Ustrchr(pattern, ';')) == NULL)
   {
-  BOOL yield = cb->caseless?
-    (strcmpic(s, pattern) == 0) : (Ustrcmp(s, pattern) == 0);
-  if (yield && expand_setup >= 0) expand_nmax = expand_setup;
-  return yield? OK : FAIL;
+  if (cb->flags & MCS_CASELESS ? strcmpic(s, pattern) != 0 : Ustrcmp(s, pattern) != 0)
+    return FAIL;
+  if (expand_setup >= 0) expand_nmax = expand_setup;	/* $0 gets the matched subject */
+  if (valueptr) *valueptr = pattern;			/* "value" gets the pattern */
+  return OK;
   }
 
 /* Otherwise we have a lookup item. The lookup type, including partial, etc. is
@@ -264,7 +269,7 @@ the part of the string preceding the semicolon. */
 
 *semicolon = 0;
 search_type = search_findtype_partial(pattern, &partial, &affix, &affixlen,
-  &starflags);
+  &starflags, &opts);
 *semicolon = ';';
 if (search_type < 0) log_write(0, LOG_MAIN|LOG_PANIC_DIE, "%s",
   search_error_message);
@@ -272,26 +277,11 @@ if (search_type < 0) log_write(0, LOG_MAIN|LOG_PANIC_DIE, "%s",
 /* Partial matching is not appropriate for certain lookups (e.g. when looking
 up user@domain for sender rejection). There's a flag to disable it. */
 
-if (!cb->use_partial) partial = -1;
+if (!(cb->flags & MCS_PARTIAL)) partial = -1;
 
 /* Set the parameters for the three different kinds of lookup. */
 
-keyquery = semicolon + 1;
-while (isspace(*keyquery)) keyquery++;
-
-if (mac_islookup(search_type, lookup_absfilequery))
-  {
-  filename = keyquery;
-  while (*keyquery != 0 && !isspace(*keyquery)) keyquery++;
-  filename = string_copyn(filename, keyquery - filename);
-  while (isspace(*keyquery)) keyquery++;
-  }
-
-else if (!mac_islookup(search_type, lookup_querystyle))
-  {
-  filename = keyquery;
-  keyquery = s;
-  }
+keyquery = search_args(search_type, s, semicolon+1, &filename, opts);
 
 /* Now do the actual lookup; throw away the data returned unless it was asked
 for; partial matching is all handled inside search_find(). Note that there is
@@ -300,9 +290,9 @@ no search_close() because of the caching arrangements. */
 if (!(handle = search_open(filename, search_type, 0, NULL, NULL)))
   log_write(0, LOG_MAIN|LOG_PANIC_DIE, "%s", search_error_message);
 result = search_find(handle, filename, keyquery, partial, affix, affixlen,
-  starflags, &expand_setup);
+  starflags, &expand_setup, opts);
 
-if (!result) return f.search_find_defer? DEFER : FAIL;
+if (!result) return f.search_find_defer ? DEFER : FAIL;
 if (valueptr) *valueptr = result;
 
 expand_nmax = expand_setup;
@@ -323,9 +313,10 @@ Arguments:
   s            the subject string to be checked
   pattern      the pattern to check it against
   expand_setup expansion setup option (see check_string())
-  use_partial  if FALSE, override any partial- search types
-  caseless     TRUE for caseless matching where possible
-  at_is_special TRUE to recognize @, @[], etc.
+  flags
+   use_partial  if FALSE, override any partial- search types
+   caseless     TRUE for caseless matching where possible
+   at_is_special TRUE to recognize @, @[], etc.
   valueptr     if not NULL, and a file lookup was done, return the result
                  here instead of discarding it; else set it to point to NULL
 
@@ -335,16 +326,14 @@ Returns:       OK    if matched
 */
 
 int
-match_check_string(const uschar *s, const uschar *pattern, int expand_setup,
-  BOOL use_partial, BOOL caseless, BOOL at_is_special, const uschar **valueptr)
+match_check_string(const uschar * s, const uschar * pattern, int expand_setup,
+  mcs_flags flags, const uschar ** valueptr)
 {
 check_string_block cb;
 cb.origsubject = s;
-cb.subject = caseless? string_copylc(s) : string_copy(s);
+cb.subject = flags & MCS_CASELESS ? string_copylc(s) : string_copy(s);
 cb.expand_setup = expand_setup;
-cb.use_partial = use_partial;
-cb.caseless = caseless;
-cb.at_is_special = at_is_special;
+cb.flags = flags;
 return check_string(&cb, pattern, valueptr, NULL);
 }
 
@@ -371,14 +360,9 @@ switch(type)
   {
   case MCL_STRING:
   case MCL_DOMAIN:
-  case MCL_LOCALPART:
-  return ((check_string_block *)arg)->subject;
-
-  case MCL_HOST:
-  return ((check_host_block *)arg)->host_address;
-
-  case MCL_ADDRESS:
-  return ((check_address_block *)arg)->address;
+  case MCL_LOCALPART:	return ((check_string_block *)arg)->subject;
+  case MCL_HOST:	return ((check_host_block *)arg)->host_address;
+  case MCL_ADDRESS:	return ((check_address_block *)arg)->address;
   }
 return US"";  /* In practice, should never happen */
 }
@@ -439,30 +423,28 @@ match_check_list(const uschar **listptr, int sep, tree_node **anchorptr,
   void *arg, int type, const uschar *name, const uschar **valueptr)
 {
 int yield = OK;
-unsigned int *original_cache_bits = *cache_ptr;
-BOOL include_unknown = FALSE;
-BOOL ignore_unknown = FALSE;
-BOOL include_defer = FALSE;
-BOOL ignore_defer = FALSE;
-const uschar *list;
-uschar *sss;
-uschar *ot = NULL;
-uschar buffer[1024];
+unsigned int * original_cache_bits = *cache_ptr;
+BOOL include_unknown = FALSE, ignore_unknown = FALSE,
+      include_defer = FALSE, ignore_defer = FALSE;
+const uschar * list;
+uschar * ot = NULL, * sss;
+BOOL textonly_re;
 
 /* Save time by not scanning for the option name when we don't need it. */
 
 HDEBUG(D_any)
   {
-  uschar *listname = readconf_find_option(listptr);
-  if (listname[0] != 0) ot = string_sprintf("%s in %s?", name, listname);
+  const uschar * listname = readconf_find_option(listptr);
+  if (*listname) ot = string_sprintf("%s in %s?", name, listname);
   }
 
-/* If the list is empty, the answer is no. Skip the debugging output for
-an unnamed list. */
+/* If the list is empty, the answer is no. */
 
 if (!*listptr)
   {
-  HDEBUG(D_lists) if (ot) debug_printf("%s no (option unset)\n", ot);
+  HDEBUG(D_lists)
+    if (ot) debug_printf_indent("%s no (option unset)\n", ot);
+    else    debug_printf_indent("%s not in empty list (option unset? cannot trace name)\n", name);
   return FAIL;
   }
 
@@ -475,6 +457,7 @@ if (type >= MCL_NOEXPAND)
   {
   list = *listptr;
   type -= MCL_NOEXPAND;       /* Remove the "no expand" flag */
+  textonly_re = TRUE;
   }
 else
   {
@@ -485,17 +468,17 @@ else
     {
     check_string_block *cb = (check_string_block *)arg;
     deliver_domain = string_copy(cb->subject);
-    list = expand_cstring(*listptr);
+    list = expand_string_2(*listptr, &textonly_re);
     deliver_domain = NULL;
     }
   else
-    list = expand_cstring(*listptr);
+    list = expand_string_2(*listptr, &textonly_re);
 
   if (!list)
     {
     if (f.expand_string_forcedfail)
       {
-      HDEBUG(D_lists) debug_printf("expansion of \"%s\" forced failure: "
+      HDEBUG(D_lists) debug_printf_indent("expansion of \"%s\" forced failure: "
         "assume not in this list\n", *listptr);
       return FAIL;
       }
@@ -505,16 +488,42 @@ else
     }
   }
 
-/* For an unnamed list, use the expanded version in comments */
+if (textonly_re) switch (type)
+  {
+  case MCL_STRING:
+  case MCL_DOMAIN:
+  case MCL_LOCALPART: ((check_string_block *)arg)->flags |= MCS_CACHEABLE; break;
+  case MCL_HOST:     ((check_host_block *)arg)->flags |= MCS_CACHEABLE; break;
+  case MCL_ADDRESS: ((check_address_block *)arg)->flags |= MCS_CACHEABLE; break;
+  }
 
-HDEBUG(D_any) if (ot == NULL) ot = string_sprintf("%s in \"%s\"?", name, list);
+/* For an unnamed list, use the expanded version in comments */
+#define LIST_LIMIT_PR 2048
+
+HDEBUG(D_any) if (!ot)
+  {	/* We failed to identify an option name, so give the list text */
+  int n, m;
+  gstring * g = string_fmt_append(NULL, "%s in \"%n%.*s%n\"",
+    name, &n, LIST_LIMIT_PR, list, &m);
+  if (m - n >= LIST_LIMIT_PR) g = string_catn(g, US"...", 3);
+  g = string_catn(g, US"?", 1);
+  gstring_release_unused(g);
+  ot = string_from_gstring(g);
+  }
+HDEBUG(D_lists)
+  {
+  debug_printf_indent("%s\n", ot);
+  expand_level++;
+  }
 
 /* Now scan the list and process each item in turn, until one of them matches,
 or we hit an error. */
 
-while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
+while ((sss = string_nextinlist(&list, &sep, NULL, 0)))
   {
   uschar * ss = sss;
+
+  HDEBUG(D_lists) debug_printf_indent("list element: %W\n", ss);
 
   /* Address lists may contain +caseful, to restore caseful matching of the
   local part. We have to know the layout of the control block, unfortunately.
@@ -530,7 +539,7 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
 
       if (at)
         Ustrncpy(cb->address, cb->origaddress, at - cb->origaddress);
-      cb->caseless = FALSE;
+      cb->flags &= ~MCS_CASELESS;
       continue;
       }
     }
@@ -542,8 +551,8 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
     if (Ustrcmp(ss, "+caseful") == 0)
       {
       check_string_block *cb = (check_string_block *)arg;
-      Ustrcpy(cb->subject, cb->origsubject);
-      cb->caseless = FALSE;
+      Ustrcpy(US cb->subject, cb->origsubject);
+      cb->flags &= ~MCS_CASELESS;
       continue;
       }
     }
@@ -586,7 +595,7 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
   if (*ss == '!')
     {
     yield = FAIL;
-    while (isspace((*(++ss))));
+    while (isspace(*++ss)) ;
     }
   else
     yield = OK;
@@ -599,13 +608,14 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
     {
     if (*ss == '+' && anchorptr)
       {
-      int bits = 0;
-      int offset = 0;
-      int shift = 0;
-      unsigned int *use_cache_bits = original_cache_bits;
-      uschar *cached = US"";
-      namedlist_block *nb;
+      int bits = 0, offset = 0, shift = 0;
+      unsigned int * use_cache_bits = original_cache_bits;
+      uschar * cached = US"";
+      namedlist_block * nb;
       tree_node * t;
+
+      HDEBUG(D_lists)
+	{ debug_printf_indent(" start sublist %s\n", ss+1); expand_level += 2; }
 
       if (!(t = tree_search(*anchorptr, ss+1)))
 	{
@@ -615,7 +625,7 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
           type == MCL_ADDRESS ?   " address" :
           type == MCL_LOCALPART ? " local part" : "",
           ss);
-	return DEFER;
+	goto DEFER_RETURN;
 	}
       nb = t->data.ptr;
 
@@ -639,8 +649,12 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
 
       if (bits == 0)
         {
-        switch (match_check_list(&(nb->string), 0, anchorptr, &use_cache_bits,
-                func, arg, type, name, valueptr))
+        int res = match_check_list(&(nb->string), 0, anchorptr, &use_cache_bits,
+                func, arg, type, name, valueptr);
+	HDEBUG(D_lists)
+	  { expand_level -= 2; debug_printf_indent(" end sublist %s\n", ss+1); }
+
+        switch (res)
           {
           case OK:   bits = 1; break;
           case FAIL: bits = 3; break;
@@ -667,7 +681,7 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
             so we use the permanent store pool */
 
             store_pool = POOL_PERM;
-            p = store_get(sizeof(namedlist_cacheblock));
+            p = store_get(sizeof(namedlist_cacheblock), GET_UNTAINTED);
             p->key = string_copy(get_check_key(arg, type));
 
 
@@ -677,8 +691,8 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
             p->next = nb->cache_data;
             nb->cache_data = p;
             if (*valueptr)
-              DEBUG(D_lists) debug_printf("data from lookup saved for "
-                "cache for %s: %s\n", ss, *valueptr);
+              HDEBUG(D_lists) debug_printf_indent("data from lookup saved for "
+                "cache for %s: key '%s' value '%s'\n", ss, p->key, *valueptr);
             }
           }
         }
@@ -689,21 +703,25 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
 
       else
         {
-        DEBUG(D_lists) debug_printf("cached %s match for %s\n",
-          ((bits & (-bits)) == bits)? "yes" : "no", ss);
+        HDEBUG(D_lists)
+	  {
+	  expand_level -= 2;
+	  debug_printf_indent("cached %s match for %s\n",
+	    (bits & (-bits)) == bits ? "yes" : "no", ss);
+	  }
 
         cached = US" - cached";
         if (valueptr)
           {
           const uschar *key = get_check_key(arg, type);
-          namedlist_cacheblock *p;
-          for (p = nb->cache_data; p; p = p->next)
+
+          for (namedlist_cacheblock * p = nb->cache_data; p; p = p->next)
             if (Ustrcmp(key, p->key) == 0)
               {
               *valueptr = p->data;
               break;
               }
-          DEBUG(D_lists) debug_printf("cached lookup data = %s\n", *valueptr);
+          HDEBUG(D_lists) debug_printf_indent("cached lookup data = %s\n", *valueptr);
           }
         }
 
@@ -712,9 +730,9 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
 
       if ((bits & (-bits)) == bits)    /* Only one of the two bits is set */
         {
-        HDEBUG(D_lists) debug_printf("%s %s (matched \"%s\"%s)\n", ot,
-          (yield == OK)? "yes" : "no", sss, cached);
-        return yield;
+        HDEBUG(D_lists) debug_printf_indent("%s %s (matched \"%s\"%s)\n", ot,
+          yield == OK ? "yes" : "no", sss, cached);
+	goto YIELD_RETURN;
         }
       }
 
@@ -726,17 +744,17 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
       switch ((func)(arg, ss, valueptr, &error))
         {
         case OK:
-	  HDEBUG(D_lists) debug_printf("%s %s (matched \"%s\")\n", ot,
-	    (yield == OK)? "yes" : "no", sss);
-	  return yield;
+	  HDEBUG(D_lists) debug_printf_indent("%s %s (matched \"%s\")\n", ot,
+	    yield == OK ? "yes" : "no", sss);
+	  goto YIELD_RETURN;
 
         case DEFER:
 	  if (!error)
 	    error = string_sprintf("DNS lookup of \"%s\" deferred", ss);
 	  if (ignore_defer)
 	    {
-	    HDEBUG(D_lists) debug_printf("%s: item ignored by +ignore_defer\n",
-	      error);
+	    HDEBUG(D_lists)
+	      debug_printf_indent("%s: item ignored by +ignore_defer\n", error);
 	    break;
 	    }
 	  if (include_defer)
@@ -755,12 +773,12 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
         case ERROR:
 	  if (ignore_unknown)
 	    {
-	    HDEBUG(D_lists) debug_printf("%s: item ignored by +ignore_unknown\n",
-	      error);
+	    HDEBUG(D_lists) debug_printf_indent(
+	      "%s: item ignored by +ignore_unknown\n", error);
 	    }
 	  else
 	    {
-	    HDEBUG(D_lists) debug_printf("%s %s (%s)\n", ot,
+	    HDEBUG(D_lists) debug_printf_indent("%s %s (%s)\n", ot,
 	      include_unknown? "yes":"no", error);
 	    if (!include_unknown)
 	      {
@@ -790,11 +808,11 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
 
     if (!f)
       {
-      uschar * listname = readconf_find_option(listptr);
-      if (listname[0] == 0)
+      const uschar * listname = readconf_find_option(listptr);
+      if (!*listname)
         listname = string_sprintf("\"%s\"", *listptr);
       log_write(0, LOG_MAIN|LOG_PANIC_DIE, "%s",
-        string_open_failed(errno, "%s when checking %s", sss, listname));
+        string_open_failed("%s when checking %s", sss, listname));
       }
 
     /* Trailing comments are introduced by #, but in an address list or local
@@ -803,82 +821,89 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
 
     while (Ufgets(filebuffer, sizeof(filebuffer), f) != NULL)
       {
-      uschar *error;
-      uschar *sss = filebuffer;
+      uschar * error, * sss = filebuffer;
 
       while ((ss = Ustrchr(sss, '#')) != NULL)
         {
         if ((type != MCL_ADDRESS && type != MCL_LOCALPART) ||
               ss == filebuffer || isspace(ss[-1]))
           {
-          *ss = 0;
+          *ss = '\0';
           break;
           }
         sss = ss + 1;
         }
 
-      ss = filebuffer + Ustrlen(filebuffer);             /* trailing space */
+      ss = filebuffer + Ustrlen(filebuffer);		/* trailing space */
       while (ss > filebuffer && isspace(ss[-1])) ss--;
-      *ss = 0;
+      *ss = '\0';
 
       ss = filebuffer;
-      while (isspace(*ss)) ss++;                         /* leading space */
+      if (!Uskip_whitespace(&ss))			/* leading space */
+	continue;					/* ignore empty */
 
-      if (*ss == 0) continue;                            /* ignore empty */
+      file_yield = yield;				/* positive yield */
+      sss = ss;						/* for debugging */
 
-      file_yield = yield;                                /* positive yield */
-      sss = ss;                                          /* for debugging */
-
-      if (*ss == '!')                                    /* negation */
+      if (*ss == '!')					/* negation */
         {
-        file_yield = (file_yield == OK)? FAIL : OK;
-        while (isspace((*(++ss))));
+        file_yield = file_yield == OK ? FAIL : OK;
+        while (isspace(*++ss)) ;
         }
 
       switch ((func)(arg, ss, valueptr, &error))
         {
         case OK:
 	  (void)fclose(f);
-	  HDEBUG(D_lists) debug_printf("%s %s (matched \"%s\" in %s)\n", ot,
-	    yield == OK ? "yes" : "no", sss, filename);
-	  return file_yield;
+	  HDEBUG(D_lists) debug_printf_indent("%s %s (matched \"%s\" in %s)\n",
+	    ot, yield == OK ? "yes" : "no", sss, filename);
+
+	  /* The "pattern" being matched came from the file; we use a stack-local.
+	  Copy it to allocated memory now we know it matched. */
+
+	  if (valueptr) *valueptr = string_copy(ss);
+	  yield = file_yield;
+	  goto YIELD_RETURN;
 
         case DEFER:
 	  if (!error)
 	    error = string_sprintf("DNS lookup of %s deferred", ss);
 	  if (ignore_defer)
 	    {
-	    HDEBUG(D_lists) debug_printf("%s: item ignored by +ignore_defer\n",
-	      error);
+	    HDEBUG(D_lists)
+	      debug_printf_indent("%s: item ignored by +ignore_defer\n", error);
 	    break;
 	    }
 	  (void)fclose(f);
-	  if (include_defer)
-	    {
-	    log_write(0, LOG_MAIN, "%s: accepted by +include_defer", error);
-	    return OK;
-	    }
-	  goto DEFER_RETURN;
+	  if (!include_defer)
+	    goto DEFER_RETURN;
+	  log_write(0, LOG_MAIN, "%s: accepted by +include_defer", error);
+	  goto OK_RETURN;
 
-        case ERROR:		/* host name lookup failed - this can only */
-	  if (ignore_unknown)	/* be for an incoming host (not outgoing) */
+        /* The ERROR return occurs when checking hosts, when either a forward
+        or reverse lookup has failed. It can also occur in a match_ip list if a
+        non-IP address item is encountered. The error string gives details of
+        which it was. */
+
+        case ERROR:
+	  if (ignore_unknown)
 	    {
-	    HDEBUG(D_lists) debug_printf("%s: item ignored by +ignore_unknown\n",
-	      error);
+	    HDEBUG(D_lists) debug_printf_indent(
+	      "%s: item ignored by +ignore_unknown\n", error);
 	    }
 	  else
-	   {
-	    HDEBUG(D_lists) debug_printf("%s %s (%s)\n", ot,
-	      include_unknown? "yes":"no", error);
+	    {
+	    HDEBUG(D_lists) debug_printf_indent("%s %s (%s)\n", ot,
+	      include_unknown ? "yes":"no", error);
 	    (void)fclose(f);
 	    if (!include_unknown)
 	      {
 	      if (LOGGING(unknown_in_list))
 		log_write(0, LOG_MAIN, "list matching forced to fail: %s", error);
-	      return FAIL;
+	      goto FAIL_RETURN;
 	      }
 	    log_write(0, LOG_MAIN, "%s: accepted by +include_unknown", error);
-	    return OK;
+	    goto OK_RETURN;
 	    }
         }
       }
@@ -893,15 +918,33 @@ while ((sss = string_nextinlist(&list, &sep, buffer, sizeof(buffer))))
 
 /* End of list reached: if the last item was negated yield OK, else FAIL. */
 
-HDEBUG(D_lists)
-  debug_printf("%s %s (end of list)\n", ot, yield == OK ? "no":"yes");
+HDEBUG(D_any)
+  {
+  HDEBUG(D_lists) expand_level--;
+  debug_printf_indent("%s %s (end of list)\n", ot, yield == OK ? "no":"yes");
+  }
 return yield == OK ? FAIL : OK;
-
+ 
 /* Something deferred */
 
 DEFER_RETURN:
-HDEBUG(D_lists) debug_printf("%s list match deferred for %s\n", ot, sss);
-return DEFER;
+  HDEBUG(D_any)
+    {
+    HDEBUG(D_lists) expand_level--;
+    debug_printf_indent("%s list match deferred for %s\n", ot, sss);
+    }
+  return DEFER;
+
+FAIL_RETURN:
+  yield = FAIL;
+  goto YIELD_RETURN;
+
+OK_RETURN:
+  yield = OK;
+
+YIELD_RETURN:
+  HDEBUG(D_lists) expand_level--;
+  return yield;
 }
 
 
@@ -923,6 +966,7 @@ Arguments:
   s              string to search for
   listptr        ptr to ptr to colon separated list of patterns, or NULL
   sep            a separator value for the list (see string_nextinlist())
+		 or zero for auto
   anchorptr      ptr to tree for named items, or NULL if no named items
   cache_bits     ptr to cache_bits for ditto, or NULL if not caching
   type           MCL_DOMAIN when matching a domain list
@@ -952,12 +996,15 @@ match_isinlist(const uschar *s, const uschar **listptr, int sep,
 unsigned int *local_cache_bits = cache_bits;
 check_string_block cb;
 cb.origsubject = s;
-cb.subject = caseless? string_copylc(s) : string_copy(s);
-cb.expand_setup = (sep > UCHAR_MAX)? 0 : -1;
-cb.use_partial = TRUE;
-cb.caseless = caseless;
-cb.at_is_special = (type == MCL_DOMAIN || type == MCL_DOMAIN + MCL_NOEXPAND);
-if (valueptr != NULL) *valueptr = NULL;
+cb.subject = caseless ? string_copylc(s) : string_copy(s);
+cb.flags = caseless ? MCS_PARTIAL+MCS_CASELESS : MCS_PARTIAL;
+switch (type & ~MCL_NOEXPAND)
+  {
+  case MCL_DOMAIN:	cb.flags |= MCS_AT_SPECIAL;	/*FALLTHROUGH*/
+  case MCL_LOCALPART:	cb.expand_setup = 0;				break;
+  default:		cb.expand_setup = sep > UCHAR_MAX ? 0 : -1;	break;
+  }
+if (valueptr) *valueptr = NULL;
 return  match_check_list(listptr, sep, anchorptr, &local_cache_bits,
   check_string, &cb, type, s, valueptr);
 }
@@ -993,21 +1040,21 @@ Returns:         OK     for a match
 */
 
 static int
-check_address(void *arg, const uschar *pattern, const uschar **valueptr, uschar **error)
+check_address(void * arg, const uschar * pattern, const uschar ** valueptr,
+  uschar ** error)
 {
-check_address_block *cb = (check_address_block *)arg;
+check_address_block * cb = (check_address_block *)arg;
 check_string_block csb;
 int rc;
 int expand_inc = 0;
-unsigned int *null = NULL;
-const uschar *listptr;
-uschar *subject = cb->address;
-const uschar *s;
-uschar *pdomain, *sdomain;
+unsigned int * null = NULL;
+const uschar * listptr;
+uschar * subject = cb->address;
+const uschar * s;
+uschar * pdomain, * sdomain;
+uschar * value = NULL;
 
-error = error;  /* Keep clever compilers from complaining */
-
-DEBUG(D_lists) debug_printf("address match test: subject=%s pattern=%s\n",
+DEBUG(D_lists) debug_printf_indent("address match test: subject=%s pattern=%s\n",
   subject, pattern);
 
 /* Find the subject's domain */
@@ -1017,7 +1064,7 @@ sdomain = Ustrrchr(subject, '@');
 /* The only case where a subject may not have a domain is if the subject is
 empty. Otherwise, a subject with no domain is a serious configuration error. */
 
-if (sdomain == NULL && *subject != 0)
+if (!sdomain && *subject)
   {
   log_write(0, LOG_MAIN|LOG_PANIC, "no @ found in the subject of an "
     "address list match: subject=\"%s\" pattern=\"%s\"", subject, pattern);
@@ -1028,14 +1075,14 @@ if (sdomain == NULL && *subject != 0)
 This may be the empty address. */
 
 if (*pattern == '^')
-  return match_check_string(subject, pattern, cb->expand_setup, TRUE,
-    cb->caseless, FALSE, NULL);
+  return match_check_string(subject, pattern, cb->expand_setup,
+	    cb->flags | MCS_PARTIAL, NULL);
 
 /* Handle a pattern that is just a lookup. Skip over possible lookup names
 (letters, digits, hyphens). Skip over a possible * or *@ at the end. Then we
 must have a semicolon for it to be a lookup. */
 
-for (s = pattern; isalnum(*s) || *s == '-'; s++);
+for (s = pattern; isalnum(*s) || *s == '-'; s++) ;
 if (*s == '*') s++;
 if (*s == '@') s++;
 
@@ -1048,15 +1095,14 @@ if (*s == ';')
   if (Ustrncmp(pattern, "partial-", 8) == 0)
     log_write(0, LOG_MAIN|LOG_PANIC, "partial matching is not applicable to "
       "whole-address lookups: ignored \"partial-\" in \"%s\"", pattern);
-  return match_check_string(subject, pattern, -1, FALSE, cb->caseless, FALSE,
-    valueptr);
+  return match_check_string(subject, pattern, -1, cb->flags, valueptr);
   }
 
 /* For the remaining cases, an empty subject matches only an empty pattern,
 because other patterns expect to have a local part and a domain to match
 against. */
 
-if (*subject == 0) return (*pattern == 0)? OK : FAIL;
+if (!*subject) return *pattern ? FAIL : OK;
 
 /* If the pattern starts with "@@" we have a split lookup, where the domain is
 looked up to obtain a list of local parts. If the subject's local part is just
@@ -1065,32 +1111,31 @@ looked up to obtain a list of local parts. If the subject's local part is just
 if (pattern[0] == '@' && pattern[1] == '@')
   {
   int watchdog = 50;
-  const uschar *key;
   uschar *list, *ss;
-  uschar buffer[1024];
 
   if (sdomain == subject + 1 && *subject == '*') return FAIL;
 
   /* Loop for handling chains. The last item in any list may be of the form
   ">name" in order to chain on to another list. */
 
-  for (key = sdomain + 1; key != NULL && watchdog-- > 0; )
+  for (const uschar * key = sdomain + 1; key && watchdog-- > 0; )
     {
     int sep = 0;
 
-    if ((rc = match_check_string(key, pattern + 2, -1, TRUE, FALSE, FALSE,
-      CUSS &list)) != OK) return rc;
+    if ((rc = match_check_string(key, pattern + 2, -1, MCS_PARTIAL, CUSS &list))
+	!= OK)
+      return rc;
 
     /* Check for chaining from the last item; set up the next key if one
     is found. */
 
     ss = Ustrrchr(list, ':');
-    if (ss == NULL) ss = list; else ss++;
-    while (isspace(*ss)) ss++;
+    if (!ss) ss = list; else ss++;
+    Uskip_whitespace(&ss);
     if (*ss == '>')
       {
       *ss++ = 0;
-      while (isspace(*ss)) ss++;
+      Uskip_whitespace(&ss);
       key = string_copy(ss);
       }
     else key = NULL;
@@ -1098,20 +1143,19 @@ if (pattern[0] == '@' && pattern[1] == '@')
     /* Look up the local parts provided by the list; negation is permitted.
     If a local part has to begin with !, a regex can be used. */
 
-    while ((ss = string_nextinlist(CUSS &list, &sep, buffer, sizeof(buffer))))
+    while ((ss = string_nextinlist(CUSS &list, &sep, NULL, 0)))
       {
       int local_yield;
 
       if (*ss == '!')
         {
         local_yield = FAIL;
-        while (isspace((*(++ss))));
+        while (isspace(*++ss)) ;
         }
       else local_yield = OK;
 
       *sdomain = 0;
-      rc = match_check_string(subject, ss, -1, TRUE, cb->caseless, FALSE,
-        valueptr);
+      rc = match_check_string(subject, ss, -1, cb->flags + MCS_PARTIAL, valueptr);
       *sdomain = '@';
 
       switch(rc)
@@ -1141,8 +1185,7 @@ if (pattern[0] == '@' && pattern[1] == '@')
 /* We get here if the pattern is not a lookup or a regular expression. If it
 contains an @ there is both a local part and a domain. */
 
-pdomain = Ustrrchr(pattern, '@');
-if (pdomain != NULL)
+if ((pdomain = Ustrrchr(pattern, '@')))
   {
   int pllen, sllen;
 
@@ -1170,35 +1213,26 @@ if (pdomain != NULL)
     {
     int cllen = pllen - 1;
     if (sllen < cllen) return FAIL;
-    if (cb->caseless)
-      {
-      if (strncmpic(subject+sllen-cllen, pattern + 1, cllen) != 0)
+    if (cb->flags & MCS_CASELESS
+        ? strncmpic(subject+sllen-cllen, pattern + 1, cllen) != 0
+        : Ustrncmp(subject+sllen-cllen, pattern + 1, cllen) != 0)
         return FAIL;
-      }
-    else
-      {
-      if (Ustrncmp(subject+sllen-cllen, pattern + 1, cllen) != 0)
-        return FAIL;
-      }
     if (cb->expand_setup > 0)
       {
       expand_nstring[cb->expand_setup] = subject;
       expand_nlength[cb->expand_setup] = sllen - cllen;
       expand_inc = 1;
       }
+    value = string_copyn(pattern + 1, cllen);
     }
   else
     {
     if (sllen != pllen) return FAIL;
-    if (cb->caseless)
-      {
-      if (strncmpic(subject, pattern, sllen) != 0) return FAIL;
-      }
-    else
-      {
-      if (Ustrncmp(subject, pattern, sllen) != 0) return FAIL;
-      }
+    if (cb->flags & MCS_CASELESS
+        ? strncmpic(subject, pattern, sllen) != 0
+	: Ustrncmp(subject, pattern, sllen) != 0) return FAIL;
     }
+    value = string_copyn(pattern, sllen);
   }
 
 /* If the local part matched, or was not being checked, check the domain using
@@ -1206,33 +1240,39 @@ the generalized function, which supports file lookups (which may defer). The
 original code read as follows:
 
   return match_check_string(sdomain + 1,
-      (pdomain == NULL)? pattern : pdomain + 1,
-      cb->expand_setup + expand_inc, TRUE, cb->caseless, TRUE, NULL);
+      pdomain ? pdomain + 1 : pattern,
+      cb->expand_setup + expand_inc, cb->flags, NULL);
 
 This supported only literal domains and *.x.y patterns. In order to allow for
-named domain lists (so that you can right, for example, "senders=+xxxx"), it
+named domain lists (so that you can write, for example, "senders=+xxxx"), it
 was changed to use the list scanning function. */
 
 csb.origsubject = sdomain + 1;
-csb.subject = (cb->caseless)? string_copylc(sdomain+1) : string_copy(sdomain+1);
+csb.subject = cb->flags & MCS_CASELESS
+  ? string_copylc(sdomain+1) : string_copy(sdomain+1);
 csb.expand_setup = cb->expand_setup + expand_inc;
-csb.use_partial = TRUE;
-csb.caseless = cb->caseless;
-csb.at_is_special = TRUE;
+csb.flags = MCS_PARTIAL | MCS_AT_SPECIAL | cb->flags & MCS_CASELESS;
 
-listptr = (pdomain == NULL)? pattern : pdomain + 1;
-if (valueptr != NULL) *valueptr = NULL;
+listptr = pdomain ? pdomain + 1 : pattern;
+if (valueptr) *valueptr = NULL;
 
-return match_check_list(
-  &listptr,                  /* list of one item */
-  UCHAR_MAX+1,               /* impossible separator; single item */
-  &domainlist_anchor,        /* it's a domain list */
-  &null,                     /* ptr to NULL means no caching */
-  check_string,              /* the function to do one test */
-  &csb,                      /* its data */
-  MCL_DOMAIN + MCL_NOEXPAND, /* domain list; don't expand */
-  csb.subject,               /* string for messages */
-  valueptr);                 /* where to pass back lookup data */
+  {
+  const uschar * dvalue = NULL;
+  rc = match_check_list(
+    &listptr,                  /* list of one item */
+    UCHAR_MAX+1,               /* impossible separator; single item */
+    &domainlist_anchor,        /* it's a domain list */
+    &null,                     /* ptr to NULL means no caching */
+    check_string,              /* the function to do one test */
+    &csb,                      /* its data */
+    MCL_DOMAIN + MCL_NOEXPAND, /* domain list; don't expand */
+    csb.subject,               /* string for messages */
+    &dvalue);                       /* where to pass back lookup data */
+  if (valueptr && (value || dvalue))
+    *valueptr = string_sprintf("%s@%s",
+		  value ? value : US"", dvalue ? dvalue : US"");
+  }
+return rc;
 }
 
 
@@ -1277,19 +1317,23 @@ match_address_list(const uschar *address, BOOL caseless, BOOL expand,
   const uschar **listptr, unsigned int *cache_bits, int expand_setup, int sep,
   const uschar **valueptr)
 {
-uschar *p;
 check_address_block ab;
 unsigned int *local_cache_bits = cache_bits;
+int len;
 
 /* RFC 2505 recommends that for spam checking, local parts should be caselessly
 compared. Therefore, Exim now forces the entire address into lower case here,
 provided that "caseless" is set. (It is FALSE for calls for matching rewriting
 patterns.) Otherwise just the domain is lower cases. A magic item "+caseful" in
 the list can be used to restore a caseful copy of the local part from the
-original address. */
+original address.
+Limit the subject address size to avoid mem-exhaustion attacks.  The size chosen
+is historical (we used to use big_buffer here). */
 
-sprintf(CS big_buffer, "%.*s", big_buffer_size - 1, address);
-for (p = big_buffer + Ustrlen(big_buffer) - 1; p >= big_buffer; p--)
+if ((len = Ustrlen(address)) > BIG_BUFFER_SIZE) len = BIG_BUFFER_SIZE;
+ab.address = string_copyn(address, len);
+
+for (uschar * p = ab.address + len - 1; p >= ab.address; p--)
   {
   if (!caseless && *p == '@') break;
   *p = tolower(*p);
@@ -1310,12 +1354,12 @@ if (expand_setup == 0)
 /* Set up the data to be passed ultimately to check_address. */
 
 ab.origaddress = address;
-ab.address = big_buffer;
+/* ab.address is above */
 ab.expand_setup = expand_setup;
-ab.caseless = caseless;
+ab.flags = caseless ? MCS_CASELESS : 0;
 
 return match_check_list(listptr, sep, &addresslist_anchor, &local_cache_bits,
-  check_address, &ab, MCL_ADDRESS + (expand? 0:MCL_NOEXPAND), address,
+  check_address, &ab, MCL_ADDRESS + (expand ? 0 : MCL_NOEXPAND), address,
     valueptr);
 }
 
@@ -1341,3 +1385,5 @@ return match_address_list(address, TRUE, TRUE, listptr, NULL, -1, sep, NULL);
 }
 
 /* End of match.c */
+/* vi: aw ai sw=2
+*/

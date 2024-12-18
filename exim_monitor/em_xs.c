@@ -4,6 +4,7 @@
 
 /* Copyright (c) University of Cambridge, 1995 - 2016 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* This file contains a number of subroutines that are in effect
 just alternative packaging for calls to various X functions that
@@ -30,7 +31,7 @@ void xs_SetValues(Widget w, Cardinal num_args, ...)
 {
 int i;
 va_list ap;
-Arg *aa = (num_args > 15)? (Arg *)malloc(num_args*sizeof(Arg)) : xs_temparg;
+Arg *aa = (num_args > 15)? store_malloc(num_args*sizeof(Arg)) : xs_temparg;
 va_start(ap, num_args);
 for (i = 0; i < num_args; i++)
   {
@@ -39,7 +40,7 @@ for (i = 0; i < num_args; i++)
   }
 va_end(ap);
 XtSetValues(w, aa, num_args);
-if (num_args > 15) free(aa);
+if (num_args > 15) store_free(aa);
 }
 
 /* End of em_xs.c */

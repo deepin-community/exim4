@@ -1,28 +1,37 @@
+# * -base and daemon of the same upstream version enforced by a Breaks
+#   in -base and a versioned Depends of the daemon-packages on -base
+# * -base depends on -config, without automatic versioning.
 Source: exim4
 Section: mail
 Priority: standard
 Maintainer: Exim4 Maintainers <pkg-exim4-maintainers@lists.alioth.debian.org>
 Uploaders:
  Andreas Metzler <ametzler@debian.org>,
- Marc Haber <mh+debian-packages@zugschlus.de>
+ Marc Haber <mh+debian-packages@zugschlus.de>,
 Homepage: https://www.exim.org/
-Standards-Version: 4.3.0
+Standards-Version: 4.7.0
+Rules-Requires-Root: binary-targets
 Vcs-Git: https://salsa.debian.org/exim-team/exim4.git
 Vcs-Browser: https://salsa.debian.org/exim-team/exim4
 Build-Depends:
- debhelper (>= 10),
+ debhelper-compat (= 13),
  default-libmysqlclient-dev,
  docbook-xml,
  docbook-xsl,
  libdb5.3-dev,
+ libfile-fcntllock-perl,
  libgnutls28-dev (>= 3.5.7),
  libident-dev,
+ libidn-dev,
+ libidn2-dev,
  libldap2-dev,
+ libnsl-dev,
  libpam0g-dev,
- libpcre3-dev,
+ libpcre2-dev,
  libperl-dev,
  libpq-dev,
  libsasl2-dev,
+ libspf2-dev,
  libsqlite3-dev,
  libx11-dev,
  libxaw7-dev,
@@ -31,7 +40,7 @@ Build-Depends:
  libxt-dev,
  lynx,
  po-debconf,
- xsltproc
+ xsltproc,
 
 Package: exim4-base
 Architecture: any
@@ -39,24 +48,30 @@ Priority: optional
 Breaks:
  exim4-daemon-custom (<<${Upstream-Version}),
  exim4-daemon-heavy (<<${Upstream-Version}),
- exim4-daemon-light (<<${Upstream-Version})
-Conflicts: exim, exim-tls
+ exim4-daemon-light (<<${Upstream-Version}),
+Conflicts:
+ exim,
+ exim-tls,
 Replaces:
  exim,
  exim-tls,
  exim4-daemon-custom,
  exim4-daemon-heavy,
- exim4-daemon-light
+ exim4-daemon-light,
 Depends:
  adduser,
- cron | cron-daemon | anacron,
- exim4-config (>=4.82) | exim4-config-2,
- lsb-base (>= 3.0-6),
+ cron | cron-daemon | anacron | systemd-sysv,
+ exim4-config (>=4.94) | exim4-config-2,
+ libfile-fcntllock-perl,
  netbase,
  ${misc:Depends},
- ${shlibs:Depends}
+ ${perl:Depends},
+ ${shlibs:Depends},
 # psmisc just for exiwhat.
-Recommends: mailx, psmisc
+# mailx for cronjob
+Recommends:
+ bsd-mailx | mailx,
+ psmisc,
 Suggests:
  exim4-doc-html | exim4-doc-info,
  eximon4,
@@ -64,7 +79,7 @@ Suggests:
  gnutls-bin | openssl,
  mail-reader,
  spf-tools-perl,
- swaks
+ swaks,
 Description: support files for all Exim MTA (v4) packages
  Exim (v4) is a mail transport agent. exim4-base provides the support
  files needed by all exim4 daemon packages. You need an additional package
@@ -96,16 +111,22 @@ Package: exim4-config
 Architecture: all
 Priority: optional
 Breaks:
- exim4-daemon-heavy (<< 4.91~RC1),
- exim4-daemon-light (<< 4.91~RC1)
-Provides: exim4-config-2
+ exim4-daemon-heavy (<< 4.94),
+ exim4-daemon-light (<< 4.94),
+Provides:
+ exim4-config-2,
 Conflicts:
  exim,
  exim-tls,
  exim4-config,
  exim4-config-2,
- ${MTA-Conflicts}
-Depends: adduser, ${misc:Depends}, ${shlibs:Depends}
+ ${MTA-Conflicts},
+Depends:
+ adduser,
+ ${misc:Depends},
+ ${shlibs:Depends},
+Recommends:
+ ca-certificates,
 Description: configuration for the Exim MTA (v4)
  Exim (v4) is a mail transport agent. exim4-config provides the configuration
  for the exim4 daemon packages. The configuration framework has been split
@@ -138,15 +159,18 @@ Package: exim4-daemon-light
 Architecture: any
 Priority: optional
 Provides:
- exim4-localscanapi-2.0,
  mail-transport-agent,
- ${dist:Provides:exim4-daemon-light}
-Conflicts: mail-transport-agent
-Replaces: exim4-base (<= 4.61-1), mail-transport-agent
+ ${dist:Provides:exim4-daemon-light},
+ ${localscanabiversion},
+Conflicts:
+ mail-transport-agent,
+Replaces:
+ exim4-base (<= 4.61-1),
+ mail-transport-agent,
 Depends:
  exim4-base (>= ${Upstream-Version}),
  ${misc:Depends},
- ${shlibs:Depends}
+ ${shlibs:Depends},
 Description: lightweight Exim MTA (v4) daemon
  Exim (v4) is a mail transport agent. This package contains the exim4
  daemon with only basic features enabled. It works well with the
@@ -177,8 +201,8 @@ Depends:
  debconf (>= 1.4.69) | cdebconf (>= 0.39),
  exim4-base (<< ${source:Version}.1),
  exim4-base (>= ${source:Version}),
- exim4-daemon-light | exim4-daemon-heavy | exim4-daemon-custom,
- ${misc:Depends}
+ exim4-daemon-light (>= ${source:Version}) | exim4-daemon-heavy (>= ${source:Version}) | exim4-daemon-custom (>= ${source:Version}),
+ ${misc:Depends},
 Description: metapackage to ease Exim MTA (v4) installation
  Exim (v4) is a mail transport agent. exim4 is the metapackage depending
  on the essential components for a basic exim4 installation.
@@ -202,14 +226,20 @@ Description: metapackage to ease Exim MTA (v4) installation
 Package: exim4-daemon-heavy
 Architecture: any
 Priority: optional
-Provides: exim4-localscanapi-2.0, mail-transport-agent
-Conflicts: mail-transport-agent
-Replaces: exim4-base (<= 4.61-1), mail-transport-agent
+Provides:
+ mail-transport-agent,
+ ${localscanabiversion},
+Conflicts:
+ mail-transport-agent,
+Replaces:
+ exim4-base (<= 4.61-1),
+ mail-transport-agent,
 Depends:
  exim4-base (>= ${Upstream-Version}),
  ${misc:Depends},
- ${shlibs:Depends}
-Breaks: clamav-daemon (<< 0.95)
+ ${shlibs:Depends},
+Breaks:
+ clamav-daemon (<< 0.95),
 Description: Exim MTA (v4) daemon with extended features, including exiscan-acl
  Exim (v4) is a mail transport agent. This package contains the exim4
  daemon with extended features. In addition to the features already
@@ -238,7 +268,7 @@ Description: Exim MTA (v4) daemon with extended features, including exiscan-acl
 #Package: exim4-daemon-custom
 #Architecture: any
 #Priority: optional
-#Provides: exim4-localscanapi-2.0, mail-transport-agent
+#Provides: ${localscanabiversion}, mail-transport-agent
 #Conflicts: mail-transport-agent
 #Replaces: exim4-base (<= 4.61-1), mail-transport-agent
 #Depends:
@@ -271,9 +301,14 @@ Description: Exim MTA (v4) daemon with extended features, including exiscan-acl
 Package: eximon4
 Architecture: any
 Priority: optional
-Conflicts: eximon
-Replaces: eximon
-Depends: exim4-base (>= 4.10), ${misc:Depends}, ${shlibs:Depends}
+Conflicts:
+ eximon,
+Replaces:
+ eximon,
+Depends:
+ exim4-base (>= 4.10),
+ ${misc:Depends},
+ ${shlibs:Depends},
 Description: monitor application for the Exim MTA (v4) (X11 interface)
  Eximon is a helper program for the Exim MTA (v4). It allows
  administrators to view the mail queue and logs, and perform a variety
@@ -283,7 +318,8 @@ Description: monitor application for the Exim MTA (v4) (X11 interface)
 Package: exim4-dev
 Architecture: any
 Priority: optional
-Depends: ${misc:Depends}
+Depends:
+ ${misc:Depends},
 Description: header files for the Exim MTA (v4) packages
  Exim (v4) is a mail transport agent. This package contains header
  files that can be used to compile code that is then dynamically linked

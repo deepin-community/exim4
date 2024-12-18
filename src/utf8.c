@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2022 */
 /* Copyright (c) Jeremy Harris 2015 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "exim.h"
@@ -133,7 +135,7 @@ return s;
 uschar *
 string_localpart_utf8_to_alabel(const uschar * utf8, uschar ** err)
 {
-size_t ucs4_len;
+size_t ucs4_len = 0;
 punycode_uint * p;
 size_t p_len;
 uschar * res;
@@ -142,8 +144,13 @@ int rc;
 if (!string_is_utf8(utf8)) return string_copy(utf8);
 
 p = (punycode_uint *) stringprep_utf8_to_ucs4(CCS utf8, -1, &ucs4_len);
+if (!p || !ucs4_len)
+  {
+  if (err) *err = US"l_u2a: bad UTF-8 input";
+  return NULL;
+  }
 p_len = ucs4_len*4;	/* this multiplier is pure guesswork */
-res = store_get(p_len+5);
+res = store_get(p_len+5, utf8);
 
 res[0] = 'x'; res[1] = 'n'; res[2] = res[3] = '-';
 
@@ -172,7 +179,7 @@ uschar * s, * res;
 DEBUG(D_expand) debug_printf("l_a2u: '%s'\n", alabel);
 alabel += 4;
 p_len = Ustrlen(alabel);
-p = (punycode_uint *) store_get((p_len+1) * sizeof(*p));
+p = store_get((p_len+1) * sizeof(*p), alabel);
 
 if ((rc = punycode_decode(p_len, CCS alabel, &p_len, p, NULL)) != PUNYCODE_SUCCESS)
   {
@@ -208,15 +215,13 @@ Return NULL on error, with (optional) errstring pointer filled in
 uschar *
 string_address_utf8_to_alabel(const uschar * utf8, uschar ** err)
 {
-const uschar * s;
-uschar * l;
-uschar * d;
+uschar * l, * d;
 
 if (!*utf8) return string_copy(utf8);
 
 DEBUG(D_expand) debug_printf("addr from utf8 <%s>", utf8);
 
-for (s = utf8; *s; s++)
+for (const uschar * s = utf8; *s; s++)
   if (*s == '@')
     {
     l = string_copyn(utf8, s - utf8);
@@ -242,28 +247,29 @@ return l;
 
 /* See a description in tls-openssl.c for an explanation of why this exists.
 
-Arguments:   a FILE* to print the results to
-Returns:     nothing
+Arguments:   string to append to
+Returns:     string
 */
 
-void
-utf8_version_report(FILE *f)
+gstring *
+utf8_version_report(gstring * g)
 {
 #ifdef SUPPORT_I18N_2008
-fprintf(f, "Library version: IDN2: Compile: %s\n"
+g = string_fmt_append(g, "Library version: IDN2: Compile: %s\n"
            "                       Runtime: %s\n",
 	IDN2_VERSION,
 	idn2_check_version(NULL));
-fprintf(f, "Library version: Stringprep: Compile: %s\n"
+g = string_fmt_append(g, "Library version: Stringprep: Compile: %s\n"
            "                             Runtime: %s\n",
 	STRINGPREP_VERSION,
 	stringprep_check_version(NULL));
 #else
-fprintf(f, "Library version: IDN: Compile: %s\n"
+g = string_fmt_append(g, "Library version: IDN: Compile: %s\n"
            "                      Runtime: %s\n",
 	STRINGPREP_VERSION,
 	stringprep_check_version(NULL));
 #endif
+return g;
 }
 
 #endif	/* whole file */

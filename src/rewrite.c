@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Functions concerned with rewriting headers */
 
@@ -59,12 +61,12 @@ Arguments:
 Returns:         fully-qualified address
 */
 
-uschar *
-rewrite_address_qualify(uschar *s, BOOL is_recipient)
+const uschar *
+rewrite_address_qualify(const uschar *s, BOOL is_recipient)
 {
-return (parse_find_at(s) != NULL)? s :
-  string_sprintf("%s@%s", s,
-    is_recipient? qualify_domain_recipient : qualify_domain_sender);
+return parse_find_at(s)
+  ? s : string_sprintf("%s@%s", s,
+	  is_recipient ? qualify_domain_recipient : qualify_domain_sender);
 }
 
 
@@ -96,35 +98,31 @@ Returns:         new address if rewritten; the input address if no change;
                  rewritten address is returned, not just the active bit.
 */
 
-uschar *
-rewrite_one(uschar *s, int flag, BOOL *whole, BOOL add_header, uschar *name,
+const uschar *
+rewrite_one(const uschar *s, int flag, BOOL *whole, BOOL add_header, uschar *name,
   rewrite_rule *rewrite_rules)
 {
-rewrite_rule *rule;
-uschar *yield = s;
-uschar *subject = s;
-uschar *domain = NULL;
+const uschar *yield = s;
+const uschar *subject = s;
+const uschar *domain = NULL;
 BOOL done = FALSE;
 int rule_number = 1;
 int yield_start = 0, yield_end = 0;
 
-if (whole != NULL) *whole = FALSE;
+if (whole) *whole = FALSE;
 
-/* Scan the rewriting rules */
+/* Scan the rewriting rules, ignoring any without matching flag */
 
-for (rule = rewrite_rules;
-     rule != NULL && !done;
-     rule_number++, rule = rule->next)
+for (rewrite_rule * rule = rewrite_rules;
+     rule && !done;
+     rule_number++, rule = rule->next) if (rule->flags & flag)
   {
   int start, end, pdomain;
   int count = 0;
-  uschar *save_localpart;
-  const uschar *save_domain;
-  uschar *error, *new, *newparsed;
-
-  /* Ensure that the flag matches the flags in the rule. */
-
-  if ((rule->flags & flag) == 0) continue;
+  const uschar * save_localpart;
+  const uschar * save_domain;
+  uschar * error, * new;
+  const uschar * newparsed;
 
   /* Come back here for a repeat after a successful rewrite. We do this
   only so many times. */
@@ -137,17 +135,19 @@ for (rule = rewrite_rules;
   with the other kinds of rewrite, where expansion happens inside
   match_address_list(). */
 
-  if ((flag & rewrite_smtp) != 0)
+  if (flag & rewrite_smtp)
     {
-    uschar *key = expand_string(rule->key);
-    if (key == NULL)
+    BOOL textonly_re;
+    const uschar * key = expand_string_2(rule->key, &textonly_re);
+    if (!key)
       {
       if (!f.expand_string_forcedfail)
         log_write(0, LOG_MAIN|LOG_PANIC, "failed to expand \"%s\" while "
           "checking for SMTP rewriting: %s", rule->key, expand_string_message);
       continue;
       }
-    if (match_check_string(subject, key, 0, TRUE, FALSE, FALSE, NULL) != OK)
+    if (match_check_string(subject, key, 0,
+      textonly_re ? MCS_CACHEABLE | MCS_PARTIAL : MCS_PARTIAL, NULL) != OK)
       continue;
     new = expand_string(rule->replacement);
     }
@@ -158,7 +158,7 @@ for (rule = rewrite_rules;
 
   else
     {
-    if (domain == NULL) domain = Ustrrchr(subject, '@') + 1;
+    if (!domain) domain = CUstrrchr(subject, '@') + 1;
 
     /* Use the general function for matching an address against a list (here
     just one item, so use the "impossible value" separator UCHAR_MAX+1). */
@@ -182,16 +182,14 @@ for (rule = rewrite_rules;
     save_domain = deliver_domain;
 
     /* We have subject pointing to "localpart@domain" and domain pointing to
-    the domain. Temporarily terminate the local part so that it can be
-    set up as an expansion variable */
+    the domain. Split into local part and domain so that it can be set up as 
+    an expansion variable */
 
-    domain[-1] = 0;
-    deliver_localpart = subject;
+    deliver_localpart = US string_copyn(subject, domain-subject-1);
     deliver_domain = domain;
 
     new = expand_string(rule->replacement);
 
-    domain[-1] = '@';
     deliver_localpart = save_localpart;
     deliver_domain = save_domain;
     }
@@ -201,10 +199,10 @@ for (rule = rewrite_rules;
   give up altogether. For other expansion failures we have a configuration
   error. */
 
-  if (new == NULL)
+  if (!new)
     {
     if (f.expand_string_forcedfail)
-      { if ((rule->flags & rewrite_quit) != 0) break; else continue; }
+      { if (rule->flags & rewrite_quit) break; else continue; }
 
     expand_string_message = expand_hide_passwords(expand_string_message);
 
@@ -219,7 +217,7 @@ for (rule = rewrite_rules;
   newparsed = parse_extract_address(new, &error, &start, &end, &pdomain,
     flag == rewrite_envfrom || flag == (rewrite_smtp|rewrite_smtp_sender));
 
-  if (newparsed == NULL)
+  if (!newparsed)
     {
     log_write(0, LOG_MAIN|LOG_PANIC, "Rewrite of %s yielded unparseable "
       "address: %s in address %s", subject, error, new);
@@ -233,7 +231,7 @@ for (rule = rewrite_rules;
   if (pdomain == 0 && (*newparsed != 0 ||
       (flag != rewrite_envfrom && flag != (rewrite_smtp|rewrite_smtp_sender))))
     {
-    if ((rule->flags & rewrite_qualify) != 0)
+    if (rule->flags & rewrite_qualify)
       {
       newparsed = rewrite_address_qualify(newparsed, TRUE);
       new = string_sprintf("%.*s%s%.*s", start, new, newparsed,
@@ -252,17 +250,14 @@ for (rule = rewrite_rules;
 
   if (LOGGING(address_rewrite) || (debug_selector & D_rewrite) != 0)
     {
-    int i;
     const uschar *where = CUS"?";
 
-    for (i = 0; i < where_list_size; i++)
-      {
+    for (int i = 0; i < where_list_size; i++)
       if (flag == where_list[i].bit)
         {
         where = where_list[i].string;
         break;
         }
-      }
     log_write(L_address_rewrite,
            LOG_MAIN, "\"%s\" from %s rewritten as \"%s\" by rule %d",
            yield, where, new, rule_number);
@@ -284,28 +279,23 @@ for (rule = rewrite_rules;
   flag set and so we must preserve the non-active portion of the current
   subject unless the current rule also has the w flag set. */
 
-  if (whole != NULL && (flag & rewrite_all_headers) != 0)
+  if (whole && (flag & rewrite_all_headers))
     {
     /* Current rule has the w flag set. We must ensure the phrase parts
     are syntactically valid if they are present. */
 
-    if ((rule->flags & rewrite_whole) != 0)
+    if (rule->flags & rewrite_whole)
       {
       if (start > 0 && new[start-1] == '<')
         {
         uschar *p1 = new + start - 1;
         uschar *p2 = new + end + 1;
         const uschar *pf1, *pf2;
-        uschar buff1[256], buff2[256];
 
         while (p1 > new && p1[-1] == ' ') p1--;
-        pf1 = parse_fix_phrase(new, p1 - new, buff1, sizeof(buff1));
+        pf1 = parse_fix_phrase(new, p1 - new);
         while (*p2 == ' ') p2++;
-        pf2 = parse_fix_phrase(p2, Ustrlen(p2), buff2, sizeof(buff2));
-
-        /* Note that pf1 and pf2 are NOT necessarily buff1 and buff2. For
-        a non-RFC 2047 phrase that does not need to be RFC 2822 quoted, they
-        will be buff1+1 and buff2+1. */
+        pf2 = parse_fix_phrase(p2, Ustrlen(p2));
 
         start = Ustrlen(pf1) + start + new - p1;
         end = start + Ustrlen(newparsed);
@@ -355,12 +345,12 @@ for (rule = rewrite_rules;
   /* If no further rewrites are to be done, set the done flag. This allows
   repeats of the current rule if configured before breaking the loop. */
 
-  if ((rule->flags & rewrite_quit) != 0) done = TRUE;
+  if (rule->flags & rewrite_quit) done = TRUE;
 
   /* Allow the current rule to be applied up to 10 times if
   requested. */
 
-  if ((rule->flags & rewrite_repeat) != 0)
+  if (rule->flags & rewrite_repeat)
     {
     if (count++ < 10) goto REPEAT_RULE;
     log_write(0, LOG_MAIN|LOG_PANIC, "rewrite rule repeat ignored after 10 "
@@ -399,15 +389,16 @@ Arguments:
 Returns:         possibly rewritten address
 */
 
-uschar *
-rewrite_address(uschar *s, BOOL is_recipient, BOOL add_header,
+const uschar *
+rewrite_address(const uschar *s, BOOL is_recipient, BOOL add_header,
   rewrite_rule *rewrite_rules, int existflags)
 {
-int flag = is_recipient? rewrite_envto : rewrite_envfrom;
+int flag = is_recipient ? rewrite_envto : rewrite_envfrom;
+
 s = rewrite_address_qualify(s, is_recipient);
-if ((existflags & flag) != 0)
+if (existflags & flag)
   {
-  uschar *new = rewrite_one(s, flag, NULL, add_header, is_recipient?
+  const uschar *new = rewrite_one(s, flag, NULL, add_header, is_recipient?
     US"original-recipient" : US"sender", rewrite_rules);
   if (new != s) s = new;
   }
@@ -457,13 +448,14 @@ rewrite_one_header(header_line *h, int flag,
   rewrite_rule *rewrite_rules, int existflags, BOOL replace)
 {
 int lastnewline = 0;
-header_line *newh = NULL;
-void *function_reset_point = store_get(0);
-uschar *s = Ustrchr(h->text, ':') + 1;
-while (isspace(*s)) s++;
+header_line * newh = NULL;
+rmark function_reset_point = store_mark();
+uschar * s = Ustrchr(h->text, ':') + 1;
 
-DEBUG(D_rewrite)
-  debug_printf("rewrite_one_header: type=%c:\n  %s", h->type, h->text);
+Uskip_whitespace(&s);
+
+DEBUG(D_rewrite)	/* The header text includes the trailing newline */
+  debug_printf_indent("rewrite_one_header: type=%c:\n  %s", h->type, h->text);
 
 f.parse_allow_group = TRUE;     /* Allow group syntax */
 
@@ -474,33 +466,52 @@ any that don't actually get rewritten. We also play silly games for those that
 _are_ rewritten so as to avoid runaway store usage for these kinds of header.
 We want to avoid keeping store for any intermediate versions. */
 
-while (*s != 0)
+while (*s)
   {
-  uschar *sprev;
-  uschar *ss = parse_find_address_end(s, FALSE);
-  uschar *recipient, *new, *errmess;
-  void *loop_reset_point = store_get(0);
+  uschar * sprev = s;
+  uschar * ss = parse_find_address_end(s, FALSE), * ss1 = ss;
+  uschar * recipient, * new;
+  rmark loop_reset_point = store_mark();
+  uschar * errmess = NULL;
   BOOL changed = FALSE;
-  int terminator = *ss;
+  uschar terminator = *ss;
   int start, end, domain;
+
+  /* If we hit the end of the header, trim trailing newline and whitespace */
+
+  if (!terminator)
+    {
+    while (ss1 > s && isspace(ss1[-1])) ss1--;
+    terminator = *ss1;
+    }
 
   /* Temporarily terminate the string at this point, and extract the
   operative address within. Then put back the terminator and prepare for
   the next address, saving the start of the old one. */
 
-  *ss = 0;
-  recipient = parse_extract_address(s,&errmess,&start,&end,&domain,FALSE);
-  *ss = terminator;
-  sprev = s;
-  s = ss + (terminator? 1:0);
-  while (isspace(*s)) s++;
+  *ss1 = '\0';
+  recipient = parse_extract_address(s, &errmess, &start, &end, &domain, FALSE);
+  *ss1 = terminator;
+  s = ss + (*ss ? 1 : 0);
+  Uskip_whitespace(&s);
 
   /* There isn't much we can do for syntactic disasters at this stage.
-  Pro tem (possibly for ever) ignore them. */
+  Pro tem (possibly for ever) ignore them.
+  If we got nothing, then there was any sort of error: non-parsable address,
+  empty address, overlong addres. Sometimes the result matters, sometimes not.
+  It seems this function is called for *any* header we see. */
 
-  if (recipient == NULL)
+  if (!recipient)
     {
-    store_reset(loop_reset_point);
+    /* Log unparesable addresses in the header. Slightly ugly because a
+    null output from the extract can also result from a header without an
+    address, "To: undisclosed recpients:;" being the classic case. Ignore
+    this one and carry on. */
+
+    if (Ustrcmp(errmess, "empty address") != 0)
+      log_write(0, LOG_MAIN, "qualify/rewrite: %s", errmess);
+
+    loop_reset_point = store_reset(loop_reset_point);
     continue;
     }
 
@@ -514,7 +525,7 @@ while (*s != 0)
   as abc@xyz, which the DNS lookup turns into abc@xyz.foo.com). However, if no
   change is made here, don't bother carrying on. */
 
-  if (routed_old != NULL)
+  if (routed_old)
     {
     if (domain <= 0 || strcmpic(recipient+domain, routed_old) != 0) continue;
     recipient[domain-1] = 0;
@@ -538,7 +549,8 @@ while (*s != 0)
     {
     BOOL is_recipient =
       (flag & (rewrite_sender | rewrite_from | rewrite_replyto)) == 0;
-    new = rewrite_address_qualify(recipient, is_recipient);
+    /* deconst ok as recipient was notconst */
+    new = US rewrite_address_qualify(recipient, is_recipient);
     changed = (new != recipient);
     recipient = new;
 
@@ -547,7 +559,7 @@ while (*s != 0)
     if (changed && ((is_recipient && !f.allow_unqualified_recipient) ||
                     (!is_recipient && !f.allow_unqualified_sender)))
       {
-      store_reset(loop_reset_point);
+      loop_reset_point = store_reset(loop_reset_point);
       continue;
       }
     }
@@ -558,10 +570,11 @@ while (*s != 0)
   "whole" flag set, adjust the pointers so that the whole address gets
   replaced, except possibly a final \n. */
 
-  if ((existflags & flag) != 0)
+  if (existflags & flag)
     {
     BOOL whole;
-    new = rewrite_one(recipient, flag, &whole, FALSE, NULL, rewrite_rules);
+    /* deconst ok as recipient was notconst */
+    new = US rewrite_one(recipient, flag, &whole, FALSE, NULL, rewrite_rules);
     if (new != recipient)
       {
       changed = TRUE;
@@ -579,7 +592,8 @@ while (*s != 0)
   point, because we may have a rewritten line from a previous time round the
   loop. */
 
-  if (!changed) store_reset(loop_reset_point);
+  if (!changed)
+    loop_reset_point = store_reset(loop_reset_point);
 
   /* If the address has changed, create a new header containing the
   rewritten address. We do not need to set the chain pointers at this
@@ -596,9 +610,9 @@ while (*s != 0)
     int newlen = Ustrlen(new);
     int oldlen = end - start;
 
-    header_line *prev = (newh == NULL)? h : newh;
-    uschar *newt = store_malloc(prev->slen - oldlen + newlen + 4);
-    uschar *newtstart = newt;
+    header_line * prev = newh ? newh : h;
+    uschar * newt = store_get_perm(prev->slen - oldlen + newlen + 4, GET_TAINTED);
+    uschar * newtstart = newt;
 
     int type = prev->type;
     int slen = prev->slen - oldlen + newlen;
@@ -637,7 +651,7 @@ while (*s != 0)
       if (*p != '\n')
         {
         lastnewline = newt - newtstart;
-        Ustrcat(newt, "\n\t");
+        Ustrcat(newt, US"\n\t");
         slen += 2;
         }
       }
@@ -660,16 +674,16 @@ while (*s != 0)
     rewritten copy from a previous time round this loop. */
 
     store_reset(function_reset_point);
-    newh = store_get(sizeof(header_line));
+    function_reset_point = store_mark();
+    newh = store_get(sizeof(header_line), GET_UNTAINTED);
     newh->type = type;
     newh->slen = slen;
     newh->text = string_copyn(newtstart, slen);
-    store_free(newtstart);
 
     /* Set up for scanning the rest of the header */
 
     s = newh->text + remlen;
-    DEBUG(D_rewrite) debug_printf("remainder: %s", (*s == 0)? US"\n" : s);
+    DEBUG(D_rewrite) debug_printf("remainder: %s", *s ? s : US"\n");
     }
   }
 
@@ -679,10 +693,10 @@ f.parse_found_group = FALSE;
 /* If a rewrite happened and "replace" is true, put the new header into the
 chain following the old one, and mark the old one as replaced. */
 
-if (newh != NULL && replace)
+if (newh && replace)
   {
   newh->next = h->next;
-  if (newh->next == NULL) header_last = newh;
+  if (!newh->next) header_last = newh;
   h->type = htype_old;
   h->next = newh;
   }
@@ -725,34 +739,19 @@ rewrite_header(header_line *h,
   const uschar *routed_old, const uschar *routed_new,
   rewrite_rule *rewrite_rules, int existflags, BOOL replace)
 {
+int flag;
 switch (h->type)
   {
-  case htype_sender:
-  return rewrite_one_header(h, rewrite_sender, routed_old, routed_new,
-    rewrite_rules, existflags, replace);
-
-  case htype_from:
-  return rewrite_one_header(h, rewrite_from, routed_old, routed_new,
-    rewrite_rules, existflags, replace);
-
-  case htype_to:
-  return rewrite_one_header(h, rewrite_to, routed_old, routed_new,
-    rewrite_rules, existflags, replace);
-
-  case htype_cc:
-  return rewrite_one_header(h, rewrite_cc, routed_old, routed_new,
-    rewrite_rules, existflags, replace);
-
-  case htype_bcc:
-  return rewrite_one_header(h, rewrite_bcc, routed_old, routed_new,
-    rewrite_rules, existflags, replace);
-
-  case htype_reply_to:
-  return rewrite_one_header(h, rewrite_replyto, routed_old, routed_new,
-    rewrite_rules, existflags, replace);
+  case htype_sender:	flag = rewrite_sender;	break;
+  case htype_from:	flag = rewrite_from;	break;
+  case htype_to:	flag = rewrite_to;	break;
+  case htype_cc:	flag = rewrite_cc;	break;
+  case htype_bcc:	flag = rewrite_bcc;	break;
+  case htype_reply_to:	flag = rewrite_replyto;	break;
+  default:		return NULL;
   }
-
-return NULL;
+return rewrite_one_header(h, flag, routed_old, routed_new,
+  rewrite_rules, existflags, replace);
 }
 
 
@@ -768,10 +767,11 @@ Argument: the address to test
 Returns:  nothing
 */
 
-void rewrite_test(uschar *s)
+void
+rewrite_test(const uschar *s)
 {
 uschar *recipient, *error;
-int i, start, end, domain;
+int start, end, domain;
 BOOL done_smtp = FALSE;
 
 if (rewrite_existflags == 0)
@@ -785,8 +785,8 @@ pretending it is a sender. */
 
 if ((rewrite_existflags & rewrite_smtp) != 0)
   {
-  uschar *new = rewrite_one(s, rewrite_smtp|rewrite_smtp_sender, NULL, FALSE,
-    US"", global_rewrite_rules);
+  const uschar * new = rewrite_one(s, rewrite_smtp|rewrite_smtp_sender, NULL,
+    FALSE, US"", global_rewrite_rules);
   if (new != s)
     {
     if (*new == 0)
@@ -808,18 +808,18 @@ if (parse_find_at(s) == NULL)
 
 recipient = parse_extract_address(s, &error, &start, &end, &domain, FALSE);
 
-if (recipient == NULL)
+if (!recipient)
   {
   if (!done_smtp)
     printf("Syntax error in %s\n%c%s\n", s, toupper(error[0]), error+1);
   return;
   }
 
-for (i = 0; i < 8; i++)
+for (int i = 0; i < 8; i++)
   {
   BOOL whole = FALSE;
   int flag = 1 << i;
-  uschar *new = rewrite_one(recipient, flag, &whole, FALSE, US"",
+  const uschar * new = rewrite_one(recipient, flag, &whole, FALSE, US"",
     global_rewrite_rules);
   printf("%s: ", rrname[i]);
   if (*new == 0)

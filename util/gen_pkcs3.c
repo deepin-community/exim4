@@ -1,6 +1,8 @@
 /* Copyright (C) 2012,2016 Phil Pennock.
+ * Copyright (c) The Exim Maintainers 2021
  * This is distributed as part of Exim and licensed under the GPL.
  * See the file "NOTICE" for more details.
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 /* Build with:
@@ -54,7 +56,6 @@ void __attribute__((__noreturn__))
 die_openssl_err(const char *msg)
 {
   char err_string[250];
-  unsigned long e;
 
   ERR_error_string_n(ERR_get_error(), err_string, sizeof(err_string));
   die("%s: %s", msg, err_string);
@@ -71,9 +72,9 @@ bn_from_text(const char *text)
   int rc;
 
   len = strlen(text);
-  spaceless = malloc(len);
+  spaceless = malloc(len + 1);
   if (!spaceless)
-    die("malloc(%zu) failed: %s", len, strerror(errno));
+    die("malloc(%zu) failed: %s", len + 1, strerror(errno));
 
   for (p = spaceless, q = text, end = text + len;
        q < end;
@@ -81,13 +82,15 @@ bn_from_text(const char *text)
     if (!isspace(*q))
       *p++ = *q;
   }
+  len = p - spaceless;
+  *p++ = '\0';
 
   b = NULL;
   rc = BN_hex2bn(&b, spaceless);
 
-  if (rc != p - spaceless)
+  if (rc != (int)len)
     die("BN_hex2bn did not convert entire input; took %d of %zu bytes",
-        rc, p - spaceless);
+        rc, len);
 
   return b;
 }

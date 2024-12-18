@@ -2,7 +2,9 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
-/* Copyright (c) Jeremy Harris 2014 - 2018 */
+/* Copyright (c) The Exim Maintainers 2022 - 2023 */
+/* Copyright (c) Jeremy Harris 2014 - 2019 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* This module provides TLS (aka SSL) support for Exim using the OpenSSL
 library. It is #included into the tls.c file when that library is used.
@@ -17,8 +19,14 @@ library. It is #included into the tls.c file when that library is used.
 #include <openssl/rand.h>
 #include <openssl/x509v3.h>
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-# define EXIM_HAVE_ASN1_MACROS
+#ifdef LIBRESSL_VERSION_NUMBER	/* LibreSSL */
+# if LIBRESSL_VERSION_NUMBER >= 0x2090000fL
+#  define EXIM_HAVE_ASN1_MACROS
+# endif
+#else				/* OpenSSL */
+# if OPENSSL_VERSION_NUMBER >= 0x10100000L
+#  define EXIM_HAVE_ASN1_MACROS
+# endif
 #endif
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
@@ -27,12 +35,14 @@ library. It is #included into the tls.c file when that library is used.
 
 /*****************************************************
 *  Export/import a certificate, binary/printable
-*****************************************************/
-int
+******************************************************
+Return booolean success
+*/
+BOOL
 tls_export_cert(uschar * buf, size_t buflen, void * cert)
 {
 BIO * bp = BIO_new(BIO_s_mem());
-int fail;
+BOOL fail;
 
 if ((fail = PEM_write_bio_X509(bp, (X509 *)cert) ? 0 : 1))
   log_write(0, LOG_MAIN, "TLS error in certificate export: %s",
@@ -53,32 +63,29 @@ else
   }
 
 BIO_free(bp);
-return fail;
+return !fail;
 }
 
-int
+/* On error, NULL out the destination */
+BOOL
 tls_import_cert(const uschar * buf, void ** cert)
 {
-void * reset_point = store_get(0);
+rmark reset_point = store_mark();
 const uschar * cp = string_unprinting(US buf);
 BIO * bp;
 X509 * x = *(X509 **)cert;
-int fail = 0;
 
 if (x) X509_free(x);
 
 bp = BIO_new_mem_buf(US cp, -1);
 if (!(x = PEM_read_bio_X509(bp, NULL, 0, NULL)))
-  {
   log_write(0, LOG_MAIN, "TLS error in certificate import: %s",
     ERR_error_string(ERR_get_error(), NULL));
-  fail = 1;
-  }
-else
-  *cert = (void *)x;
+
+*cert = (void *)x;
 BIO_free(bp);
 store_reset(reset_point);
-return fail;
+return !!x;
 }
 
 void
@@ -166,7 +173,7 @@ else
 
       /* convert to string in our format */
       len = 32;
-      s = store_get(len);
+      s = store_get(len, GET_UNTAINTED);
       strftime(CS s, (size_t)len, "%b %e %T %Y %z", tm_p);
       }
     }
@@ -255,11 +262,19 @@ if (X509_print_ex(bp, (X509 *)cert, 0,
   X509_FLAG_NO_AUX) == 1)
   {
   long len = BIO_get_mem_data(bp, &cp);
+  gstring * g = NULL;
 
   /* Strip leading "Signature Algorithm" line */
   while (*cp && *cp != '\n') { cp++; len--; }
+  if (*cp) { cp++; len--; }
 
-  cp = string_copyn(cp+1, len-1);
+  /* Strip possible leading "    Signature Value:\n" (seen with OpenSSL 3.0.5) */
+  if (Ustrncmp(cp, "    Signature Value:\n", 21) == 0) { cp += 21; len -= 21; }
+
+  /* Copy only hexchars and colon (different OpenSSL versions do different spacing) */
+  for ( ; len-- && *cp; cp++)
+    if (Ustrchr("0123456789abcdef:", *cp)) g = string_catn(g, cp, 1);
+  cp = string_from_gstring(g);
   }
 BIO_free(bp);
 return cp;
@@ -330,7 +345,7 @@ M_ASN1_OCTET_STRING_print(bp, adata);
 /* binary data, DER encoded */
 /* just dump for now */
 len = BIO_get_mem_data(bp, &cp1);
-cp3 = cp2 = store_get(len*3+1);
+cp3 = cp2 = store_get(len*3+1, GET_TAINTED);
 
 while(len)
   {
@@ -410,14 +425,13 @@ tls_cert_ocsp_uri(void * cert, uschar * mod)
 STACK_OF(ACCESS_DESCRIPTION) * ads = (STACK_OF(ACCESS_DESCRIPTION) *)
   X509_get_ext_d2i((X509 *)cert, NID_info_access, NULL, NULL);
 int adsnum = sk_ACCESS_DESCRIPTION_num(ads);
-int i;
 uschar sep = '\n';
 gstring * list = NULL;
 
 if (mod)
   if (*mod == '>' && *++mod) sep = *mod++;
 
-for (i = 0; i < adsnum; i++)
+for (int i = 0; i < adsnum; i++)
   {
   ACCESS_DESCRIPTION * ad = sk_ACCESS_DESCRIPTION_value(ads, i);
 
@@ -437,23 +451,19 @@ STACK_OF(DIST_POINT) * dps = (STACK_OF(DIST_POINT) *)
   X509_get_ext_d2i((X509 *)cert,  NID_crl_distribution_points,
     NULL, NULL);
 DIST_POINT * dp;
-int dpsnum = sk_DIST_POINT_num(dps);
-int i;
 uschar sep = '\n';
 gstring * list = NULL;
 
 if (mod)
   if (*mod == '>' && *++mod) sep = *mod++;
 
-if (dps) for (i = 0; i < dpsnum; i++)
+if (dps) for (int i = 0, dpsnum = sk_DIST_POINT_num(dps); i < dpsnum; i++)
   if ((dp = sk_DIST_POINT_value(dps, i)))
     {
     STACK_OF(GENERAL_NAME) * names = dp->distpoint->name.fullname;
     GENERAL_NAME * np;
-    int nnum = sk_GENERAL_NAME_num(names);
-    int j;
 
-    for (j = 0; j < nnum; j++)
+    for (int j = 0, nnum = sk_GENERAL_NAME_num(names); j < nnum; j++)
       if (  (np = sk_GENERAL_NAME_value(names, j))
 	 && np->type == GEN_URI
 	 )
@@ -482,7 +492,7 @@ if (!i2d_X509_bio(bp, (X509 *)cert))
 else
   {
   long len = BIO_get_mem_data(bp, &cp);
-  cp = b64encode(cp, (int)len);
+  cp = b64encode(CUS cp, (int)len);
   }
 
 BIO_free(bp);
@@ -493,7 +503,6 @@ return cp;
 static uschar *
 fingerprint(X509 * cert, const EVP_MD * fdig)
 {
-int j;
 unsigned int n;
 uschar md[EVP_MAX_MD_SIZE];
 uschar * cp;
@@ -503,8 +512,8 @@ if (!X509_digest(cert,fdig,md,&n))
   expand_string_message = US"tls_cert_fprt: out of mem\n";
   return NULL;
   }
-cp = store_get(n*2+1);
-for (j = 0; j < (int)n; j++) sprintf(CS cp+2*j, "%02X", md[j]);
+cp = store_get(n*2+1, GET_TAINTED);
+for (int j = 0; j < (int)n; j++) sprintf(CS cp+2*j, "%02X", md[j]);
 return(cp);
 }
 

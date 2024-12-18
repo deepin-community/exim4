@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Functions for writing log files. The code for maintaining datestamped
 log files was originally contributed by Tony Sheen. */
@@ -11,7 +13,6 @@ log files was originally contributed by Tony Sheen. */
 
 #include "exim.h"
 
-#define LOG_NAME_SIZE 256
 #define MAX_SYSLOG_LEN 870
 
 #define LOG_MODE_FILE   1
@@ -29,7 +30,6 @@ static uschar *log_names[] = { US"main", US"reject", US"panic", US"debug" };
 
 static uschar mainlog_name[LOG_NAME_SIZE];
 static uschar rejectlog_name[LOG_NAME_SIZE];
-static uschar debuglog_name[LOG_NAME_SIZE];
 
 static uschar *mainlog_datestamp = NULL;
 static uschar *rejectlog_datestamp = NULL;
@@ -54,64 +54,68 @@ static size_t pid_position[2];
 number definitions in macros.h */
 
 static const uschar * exim_errstrings[] = {
-  US"",
-  US"unknown error",
-  US"user slash",
-  US"exist race",
-  US"not regular",
-  US"not directory",
-  US"bad ugid",
-  US"bad mode",
-  US"inode changed",
-  US"lock failed",
-  US"bad address2",
-  US"forbid pipe",
-  US"forbid file",
-  US"forbid reply",
-  US"missing pipe",
-  US"missing file",
-  US"missing reply",
-  US"bad redirect",
-  US"smtp closed",
-  US"smtp format",
-  US"spool format",
-  US"not absolute",
-  US"Exim-imposed quota",
-  US"held",
-  US"Delivery filter process failure",
-  US"Delivery add/remove header failure",
-  US"Delivery write incomplete error",
-  US"Some expansion failed",
-  US"Failed to get gid",
-  US"Failed to get uid",
-  US"Unset or non-existent transport",
-  US"MBX length mismatch",
-  US"Lookup failed routing or in smtp tpt",
-  US"Can't match format in appendfile",
-  US"Creation outside home in appendfile",
-  US"Can't check a list; lookup defer",
-  US"DNS lookup defer",
-  US"Failed to start TLS session",
-  US"Mandatory TLS session not started",
-  US"Failed to chown a file",
-  US"Failed to create a pipe",
-  US"When verifying",
-  US"When required by client",
-  US"Used internally in smtp transport",
-  US"RCPT gave 4xx error",
-  US"MAIL gave 4xx error",
-  US"DATA gave 4xx error",
-  US"Negotiation failed for proxy configured host",
-  US"Authenticator 'other' failure",
-  US"target not supporting SMTPUTF8",
-  US"",
+  [0] = US"",
+  [- ERRNO_UNKNOWNERROR] =	US"unknown error",
+  [- ERRNO_USERSLASH] =		US"user slash",
+  [- ERRNO_EXISTRACE] =		US"exist race",
+  [- ERRNO_NOTREGULAR] =	US"not regular",
+  [- ERRNO_NOTDIRECTORY] =	US"not directory",
+  [- ERRNO_BADUGID] =		US"bad ugid",
+  [- ERRNO_BADMODE] =		US"bad mode",
+  [- ERRNO_INODECHANGED] =	US"inode changed",
+  [- ERRNO_LOCKFAILED] =	US"lock failed",
+  [- ERRNO_BADADDRESS2] =	US"bad address2",
+  [- ERRNO_FORBIDPIPE] =	US"forbid pipe",
+  [- ERRNO_FORBIDFILE] =	US"forbid file",
+  [- ERRNO_FORBIDREPLY] =	US"forbid reply",
+  [- ERRNO_MISSINGPIPE] =	US"missing pipe",
+  [- ERRNO_MISSINGFILE] =	US"missing file",
+  [- ERRNO_MISSINGREPLY] =	US"missing reply",
+  [- ERRNO_BADREDIRECT] =	US"bad redirect",
+  [- ERRNO_SMTPCLOSED] =	US"smtp closed",
+  [- ERRNO_SMTPFORMAT] =	US"smtp format",
+  [- ERRNO_SPOOLFORMAT] =	US"spool format",
+  [- ERRNO_NOTABSOLUTE] =	US"not absolute",
+  [- ERRNO_EXIMQUOTA] =		US"Exim-imposed quota",
+  [- ERRNO_HELD] =		US"held",
+  [- ERRNO_FILTER_FAIL] =	US"Delivery filter process failure",
+  [- ERRNO_CHHEADER_FAIL] =	US"Delivery add/remove header failure",
+  [- ERRNO_WRITEINCOMPLETE] =	US"Delivery write incomplete error",
+  [- ERRNO_EXPANDFAIL] =	US"Some expansion failed",
+  [- ERRNO_GIDFAIL] =		US"Failed to get gid",
+  [- ERRNO_UIDFAIL] =		US"Failed to get uid",
+  [- ERRNO_BADTRANSPORT] =	US"Unset or non-existent transport",
+  [- ERRNO_MBXLENGTH] =		US"MBX length mismatch",
+  [- ERRNO_UNKNOWNHOST] =	US"Lookup failed routing or in smtp tpt",
+  [- ERRNO_FORMATUNKNOWN] =	US"Can't match format in appendfile",
+  [- ERRNO_BADCREATE] =		US"Creation outside home in appendfile",
+  [- ERRNO_LISTDEFER] =		US"Can't check a list; lookup defer",
+  [- ERRNO_DNSDEFER] =		US"DNS lookup defer",
+  [- ERRNO_TLSFAILURE] =	US"Failed to start TLS session",
+  [- ERRNO_TLSREQUIRED] =	US"Mandatory TLS session not started",
+  [- ERRNO_CHOWNFAIL] =		US"Failed to chown a file",
+  [- ERRNO_PIPEFAIL] =		US"Failed to create a pipe",
+  [- ERRNO_CALLOUTDEFER] =	US"When verifying",
+  [- ERRNO_AUTHFAIL] =		US"When required by client",
+  [- ERRNO_CONNECTTIMEOUT] =	US"Used internally in smtp transport",
+  [- ERRNO_RCPT4XX] =		US"RCPT gave 4xx error",
+  [- ERRNO_MAIL4XX] =		US"MAIL gave 4xx error",
+  [- ERRNO_DATA4XX] =		US"DATA gave 4xx error",
+  [- ERRNO_PROXYFAIL] =		US"Negotiation failed for proxy configured host",
+  [- ERRNO_AUTHPROB] =		US"Authenticator 'other' failure",
+  [- ERRNO_UTF8_FWD] =		US"target not supporting SMTPUTF8",
+  [- ERRNO_HOST_IS_LOCAL] =	US"host is local",
+  [- ERRNO_TAINT] =		US"tainted filename",
 
-  US"Not time for routing",
-  US"Not time for local delivery",
-  US"Not time for any remote host",
-  US"Local-only delivery",
-  US"Domain in queue_domains",
-  US"Transport concurrency limit",
+  [- ERRNO_RRETRY] =		US"Not time for routing",
+
+  [- ERRNO_LRETRY] =		US"Not time for local delivery",
+  [- ERRNO_HRETRY] =		US"Not time for any remote host",
+  [- ERRNO_LOCAL_ONLY] =	US"Local-only delivery",
+  [- ERRNO_QUEUE_DOMAIN] =	US"Domain in queue_domains",
+  [- ERRNO_TRETRY] =		US"Transport concurrency limit",
+
+  [- ERRNO_EVENT] =		US"Event requests alternate response",
 };
 
 
@@ -142,7 +146,7 @@ Returns:         nothing
 static void
 write_syslog(int priority, const uschar *s)
 {
-int len, pass;
+int len;
 int linecount = 0;
 
 if (!syslog_pid && LOGGING(pid))
@@ -171,12 +175,10 @@ if (!syslog_open && !f.running_in_test_harness)
 /* First do a scan through the message in order to determine how many lines
 it is going to end up as. Then rescan to output it. */
 
-for (pass = 0; pass < 2; pass++)
+for (int pass = 0; pass < 2; pass++)
   {
-  int i;
-  int tlen;
   const uschar * ss = s;
-  for (i = 1, tlen = len; tlen > 0; i++)
+  for (int i = 1, tlen = len; tlen > 0; i++)
     {
     int plen = tlen;
     uschar *nlptr = Ustrchr(ss, '\n');
@@ -243,7 +245,7 @@ if (s1)
   }
 if (f.receive_call_bombout) receive_bomb_out(NULL, s2);  /* does not return */
 if (smtp_input) smtp_closedown(s2);
-exim_exit(EXIT_FAILURE, NULL);
+exim_exit(EXIT_FAILURE);
 }
 
 
@@ -265,7 +267,7 @@ Returns:       a file descriptor, or < 0 on failure (errno set)
 */
 
 static int
-log_open_already_exim(uschar * const name)
+log_open_already_exim(const uschar * const name)
 {
 int fd = -1;
 const int flags = O_WRONLY | O_APPEND | O_CREAT | O_NONBLOCK;
@@ -287,8 +289,11 @@ if (fd < 0 && errno == ENOENT)
   uschar *lastslash = Ustrrchr(name, '/');
   *lastslash = 0;
   created = directory_make(NULL, name, LOG_DIRECTORY_MODE, FALSE);
-  DEBUG(D_any) debug_printf("%s log directory %s\n",
-    created ? "created" : "failed to create", name);
+  DEBUG(D_any)
+    if (created)
+      debug_printf("created log directory %s\n", name);
+    else
+      debug_printf("failed to create log directory %s: %s\n", name, strerror(errno));
   *lastslash = '/';
   if (created) fd = Uopen(name, flags, LOG_MODE);
   }
@@ -298,9 +303,12 @@ return fd;
 
 
 
-/* Inspired by OpenSSH's mm_send_fd(). Thanks! */
+/* Inspired by OpenSSH's mm_send_fd(). Thanks!
+Send fd over socketpair.
+Return: true iff good.
+*/
 
-static int
+static BOOL
 log_send_fd(const int sock, const int fd)
 {
 struct msghdr msg;
@@ -309,8 +317,8 @@ union {
   char buf[CMSG_SPACE(sizeof(int))];
 } cmsgbuf;
 struct cmsghdr *cmsg;
-struct iovec vec;
 char ch = 'A';
+struct iovec vec = {.iov_base = &ch, .iov_len = 1};
 ssize_t n;
 
 memset(&msg, 0, sizeof(msg));
@@ -324,17 +332,16 @@ cmsg->cmsg_level = SOL_SOCKET;
 cmsg->cmsg_type = SCM_RIGHTS;
 *(int *)CMSG_DATA(cmsg) = fd;
 
-vec.iov_base = &ch;
-vec.iov_len = 1;
 msg.msg_iov = &vec;
 msg.msg_iovlen = 1;
 
 while ((n = sendmsg(sock, &msg, 0)) == -1 && errno == EINTR);
-if (n != 1) return -1;
-return 0;
+return n == 1;
 }
 
-/* Inspired by OpenSSH's mm_receive_fd(). Thanks! */
+/* Inspired by OpenSSH's mm_receive_fd(). Thanks!
+Return fd passed over socketpair, or -1 on error.
+*/
 
 static int
 log_recv_fd(const int sock)
@@ -345,14 +352,12 @@ union {
   char buf[CMSG_SPACE(sizeof(int))];
 } cmsgbuf;
 struct cmsghdr *cmsg;
-struct iovec vec;
-ssize_t n;
 char ch = '\0';
-int fd = -1;
+struct iovec vec = {.iov_base = &ch, .iov_len = 1};
+ssize_t n;
+int fd;
 
 memset(&msg, 0, sizeof(msg));
-vec.iov_base = &ch;
-vec.iov_len = 1;
 msg.msg_iov = &vec;
 msg.msg_iovlen = 1;
 
@@ -360,14 +365,12 @@ memset(&cmsgbuf, 0, sizeof(cmsgbuf));
 msg.msg_control = &cmsgbuf.buf;
 msg.msg_controllen = sizeof(cmsgbuf.buf);
 
-while ((n = recvmsg(sock, &msg, 0)) == -1 && errno == EINTR);
+while ((n = recvmsg(sock, &msg, 0)) == -1 && errno == EINTR) ;
 if (n != 1 || ch != 'A') return -1;
 
-cmsg = CMSG_FIRSTHDR(&msg);
-if (cmsg == NULL) return -1;
+if (!(cmsg = CMSG_FIRSTHDR(&msg))) return -1;
 if (cmsg->cmsg_type != SCM_RIGHTS) return -1;
-fd = *(const int *)CMSG_DATA(cmsg);
-if (fd < 0) return -1;
+if ((fd = *(const int *)CMSG_DATA(cmsg)) < 0) return -1;
 return fd;
 }
 
@@ -388,15 +391,13 @@ Returns:       a file descriptor, or < 0 on failure (errno set)
 */
 
 int
-log_open_as_exim(uschar * const name)
+log_open_as_exim(const uschar * const name)
 {
 int fd = -1;
 const uid_t euid = geteuid();
 
 if (euid == exim_uid)
-  {
   fd = log_open_already_exim(name);
-  }
 else if (euid == root_uid)
   {
   int sock[2];
@@ -406,16 +407,16 @@ else if (euid == root_uid)
     if (pid == 0)
       {
       (void)close(sock[0]);
-      if (setgroups(1, &exim_gid) != 0) _exit(EXIT_FAILURE);
-      if (setgid(exim_gid) != 0) _exit(EXIT_FAILURE);
-      if (setuid(exim_uid) != 0) _exit(EXIT_FAILURE);
+      if (  setgroups(1, &exim_gid) != 0
+         || setgid(exim_gid) != 0
+         || setuid(exim_uid) != 0
 
-      if (getuid() != exim_uid || geteuid() != exim_uid) _exit(EXIT_FAILURE);
-      if (getgid() != exim_gid || getegid() != exim_gid) _exit(EXIT_FAILURE);
+         || getuid() != exim_uid || geteuid() != exim_uid
+         || getgid() != exim_gid || getegid() != exim_gid
 
-      fd = log_open_already_exim(name);
-      if (fd < 0) _exit(EXIT_FAILURE);
-      if (log_send_fd(sock[1], fd) != 0) _exit(EXIT_FAILURE);
+         || (fd = log_open_already_exim(name)) < 0
+         || !log_send_fd(sock[1], fd)
+	 ) _exit(EXIT_FAILURE);
       (void)close(sock[1]);
       _exit(EXIT_SUCCESS);
       }
@@ -439,9 +440,7 @@ if (fd >= 0)
   if (flags != -1) (void)fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
   }
 else
-  {
   errno = EACCES;
-  }
 
 return fd;
 }
@@ -457,7 +456,7 @@ return fd;
 it does not exist. This may be called recursively on failure, in order to open
 the panic log.
 
-The directory is in the static variable file_path. This is static so that it
+The directory is in the static variable file_path. This is static so that
 the work of sorting out the path is done just once per Exim process.
 
 Exim is normally configured to avoid running as root wherever possible, the log
@@ -475,7 +474,7 @@ Returns:   nothing
 */
 
 static void
-open_log(int *fd, int type, uschar *tag)
+open_log(int * fd, int type, const uschar * tag)
 {
 uid_t euid;
 BOOL ok, ok2;
@@ -492,60 +491,64 @@ people want, I hope. */
 
 ok = string_format(buffer, sizeof(buffer), CS file_path, log_names[type]);
 
-/* Save the name of the mainlog for rollover processing. Without a datestamp,
-it gets statted to see if it has been cycled. With a datestamp, the datestamp
-will be compared. The static slot for saving it is the same size as buffer,
-and the text has been checked above to fit, so this use of strcpy() is OK. */
-
-if (type == lt_main && string_datestamp_offset >= 0)
+switch (type)
   {
-  Ustrcpy(mainlog_name, buffer);
-  mainlog_datestamp = mainlog_name + string_datestamp_offset;
-  }
+  case lt_main:
+    /* Save the name of the mainlog for rollover processing. Without a datestamp,
+    it gets statted to see if it has been cycled. With a datestamp, the datestamp
+    will be compared. The static slot for saving it is the same size as buffer,
+    and the text has been checked above to fit, so this use of strcpy() is OK. */
+    Ustrcpy(mainlog_name, buffer);
+    if (string_datestamp_offset > 0)
+      mainlog_datestamp = mainlog_name + string_datestamp_offset;
+    break;
 
-/* Ditto for the reject log */
+  case lt_reject:
+    /* Ditto for the reject log */
+    Ustrcpy(rejectlog_name, buffer);
+    if (string_datestamp_offset > 0)
+      rejectlog_datestamp = rejectlog_name + string_datestamp_offset;
+    break;
 
-else if (type == lt_reject && string_datestamp_offset >= 0)
-  {
-  Ustrcpy(rejectlog_name, buffer);
-  rejectlog_datestamp = rejectlog_name + string_datestamp_offset;
-  }
+  case lt_debug:
+    /* and deal with the debug log (which keeps the datestamp, but does not
+    update it) */
+    Ustrcpy(debuglog_name, buffer);
+    if (tag)
+      {
+      if (is_tainted(tag))
+      	die(US"exim: tainted tag for debug log filename",
+      	      US"Logging failure; please try later");
 
-/* and deal with the debug log (which keeps the datestamp, but does not
-update it) */
+      /* this won't change the offset of the datestamp */
+      ok2 = string_format(buffer, sizeof(buffer), "%s%s",
+        debuglog_name, tag);
+      if (ok2)
+        Ustrcpy(debuglog_name, buffer);
+      }
+    break;
 
-else if (type == lt_debug)
-  {
-  Ustrcpy(debuglog_name, buffer);
-  if (tag)
-    {
-    /* this won't change the offset of the datestamp */
-    ok2 = string_format(buffer, sizeof(buffer), "%s%s",
-      debuglog_name, tag);
-    if (ok2)
-      Ustrcpy(debuglog_name, buffer);
-    }
-  }
+  default:
+    /* Remove any datestamp if this is the panic log. This is rare, so there's no
+    need to optimize getting the datestamp length. We remove one non-alphanumeric
+    char afterwards if at the start, otherwise one before. */
+    if (string_datestamp_offset >= 0)
+      {
+      uschar * from = buffer + string_datestamp_offset;
+      uschar * to = from + string_datestamp_length;
 
-/* Remove any datestamp if this is the panic log. This is rare, so there's no
-need to optimize getting the datestamp length. We remove one non-alphanumeric
-char afterwards if at the start, otherwise one before. */
+      if (from == buffer || from[-1] == '/')
+        {
+        if (!isalnum(*to)) to++;
+        }
+      else
+        if (!isalnum(from[-1])) from--;
 
-else if (string_datestamp_offset >= 0)
-  {
-  uschar * from = buffer + string_datestamp_offset;
-  uschar * to = from + string_datestamp_length;
-
-  if (from == buffer || from[-1] == '/')
-    {
-    if (!isalnum(*to)) to++;
-    }
-  else
-    if (!isalnum(from[-1])) from--;
-
-  /* This copy is ok, because we know that to is a substring of from. But
-  due to overlap we must use memmove() not Ustrcpy(). */
-  memmove(from, to, Ustrlen(to)+1);
+      /* This copy is ok, because we know that to is a substring of from. But
+      due to overlap we must use memmove() not Ustrcpy(). */
+      memmove(from, to, Ustrlen(to)+1);
+      }
+    break;
   }
 
 /* If the file name is too long, it is an unrecoverable disaster */
@@ -556,12 +559,8 @@ if (!ok)
 
 /* We now have the file name. After a successful open, return. */
 
-*fd = log_open_as_exim(buffer);
-
-if (*fd >= 0)
-  {
+if ((*fd = log_open_as_exim(buffer)) >= 0)
   return;
-  }
 
 euid = geteuid();
 
@@ -571,7 +570,7 @@ non-setuid binary with log_arguments set, called in certain ways.) Rather than
 just bombing out, force the log to stderr and carry on if stderr is available.
 */
 
-if (euid != root_uid && euid != exim_uid && log_stderr != NULL)
+if (euid != root_uid && euid != exim_uid && log_stderr)
   {
   *fd = fileno(log_stderr);
   return;
@@ -580,7 +579,9 @@ if (euid != root_uid && euid != exim_uid && log_stderr != NULL)
 /* Otherwise this is a disaster. This call is deliberately ONLY to the panic
 log. If possible, save a copy of the original line that was being logged. If we
 are recursing (can't open the panic log either), the pointer will already be
-set. */
+set.  Also, when we had to use a subprocess for the create we didn't retrieve
+errno from it, so get the error from the open attempt above (which is often
+meaningful enough, so leave it). */
 
 if (!panic_save_buffer)
   if ((panic_save_buffer = US malloc(LOG_BUFFER_SIZE)))
@@ -600,6 +601,22 @@ if (type == lt_debug) unlink(CS debuglog_name);
 
 
 
+/* Append to a gstring, in no-extend (or rebuffer) mode
+and without taint-checking.  Thanks to the no-extend, the
+gstring struct never needs reallocation; we ignore the
+infore that the initial space allocation for the string
+was exceeded, and just leave it potentially truncated. */
+
+static void
+string_fmt_append_noextend(gstring * g, char * fmt, ...)
+{
+va_list ap;
+va_start(ap, fmt);
+/* can return NULL if it truncates; just ignore */
+(void) string_vformat(g, SVFMT_TAINT_NOCHK, fmt, ap);
+va_end(ap);
+}
+
 /*************************************************
 *     Add configuration file info to log line    *
 *************************************************/
@@ -608,24 +625,28 @@ if (type == lt_debug) unlink(CS debuglog_name);
 once for real).
 
 Arguments:
-  ptr         pointer to the end of the line we are building
-  flags       log flags
+  g		extensible-string referring to static buffer,
+		usable after return
+  flags		log flags
 
-Returns:      updated pointer
+Returns:      nothing
 */
 
-static gstring *
+static void
 log_config_info(gstring * g, int flags)
 {
-g = string_cat(g, US"Exim configuration error");
+string_fmt_append_noextend(g, "Exim configuration error");
 
 if (flags & (LOG_CONFIG_FOR & ~LOG_CONFIG))
-  return string_cat(g, US" for ");
+  string_fmt_append_noextend(g, " for ");
+else
+  {
+  if (flags & (LOG_CONFIG_IN & ~LOG_CONFIG))
+    string_fmt_append_noextend(g, " in line %d of %s",
+				  config_lineno, config_filename);
 
-if (flags & (LOG_CONFIG_IN & ~LOG_CONFIG))
-  g = string_fmt_append(g, " in line %d of %s", config_lineno, config_filename);
-
-return string_catn(g, US":\n  ", 4);
+  string_fmt_append_noextend(g, ":\n  ");
+  }
 }
 
 
@@ -683,11 +704,11 @@ Returns:
   length actually written, persisting an errno from write()
 */
 ssize_t
-write_to_fd_buf(int fd, const uschar *buf, size_t length)
+write_to_fd_buf(int fd, const uschar * buf, size_t length)
 {
 ssize_t wrote;
 size_t total_written = 0;
-const uschar *p = buf;
+const uschar * p = buf;
 size_t left = length;
 
 while (1)
@@ -710,6 +731,12 @@ while (1)
 return total_written;
 }
 
+static inline ssize_t
+write_gstring_to_fd_buf(int fd, const gstring * g)
+{
+return write_to_fd_buf(fd, g->s, g->ptr);
+}
+
 
 
 static void
@@ -727,10 +754,17 @@ while ((t = string_nextinlist(&tt, &sep, log_buffer, LOG_BUFFER_SIZE)))
 }
 
 
+/* Close mainlog, unless we do not see a chance to open the file mainlog later
+again.  This will happen if we log from a transport process (which has dropped
+privs); something we traditionally avoid, but the introduction of taint-tracking
+and resulting detection of errors is makinng harder. */
+
 void
 mainlog_close(void)
 {
-if (mainlogfd < 0) return;
+if (mainlogfd < 0
+   || !(geteuid() == 0 || geteuid() == exim_uid))
+  return;
 (void)close(mainlogfd);
 mainlogfd = -1;
 mainlog_inode = 0;
@@ -798,8 +832,8 @@ log_write(unsigned int selector, int flags, const char *format, ...)
 {
 int paniclogfd;
 ssize_t written_len;
-gstring gs = { .size = LOG_BUFFER_SIZE-1, .ptr = 0, .s = log_buffer };
-gstring * g;
+gstring gs = { .size = LOG_BUFFER_SIZE-2, .ptr = 0, .s = log_buffer };
+gstring * g = &gs;
 va_list ap;
 
 /* If panic_recurseflag is set, we have failed to open the panic log. This is
@@ -809,7 +843,7 @@ original log line that caused the problem. Afterwards, expire. */
 
 if (panic_recurseflag)
   {
-  uschar *extra = panic_save_buffer ? panic_save_buffer : US"";
+  uschar * extra = panic_save_buffer ? panic_save_buffer : US"";
   if (debug_file) debug_printf("%s%s", extra, log_buffer);
   if (log_stderr && log_stderr != debug_file)
     fprintf(log_stderr, "%s%s", extra, log_buffer);
@@ -826,7 +860,7 @@ if (!log_buffer)
   if (!(log_buffer = US malloc(LOG_BUFFER_SIZE)))
     {
     fprintf(stderr, "exim: failed to get store for log buffer\n");
-    exim_exit(EXIT_FAILURE, NULL);
+    exim_exit(EXIT_FAILURE);
     }
 
 /* If we haven't already done so, inspect the setting of log_file_path to
@@ -900,48 +934,53 @@ if (!path_inspected)
       "More than one path given in log_file_path: using %s", file_path);
   }
 
+/* Optionally trigger debug */
+
+if (flags & LOG_PANIC && dtrigger_selector & BIT(DTi_panictrigger))
+  debug_trigger_fire();
+
 /* If debugging, show all log entries, but don't show headers. Do it all
 in one go so that it doesn't get split when multi-processing. */
 
 DEBUG(D_any|D_v)
   {
-  int i;
-
-  g = string_catn(&gs, US"LOG:", 4);
+  string_fmt_append_noextend(g, "LOG:");
 
   /* Show the selector that was passed into the call. */
 
-  for (i = 0; i < log_options_count; i++)
+  for (int i = 0; i < log_options_count; i++)
     {
     unsigned int bitnum = log_options[i].bit;
     if (bitnum < BITWORDSIZE && selector == BIT(bitnum))
-      g = string_fmt_append(g, " %s", log_options[i].name);
+      string_fmt_append_noextend(g, " %s", log_options[i].name);
     }
 
-  g = string_fmt_append(g, "%s%s%s%s\n  ",
+  string_fmt_append_noextend(g, "%s%s%s%s\n  ",
     flags & LOG_MAIN ?    " MAIN"   : "",
     flags & LOG_PANIC ?   " PANIC"  : "",
     (flags & LOG_PANIC_DIE) == LOG_PANIC_DIE ? " DIE" : "",
     flags & LOG_REJECT ?  " REJECT" : "");
 
-  if (flags & LOG_CONFIG) g = log_config_info(g, flags);
+  if (flags & LOG_CONFIG) log_config_info(g, flags);
+
+  /* We want to be able to log tainted info, but log_buffer is directly
+  malloc'd.  So use deliberately taint-nonchecking routines to build into
+  it, trusting that we will never expand the results. */
 
   va_start(ap, format);
-  i = g->ptr;
-  if (!string_vformat(g, FALSE, format, ap))
+  if (!string_vformat(g, SVFMT_TAINT_NOCHK, format, ap))
     {
-    g->ptr = i;
-    g = string_cat(g, US"**** log string overflowed log buffer ****");
+    uschar * s = US"**** log string overflowed log buffer ****";
+    gstring_trim(g, Ustrlen(s));
+    string_fmt_append_noextend(g, "%s", s);
     }
   va_end(ap);
 
-  g->size = LOG_BUFFER_SIZE;
-  g = string_catn(g, US"\n", 1);
-  debug_printf("%s", string_from_gstring(g));
+  debug_printf("%Y\n", g);
 
-  gs.size = LOG_BUFFER_SIZE-1;	/* Having used the buffer for debug output, */
-  gs.ptr = 0;			/* reset it for the real use. */
-  gs.s = log_buffer;
+  /* Having used the buffer for debug output, reset it for the real use. */
+
+  gstring_reset(g);
   }
 /* If no log file is specified, we are in a mess. */
 
@@ -954,7 +993,7 @@ if (!(flags & (LOG_MAIN|LOG_PANIC|LOG_REJECT)))
 if (f.disable_logging)
   {
   DEBUG(D_any) debug_printf("log writing disabled\n");
-  if ((flags & LOG_PANIC_DIE) == LOG_PANIC_DIE) exim_exit(EXIT_FAILURE, NULL);
+  if ((flags & LOG_PANIC_DIE) == LOG_PANIC_DIE) exim_exit(EXIT_FAILURE);
   return;
   }
 
@@ -965,28 +1004,32 @@ if (!write_rejectlog) flags &= ~LOG_REJECT;
 /* Create the main message in the log buffer. Do not include the message id
 when called by a utility. */
 
-g = string_fmt_append(&gs, "%s ", tod_stamp(tod_log));
+string_fmt_append_noextend(&gs, "%s ", tod_stamp(tod_log));
 
 if (LOGGING(pid))
   {
   if (!syslog_pid) pid_position[0] = g->ptr;		/* remember begin … */
-  g = string_fmt_append(g, "[%d] ", (int)getpid());
+  string_fmt_append_noextend(g, "[%ld] ", (long)getpid());
   if (!syslog_pid) pid_position[1] = g->ptr;		/*  … and end+1 of the PID */
   }
 
-if (f.really_exim && message_id[0] != 0)
-  g = string_fmt_append(g, "%s ", message_id);
+if (f.really_exim && message_id[0])
+  string_fmt_append_noextend(g, "%s ", message_id);
 
 if (flags & LOG_CONFIG)
-  g = log_config_info(g, flags);
+  log_config_info(g, flags);
 
 va_start(ap, format);
   {
-  int i = g->ptr;
-  if (!string_vformat(g, FALSE, format, ap))
+  /* We want to be able to log tainted info, but log_buffer is directly
+  malloc'd.  So use deliberately taint-nonchecking routines to build into
+  it, trusting that we will never expand the results. */
+
+  if (!string_vformat(g, SVFMT_TAINT_NOCHK, format, ap))
     {
-    g->ptr = i;
-    g = string_cat(g, US"**** log string overflowed log buffer ****\n");
+    uschar * s = US"**** log string overflowed log buffer ****\n";
+    gstring_trim(g, Ustrlen(s));
+    string_fmt_append_noextend(g, "%s", s);
     }
   }
 va_end(ap);
@@ -994,29 +1037,29 @@ va_end(ap);
 /* Add the raw, unrewritten, sender to the message if required. This is done
 this way because it kind of fits with LOG_RECIPIENTS. */
 
-if (   flags & LOG_SENDER
-   && g->ptr < LOG_BUFFER_SIZE - 10 - Ustrlen(raw_sender))
-  g = string_fmt_append(g, " from <%s>", raw_sender);
+if (flags & LOG_SENDER)
+  string_fmt_append_noextend(g, " from <%s>", raw_sender);
 
 /* Add list of recipients to the message if required; the raw list,
 before rewriting, was saved in raw_recipients. There may be none, if an ACL
 discarded them all. */
 
-if (  flags & LOG_RECIPIENTS
-   && g->ptr < LOG_BUFFER_SIZE - 6
-   && raw_recipients_count > 0)
+if (flags & LOG_RECIPIENTS && raw_recipients_count > 0)
   {
-  int i;
-  g = string_fmt_append(g, " for");
-  for (i = 0; i < raw_recipients_count; i++)
-    {
-    uschar * s = raw_recipients[i];
-    if (LOG_BUFFER_SIZE - g->ptr < Ustrlen(s) + 3) break;
-    g = string_fmt_append(g, " %s", s);
+  string_fmt_append_noextend(g, " for");
+  for (int i = 0; i < raw_recipients_count; i++)
+    if (!string_fmt_append_f(g, SVFMT_TAINT_NOCHK, " %s", raw_recipients[i]))
+      {
+    uschar * s = US"<trunc>";
+    gstring_trim(g, Ustrlen(s));
+    string_fmt_append_noextend(g, "%s", s);
+    break;
     }
   }
 
-g = string_catn(g, US"\n", 1);
+/* actual size, now we are placing the newline (and space for NUL) */
+gs.size = LOG_BUFFER_SIZE;
+string_fmt_append_noextend(g, "\n");
 string_from_gstring(g);
 
 /* Handle loggable errors when running a utility, or when address testing.
@@ -1034,7 +1077,7 @@ if (!f.really_exim || f.log_testing_mode)
     else
       fprintf(log_stderr, "%s", CS log_buffer);
 
-  if ((flags & LOG_PANIC_DIE) == LOG_PANIC_DIE) exim_exit(EXIT_FAILURE, US"");
+  if ((flags & LOG_PANIC_DIE) == LOG_PANIC_DIE) exim_exit(EXIT_FAILURE);
   return;
   }
 
@@ -1090,8 +1133,7 @@ if (  flags & LOG_MAIN
 
     /* Failing to write to the log is disastrous */
 
-    written_len = write_to_fd_buf(mainlogfd, g->s, g->ptr);
-    if (written_len != g->ptr)
+    if ((written_len = write_gstring_to_fd_buf(mainlogfd, g)) != g->ptr)
       {
       log_write_failed(US"main log", g->ptr, written_len);
       /* That function does not return */
@@ -1106,62 +1148,41 @@ headers. */
 
 if (flags & LOG_REJECT)
   {
-  header_line *h;
-
   if (header_list && LOGGING(rejected_header))
     {
-    uschar * p = g->s + g->ptr;
     int i;
 
     if (recipients_count > 0)
       {
       /* List the sender */
 
-      string_format(p, LOG_BUFFER_SIZE - g->ptr,
-        "Envelope-from: <%s>\n", sender_address);
-      while (*p) p++;
-      g->ptr = p - g->s;
+      string_fmt_append_noextend(g,
+			"Envelope-from: <%s>\n", sender_address);
 
       /* List up to 5 recipients */
 
-      string_format(p, LOG_BUFFER_SIZE - g->ptr,
-        "Envelope-to: <%s>\n", recipients_list[0].address);
-      while (*p) p++;
-      g->ptr = p - g->s;
+      string_fmt_append_noextend(g,
+			"Envelope-to: <%s>\n", recipients_list[0].address);
 
       for (i = 1; i < recipients_count && i < 5; i++)
-        {
-        string_format(p, LOG_BUFFER_SIZE - g->ptr, "    <%s>\n",
-          recipients_list[i].address);
-	while (*p) p++;
-	g->ptr = p - g->s;
-        }
+        string_fmt_append_noextend(g,
+			"    <%s>\n", recipients_list[i].address);
 
       if (i < recipients_count)
-        {
-        string_format(p, LOG_BUFFER_SIZE - g->ptr,
-          "    ...\n");
-	while (*p) p++;
-	g->ptr = p - g->s;
-        }
+        string_fmt_append_noextend(g, "    ...\n", NULL);
       }
 
-    /* A header with a NULL text is an unfilled in Received: header */
+    /* A header with a NULL text is an unfilled-in Received: header */
 
-    for (h = header_list; h; h = h->next) if (h->text)
-      {
-      BOOL fitted = string_format(p, LOG_BUFFER_SIZE - g->ptr,
-        "%c %s", h->type, h->text);
-      while (*p) p++;
-      g->ptr = p - g->s;
-      if (!fitted)         /* Buffer is full; truncate */
-        {
-        g->ptr -= 100;        /* For message and separator */
-        if (g->s[g->ptr-1] == '\n') g->ptr--;
-        g = string_cat(g, US"\n*** truncated ***\n");
+    for (header_line * h = header_list; h; h = h->next) if (h->text)
+      if (!string_fmt_append_f(g, SVFMT_TAINT_NOCHK,
+			"%c %s", h->type, h->text))
+        {				/* Buffer is full; truncate */
+	gstring_trim(g, 100);		/* space for message and separator */
+	gstring_trim_trailing(g, '\n');
+        string_fmt_append_noextend(g, "\n*** truncated ***\n");
         break;
         }
-      }
     }
 
   /* Write to syslog or to a log file */
@@ -1212,8 +1233,7 @@ if (flags & LOG_REJECT)
       if (fstat(rejectlogfd, &statbuf) >= 0) rejectlog_inode = statbuf.st_ino;
       }
 
-    written_len = write_to_fd_buf(rejectlogfd, g->s, g->ptr);
-    if (written_len != g->ptr)
+    if ((written_len = write_gstring_to_fd_buf(rejectlogfd, g)) != g->ptr)
       {
       log_write_failed(US"reject log", g->ptr, written_len);
       /* That function does not return */
@@ -1245,13 +1265,9 @@ if (flags & LOG_PANIC)
     panic_recurseflag = FALSE;
 
     if (panic_save_buffer)
-      {
-      int i = write(paniclogfd, panic_save_buffer, Ustrlen(panic_save_buffer));
-      i = i;	/* compiler quietening */
-      }
+      (void) write(paniclogfd, panic_save_buffer, Ustrlen(panic_save_buffer));
 
-    written_len = write_to_fd_buf(paniclogfd, g->s, g->ptr);
-    if (written_len != g->ptr)
+    if ((written_len = write_gstring_to_fd_buf(paniclogfd, g)) != g->ptr)
       {
       int save_errno = errno;
       write_syslog(LOG_CRIT, log_buffer);
@@ -1267,7 +1283,10 @@ if (flags & LOG_PANIC)
   /* Give up if the DIE flag is set */
 
   if ((flags & LOG_PANIC_DIE) != LOG_PANIC)
-    die(NULL, US"Unexpected failure, please try later");
+    if (panic_coredump)
+      kill(getpid(), SIGSEGV);	/* deliberate trap */
+    else
+      die(NULL, US"Unexpected failure, please try later");
   }
 }
 
@@ -1352,18 +1371,19 @@ Returns:         nothing on success - bomb out on failure
 */
 
 void
-decode_bits(unsigned int *selector, size_t selsize, int *notall,
-  uschar *string, bit_table *options, int count, uschar *which, int flags)
+decode_bits(unsigned int * selector, size_t selsize, int * notall,
+  const uschar * string, bit_table * options, int count, uschar * which,
+  int flags)
 {
 uschar *errmsg;
-if (string == NULL) return;
+if (!string) return;
 
 if (*string == '=')
   {
   char *end;    /* Not uschar */
   memset(selector, 0, sizeof(*selector)*selsize);
-  *selector = strtoul(CS string+1, &end, 0);
-  if (*end == 0) return;
+  *selector = strtoul(CCS string+1, &end, 0);
+  if (!*end) return;
   errmsg = string_sprintf("malformed numeric %s_selector setting: %s", which,
     string);
   goto ERROR_RETURN;
@@ -1374,12 +1394,12 @@ if (*string == '=')
 else for(;;)
   {
   BOOL adding;
-  uschar *s;
+  const uschar * s;
   int len;
-  bit_table *start, *end;
+  bit_table * start, * end;
 
-  while (isspace(*string)) string++;
-  if (*string == 0) return;
+  Uskip_whitespace(&string);
+  if (!*string) return;
 
   if (*string != '+' && *string != '-')
     {
@@ -1401,7 +1421,6 @@ else for(;;)
     bit_table *middle = start + (end - start)/2;
     int c = Ustrncmp(s, middle->name, len);
     if (c == 0)
-      {
       if (middle->name[len] != 0) c = -1; else
         {
         unsigned int bit = middle->bit;
@@ -1423,7 +1442,6 @@ else for(;;)
 
         break;  /* Out of loop to match selector name */
         }
-      }
     if (c < 0) end = middle; else start = middle + 1;
     }  /* Loop to match selector name */
 
@@ -1446,7 +1464,7 @@ if (Ustrcmp(which, "debug") == 0)
     return;
     }
   fprintf(stderr, "exim: %s\n", errmsg);
-  exit(EXIT_FAILURE);
+  exim_exit(EXIT_FAILURE);
   }
 else log_write(0, LOG_CONFIG|LOG_PANIC_DIE, "%s", errmsg);
 }
@@ -1467,13 +1485,15 @@ misconfiguration.
 
 The first use of this is in ACL logic, "control = debug/tag=foo/opts=+expand"
 which can be combined with conditions, etc, to activate extra logging only
-for certain sources. The second use is inetd wait mode debug preservation. */
+for certain sources. The second use is inetd wait mode debug preservation.
+
+It might be nice, in ACL-initiated pretrigger mode, to not create the file
+immediately but only upon a trigger - but we'd need another cmdline option
+to pass the name through child_exxec_exim(). */
 
 void
-debug_logging_activate(uschar *tag_name, uschar *opts)
+debug_logging_activate(const uschar * tag_name, const uschar * opts)
 {
-int fd = -1;
-
 if (debug_file)
   {
   debug_printf("DEBUGGING ACTIVATED FROM WITHIN CONFIG.\n"
@@ -1481,7 +1501,7 @@ if (debug_file)
   return;
   }
 
-if (tag_name != NULL && (Ustrchr(tag_name, '/') != NULL))
+if (tag_name && (Ustrchr(tag_name, '/') != NULL))
   {
   log_write(0, LOG_MAIN|LOG_PANIC, "debug tag may not contain a '/' in: %s",
       tag_name);
@@ -1499,25 +1519,47 @@ do not segfault; note that nondefault log locations will not work */
 
 if (!*file_path) set_file_path();
 
-open_log(&fd, lt_debug, tag_name);
+open_log(&debug_fd, lt_debug, tag_name);
 
-if (fd != -1)
-  debug_file = fdopen(fd, "w");
+if (debug_fd != -1)
+  debug_file = fdopen(debug_fd, "w");
 else
   log_write(0, LOG_MAIN|LOG_PANIC, "unable to open debug log");
 }
 
 
 void
-debug_logging_stop(void)
+debug_logging_from_spool(const uschar * filename)
 {
+if (debug_fd < 0)
+  {
+  Ustrncpy(debuglog_name, filename, sizeof(debuglog_name));
+  if ((debug_fd = log_open_as_exim(filename)) >= 0)
+    debug_file = fdopen(debug_fd, "w");
+  DEBUG(D_deliver) debug_printf("debug enabled by spoolfile\n");
+  }
+/*
+else DEBUG(D_deliver)
+  debug_printf("debug already active; ignoring spoolfile '%s'\n", filename);
+*/
+}
+
+
+void
+debug_logging_stop(BOOL kill)
+{
+debug_printf("debug terminated by %s\n", kill ? "kill" : "stop");
+debug_pretrigger_discard();
 if (!debug_file || !debuglog_name[0]) return;
 
 debug_selector = 0;
 fclose(debug_file);
 debug_file = NULL;
-unlink_log(lt_debug);
+debug_fd = -1;
+if (kill) unlink_log(lt_debug);
 }
 
 
 /* End of log.c */
+/* vi: sw ai sw=2
+*/

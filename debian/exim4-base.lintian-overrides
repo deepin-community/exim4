@@ -1,0 +1,7 @@
+# false positives, inline perl invocation.
+exim4-base: bash-term-in-posix-shell *usr/sbin/exim_checkaccess*
+exim4-base: bash-term-in-posix-shell *usr/sbin/exinext*
+# explicitly set
+exim4-base: bash-term-in-posix-shell *HOSTNAME*cron.daily/exim4-base*
+# systemd service file is shipped in daemon packages
+exim4-base: omitted-systemd-service-for-init.d-script exim4 [etc/init.d/exim4]

@@ -3,7 +3,9 @@
 *************************************************/
 
 /* Copyright (c) University of Cambridge 1995 - 2018 */
+/* Copyright (c) The Exim Maintainers 2021 - 2023 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "em_hdr.h"
@@ -173,44 +175,6 @@ va_start(ap, format);
 vfprintf(stderr, format, ap);
 fprintf(stderr, "\n");
 va_end(ap);
-selector = selector;     /* Keep picky compilers happy */
-flags = flags;
-}
-
-
-
-
-/*************************************************
-*        Extract port from address string        *
-*************************************************/
-
-/* In the spool file, a host plus port is given as an IP address followed by a
-dot and a port number. This function decodes this. It is needed by the
-spool-reading function, and copied here to avoid having to include the whole
-host.c module. One day the interaction between exim and eximon with regard to
-included code MUST be tidied up!
-
-Argument:
-  address    points to the string; if there is a port, the '.' in the string
-             is overwritten with zero to terminate the address
-
-Returns:     0 if there is no port, else the port number.
-*/
-
-int
-host_address_extract_port(uschar *address)
-{
-int skip = -3;                     /* Skip 3 dots in IPv4 addresses */
-address--;
-while (*(++address) != 0)
-  {
-  int ch = *address;
-  if (ch == ':') skip = 0;         /* Skip 0 dots in IPv6 addresses */
-    else if (ch == '.' && skip++ >= 0) break;
-  }
-if (*address == 0) return 0;
-*address++ = 0;
-return Uatoi(address);
 }
 
 
@@ -240,9 +204,6 @@ if (action_queue_update) tick_queue_accumulator = 999999;
 
 void updateAction(Widget w, XtPointer client_data, XtPointer call_data)
 {
-w = w;       /* Keep picky compilers happy */
-client_data = client_data;
-call_data = call_data;
 scan_spool_input(TRUE);
 queue_display();
 tick_queue_accumulator = 0;
@@ -250,9 +211,6 @@ tick_queue_accumulator = 0;
 
 void hideAction(Widget w, XtPointer client_data, XtPointer call_data)
 {
-w = w;       /* Keep picky compilers happy */
-client_data = client_data;
-call_data = call_data;
 actioned_message[0] = 0;
 dialog_ref_widget = w;
 dialog_action = da_hide;
@@ -263,11 +221,7 @@ void unhideAction(Widget w, XtPointer client_data, XtPointer call_data)
 {
 skip_item *sk = queue_skip;
 
-w = w;       /* Keep picky compilers happy */
-client_data = client_data;
-call_data = call_data;
-
-while (sk != NULL)
+while (sk)
   {
   skip_item *next = sk->next;
   store_free(sk);
@@ -285,9 +239,6 @@ tick_queue_accumulator = 0;
 
 void quitAction(Widget w, XtPointer client_data, XtPointer call_data)
 {
-w = w;       /* Keep picky compilers happy */
-client_data = client_data;
-call_data = call_data;
 exit(0);
 }
 
@@ -317,10 +268,6 @@ Dimension x, y;
 Dimension width, height;
 XWindowAttributes a;
 Window w = XtWindow(toplevel_widget);
-
-button = button;    /* Keep picky compilers happy */
-client_data = client_data;
-call_data = call_data;
 
 /* Get the position and size of the top level widget. */
 
@@ -473,9 +420,6 @@ tick_queue_accumulator += tick_interval;
 tick_stripchart_accumulator += tick_interval;
 read_log();
 
-pt = pt;    /* Keep picky compilers happy */
-i = i;
-
 /* If we have passed the queue update time, we must do a full
 scan of the queue, checking for new arrivals, etc. This will
 as a by-product set the count of items for use by the stripchart
@@ -592,7 +536,8 @@ return ret;
 *               Initialize                       *
 *************************************************/
 
-int main(int argc, char **argv)
+int
+main(int argc, char **argv)
 {
 int i;
 struct stat statdata;
@@ -613,7 +558,8 @@ message_subdir[1] = 0;
 constructing file names and things. This call will initialize
 the store_get() function. */
 
-big_buffer = store_get(big_buffer_size);
+store_init();
+big_buffer = store_get(big_buffer_size, GET_UNTAINTED);
 
 /* Set up the version string and date and output them */
 
@@ -655,7 +601,7 @@ if (log_file[0] != 0)
   {
   /* Do *not* use "%s" here, we need the %D datestamp in the log_file to
   be expanded! */
-  (void)string_format(log_file_open, sizeof(log_file_open), CS log_file);
+  (void)string_format(log_file_open, sizeof(log_file_open), CS log_file, NULL);
   log_datestamping = string_datestamp_offset >= 0;
 
   LOG = fopen(CS log_file_open, "r");

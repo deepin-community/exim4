@@ -6,7 +6,7 @@ procmail:
   check_local_user
   transport = procmail_pipe
   # emulate OR with "if exists"-expansion
-  require_files = ${local_part}:\
+  require_files = ${local_part_data}:\
                   ${if exists{/etc/procmailrc}\
                     {/etc/procmailrc}{${home}/.procmailrc}}:\
                   +/usr/bin/procmail

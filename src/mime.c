@@ -2,9 +2,11 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
-/* Copyright (c) Tom Kistner <tom@duncanthrax.net> 2004 - 2015
+/*
+ * Copyright (c) The Exim Maintainers 2015 - 2024
+ * Copyright (c) Tom Kistner <tom@duncanthrax.net> 2004 - 2015
  * License: GPL
- * Copyright (c) The Exim Maintainers 2015 - 2018
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #include "exim.h"
@@ -28,10 +30,10 @@ static int mime_header_list_size = nelem(mime_header_list);
 
 static mime_parameter mime_parameter_list[] = {
   /*	name	namelen	 value */
-  { US"name=",     5, &mime_filename },
-  { US"filename=", 9, &mime_filename },
-  { US"charset=",  8, &mime_charset  },
-  { US"boundary=", 9, &mime_boundary }
+  { US"name",     4, &mime_filename },
+  { US"filename", 8, &mime_filename },
+  { US"charset",  7, &mime_charset  },
+  { US"boundary", 8, &mime_boundary }
 };
 
 
@@ -107,23 +109,23 @@ return initial_pos;
 static ssize_t
 mime_decode_asis(FILE* in, FILE* out, uschar* boundary)
 {
-  ssize_t len, size = 0;
-  uschar buffer[MIME_MAX_LINE_LENGTH];
+ssize_t len, size = 0;
+uschar buffer[MIME_MAX_LINE_LENGTH];
 
-  while(fgets(CS buffer, MIME_MAX_LINE_LENGTH, mime_stream) != NULL)
-    {
-    if (boundary != NULL
-       && Ustrncmp(buffer, "--", 2) == 0
-       && Ustrncmp((buffer+2), boundary, Ustrlen(boundary)) == 0
-       )
-      break;
+while(fgets(CS buffer, MIME_MAX_LINE_LENGTH, mime_stream) != NULL)
+  {
+  if (boundary != NULL
+     && Ustrncmp(buffer, "--", 2) == 0
+     && Ustrncmp((buffer+2), boundary, Ustrlen(boundary)) == 0
+     )
+    break;
 
-    len = Ustrlen(buffer);
-    if (fwrite(buffer, 1, (size_t)len, out) < len)
-      return -1;
-    size += len;
-    } /* while */
-  return size;
+  len = Ustrlen(buffer);
+  if (fwrite(buffer, 1, (size_t)len, out) < len)
+    return -1;
+  size += len;
+  } /* while */
+return size;
 }
 
 
@@ -395,13 +397,11 @@ if ((num_copied > 0) && (header[num_copied-1] != ';'))
 header[num_copied] = '\0';
 
 /* return 0 for EOF or empty line */
-if ((c == EOF) || (num_copied == 1))
-  return 0;
-else
-  return 1;
+return c == EOF || num_copied == 1 ? 0 : 1;
 }
 
 
+/* reset all per-part mime variables */
 static void
 mime_vars_reset(void)
 {
@@ -489,7 +489,7 @@ while ((c = *fname))
     val = string_catn(val, fname++, 1);
 
 val = string_catn(val, US"?=", 2);
-*len = val->ptr;
+*len = gstring_length(val);
 return string_from_gstring(val);
 }
 
@@ -502,8 +502,8 @@ int rc = OK;
 uschar * header = NULL;
 struct mime_boundary_context nested_context;
 
-/* reserve a line buffer to work in */
-header = store_get(MIME_MAX_HEADER_SIZE+1);
+/* reserve a line buffer to work in.  Assume tainted data. */
+header = store_get(MIME_MAX_HEADER_SIZE+1, GET_TAINTED);
 
 /* Not actually used at the moment, but will be vital to fixing
  * some RFC 2046 nonconformance later... */
@@ -557,11 +557,9 @@ while(1)
 
   /* parse headers, set up expansion variables */
   while (mime_get_header(f, header))
-    {
-    struct mime_header * mh;
 
     /* look for interesting headers */
-    for (mh = mime_header_list;
+    for (struct mime_header * mh = mime_header_list;
 	 mh < mime_header_list + mime_header_list_size;
 	 mh++) if (strncmpic(mh->name, header, mh->namelen) == 0)
       {
@@ -579,8 +577,8 @@ while(1)
       if (*(p = q)) p++;			/* jump past the ; */
 
 	{
-	uschar * mime_fname = NULL;
-	uschar * mime_fname_rfc2231 = NULL;
+	gstring * mime_fname = NULL;
+	gstring * mime_fname_rfc2231 = NULL;
 	uschar * mime_filename_charset = NULL;
 	BOOL decoding_failed = FALSE;
 
@@ -589,88 +587,95 @@ while(1)
 
 	while (*p)
 	  {
-	  mime_parameter * mp;
+	  DEBUG(D_acl)
+	    debug_printf_indent("MIME:   considering paramlist '%s'\n", p);
 
-	  DEBUG(D_acl) debug_printf_indent("MIME:   considering paramlist '%s'\n", p);
-
-	  if (  !mime_filename
-	     && strncmpic(CUS"content-disposition:", header, 20) == 0
-	     && strncmpic(CUS"filename*", p, 9) == 0
-	     )
-	    {					/* RFC 2231 filename */
-	    uschar * q;
-
-	    /* find value of the filename */
-	    p += 9;
-	    while(*p != '=' && *p) p++;
-	    if (*p) p++;			/* p is filename or NUL */
-	    q = mime_param_val(&p);		/* p now trailing ; or NUL */
-
-	    if (q && *q)
+	  /* look for interesting parameters */
+	  for (mime_parameter * mp = mime_parameter_list;
+	       mp < mime_parameter_list + nelem(mime_parameter_list);
+	       mp++
+	      ) if (strncmpic(mp->name, p, mp->namelen) == 0)
+	    {
+	    p += mp->namelen;
+	    if (*p == '*')			/* RFC 2231 */
 	      {
-	      uschar * temp_string, * err_msg;
-	      int slen;
-
-	      /* build up an un-decoded filename over successive
-	      filename*= parameters (for use when 2047 decode fails) */
-
-	      mime_fname_rfc2231 = string_sprintf("%#s%s",
-		mime_fname_rfc2231, q);
-
-	      if (!decoding_failed)
+	      while (isdigit(*++p)) ;		/* ignore cont-cnt values */
+	      if (*p == '*') p++;		/* step over sep chset mark */
+	      if (*p == '=')
 		{
-		int size;
-		if (!mime_filename_charset)
+		uschar * q;
+		p++;				/* step over = */
+		q = mime_param_val(&p);		/* p now trailing ; or NUL */
+
+		if (q && *q)			/* q is the dequoted value */
 		  {
-		  uschar * s = q;
+		  uschar * err_msg, * fname = q;
+		  int slen;
 
-		  /* look for a ' in the "filename" */
-		  while(*s != '\'' && *s) s++;	/* s is 1st ' or NUL */
+		  /* build up an un-decoded filename over successive
+		  filename*= parameters (for use when 2047 decode fails) */
 
-		  if ((size = s-q) > 0)
-		    mime_filename_charset = string_copyn(q, size);
+		  mime_fname_rfc2231 = string_cat(mime_fname_rfc2231, q);
 
-		  if (*(p = s)) p++;
-		  while(*p == '\'') p++;	/* p is after 2nd ' */
-		  }
-		else
-		  p = q;
+		  if (!decoding_failed)
+		    {
+		    if (!mime_filename_charset)
+		      {			/* try for RFC 2231 chset/lang */
+		      uschar * s = q;
 
-		DEBUG(D_acl) debug_printf_indent("MIME:    charset %s fname '%s'\n",
-		  mime_filename_charset ? mime_filename_charset : US"<NULL>", p);
+		      /* look for a ' in the raw paramval */
+		      while(*s != '\'' && *s) s++;	/* s is 1st ' or NUL */
 
-		temp_string = rfc2231_to_2047(p, mime_filename_charset, &slen);
-		DEBUG(D_acl) debug_printf_indent("MIME:    2047-name %s\n", temp_string);
+		      if (*s)				/* there was a ' */
+			{
+			int size;
+			if ((size = s-q) > 0)
+			  mime_filename_charset = string_copyn(q, size);
 
-		temp_string = rfc2047_decode(temp_string, FALSE, NULL, ' ',
-		  NULL, &err_msg);
-		DEBUG(D_acl) debug_printf_indent("MIME:    plain-name %s\n", temp_string);
+			if (*(fname = s)) fname++;
+			while(*fname == '\'') fname++;    /*fname is after 2nd '*/
+			}
+		      }
 
-		if (!temp_string || (size = Ustrlen(temp_string))  == slen)
-		  decoding_failed = TRUE;
-		else
-		  /* build up a decoded filename over successive
-		  filename*= parameters */
+		    DEBUG(D_acl)
+		      debug_printf_indent("MIME:    charset %s fname '%s'\n",
+			mime_filename_charset ? mime_filename_charset : US"<NULL>",
+			fname);
 
-		  mime_filename = mime_fname = mime_fname
-		    ? string_sprintf("%s%s", mime_fname, temp_string)
-		    : temp_string;
-		}
+		    fname = rfc2231_to_2047(fname, mime_filename_charset,
+						  &slen);
+		    DEBUG(D_acl)
+		      debug_printf_indent("MIME:    2047-name %s\n", fname);
+
+		    fname = rfc2047_decode(fname, FALSE, NULL, ' ',
+						  NULL, &err_msg);
+		    DEBUG(D_acl) debug_printf_indent(
+				    "MIME:    plain-name %s\n", fname);
+
+		    if (!fname || Ustrlen(fname) == slen)
+		      decoding_failed = TRUE;
+		    else if (mp->value == &mime_filename)
+		      {
+		      /* build up a decoded filename over successive
+		      filename*= parameters */
+
+		      mime_fname = string_cat(mime_fname, fname);
+		      mime_filename = string_from_gstring(mime_fname);
+		      }
+		    }	/*!decoding_failed*/
+		  }	/*q*/
+
+		if (*p) p++;			/* p is past ; */
+		goto param_done;		/* done matching param names */
+		}		/*2231 param coding extension*/
 	      }
-	    }
-
-	  else
-	    /* look for interesting parameters */
-	    for (mp = mime_parameter_list;
-		 mp < mime_parameter_list + nelem(mime_parameter_list);
-		 mp++
-		) if (strncmpic(mp->name, p, mp->namelen) == 0)
-	      {
-	      uschar * q;
-	      uschar * dummy_errstr;
+	    else if (*p == '=')
+	      {		/* non-2231 param */
+	      uschar * q, * dummy_errstr;
 
 	      /* grab the value and copy to its expansion variable */
-	      p += mp->namelen;
+
+	      if (*p) p++;			/* step over = */
 	      q = mime_param_val(&p);		/* p now trailing ; or NUL */
 
 	      *mp->value = q && *q
@@ -681,27 +686,31 @@ while(1)
 		"MIME:  found %s parameter in %s header, value '%s'\n",
 		mp->name, mh->name, *mp->value);
 
-	      break;			/* done matching param names */
+	      if (*p) p++;			/* p is past ; */
+	      goto param_done;			/* done matching param names */
 	      }
-
+	    }					/* interesting parameters */
 
 	  /* There is something, but not one of our interesting parameters.
-	     Advance past the next semicolon */
+	  Advance past the next semicolon */
+
 	  p = mime_next_semicolon(p);
 	  if (*p) p++;
-	  }				/* param scan on line */
+  param_done: ;
+	  }					/* param scan on line */
 
 	if (strncmpic(CUS"content-disposition:", header, 20) == 0)
 	  {
-	  if (decoding_failed) mime_filename = mime_fname_rfc2231;
+	  if (decoding_failed)
+	    mime_filename = string_from_gstring(mime_fname_rfc2231);
 
 	  DEBUG(D_acl) debug_printf_indent(
 	    "MIME:  found %s parameter in %s header, value is '%s'\n",
 	    "filename", mh->name, mime_filename);
 	  }
 	}
-      }
-    }
+      break;
+      }	/* interesting headers */
 
   /* set additional flag variables (easier access) */
   if (  mime_content_type
@@ -733,9 +742,8 @@ while(1)
   if (rc != OK) break;
 
   /* If we have a multipart entity and a boundary, go recursive */
-  if ( (mime_content_type != NULL) &&
-       (nested_context.boundary != NULL) &&
-       (Ustrncmp(mime_content_type,"multipart",9) == 0) )
+  if (  mime_content_type && nested_context.boundary 
+     && Ustrncmp(mime_content_type,"multipart",9) == 0)
     {
     DEBUG(D_acl)
       debug_printf_indent("MIME: Entering multipart recursion, boundary '%s'\n",
@@ -752,25 +760,25 @@ while(1)
     rc = mime_acl_check(acl, f, &nested_context, user_msgptr, log_msgptr);
     if (rc != OK) break;
     }
-  else if ( (mime_content_type != NULL) &&
-	  (Ustrncmp(mime_content_type,"message/rfc822",14) == 0) )
+  else if (  mime_content_type
+	  && Ustrncmp(mime_content_type,"message/rfc822",14) == 0)
     {
-    const uschar *rfc822name = NULL;
-    uschar filename[2048];
+    const uschar * rfc822name = NULL;
+    uschar * filename;
     int file_nr = 0;
     int result = 0;
 
     /* must find first free sequential filename */
-    do
+    for (gstring * g = string_get(64); result != -1; gstring_reset(g))
       {
       struct stat mystat;
-      (void)string_format(filename, 2048,
+      g = string_fmt_append(g,
 	"%s/scan/%s/__rfc822_%05u", spool_directory, message_id, file_nr++);
       /* security break */
       if (file_nr >= 128)
 	goto NO_RFC822;
-      result = stat(CS filename,&mystat);
-      } while (result != -1);
+      result = stat(CS (filename = string_from_gstring(g)), &mystat);
+      }
 
     rfc822name = filename;
 
@@ -806,5 +814,5 @@ return rc;
 
 #endif	/*WITH_CONTENT_SCAN*/
 
-/* vi: sw ai sw=2
+/* vi: aw ai sw=2
 */

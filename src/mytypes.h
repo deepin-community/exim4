@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2023 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 /* This header file contains type definitions and macros that I use as
@@ -12,6 +14,8 @@ local_scan.h includes it and exim.h includes them both (to get this earlier). */
 
 #ifndef MYTYPES_H
 #define MYTYPES_H
+
+# include <string.h>
 
 #ifndef FALSE
 # define FALSE         0
@@ -27,22 +31,41 @@ local_scan.h includes it and exim.h includes them both (to get this earlier). */
 
 
 /* If gcc is being used to compile Exim, we can use its facility for checking
-the arguments of printf-like functions. This is done by a macro. */
+the arguments of printf-like functions. This is done by a macro.
+OpenBSD has unfortunately taken to objecting to use of %n in printf
+so we have to give up on all of the available parameter checking. */
 
 #if defined(__GNUC__) || defined(__clang__)
-# define PRINTF_FUNCTION(A,B)	__attribute__((format(printf,A,B)))
+# ifndef __OpenBSD__
+#  define PRINTF_FUNCTION(A,B)	__attribute__((format(printf,A,B)))
+# endif
 # define ARG_UNUSED		__attribute__((__unused__))
+# define FUNC_MAYBE_UNUSED	__attribute__((__unused__))
 # define WARN_UNUSED_RESULT	__attribute__((__warn_unused_result__))
+# define ALLOC			__attribute__((malloc))
+# define NORETURN		__attribute__((noreturn))
+# ifndef __clang__
+#  define ALLOC_SIZE(A)		__attribute__((alloc_size(A)))
+# else
+#  define ALLOC_SIZE(A)		/**/
+# endif
 #else
-# define PRINTF_FUNCTION(A,B)
-# define ARG_UNUSED  /**/
-# define WARN_UNUSED_RESULT /**/
+# define ARG_UNUSED		/**/
+# define FUNC_MAYBE_UNUSED	/**/
+# define WARN_UNUSED_RESULT	/**/
+# define ALLOC			/**/
+# define ALLOC_SIZE(A)		/**/
+# define NORETURN		/**/
+#endif
+
+#ifndef PRINTF_FUNCTION
+# define PRINTF_FUNCTION(A,B)	/**/
 #endif
 
 #ifdef WANT_DEEPER_PRINTF_CHECKS
 # define ALMOST_PRINTF(A, B) PRINTF_FUNCTION(A, B)
 #else
-# define ALMOST_PRINTF(A, B)
+# define ALMOST_PRINTF(A, B)	/**/
 #endif
 
 
@@ -69,6 +92,7 @@ almost always literal strings. */
 #define CUS  (const unsigned char *)
 #define USS  (unsigned char **)
 #define CUSS (const unsigned char **)
+#define CCSS (const char **)
 
 /* The C library string functions expect "char *" arguments. Use macros to
 avoid having to write a cast each time. We do this for string and file
@@ -79,32 +103,31 @@ functions that are called quite often; for other calls to external libraries
 #define Uatol(s)           atol(CCS(s))
 #define Uchdir(s)          chdir(CCS(s))
 #define Uchmod(s,n)        chmod(CCS(s),n)
-#define Uchown(s,n,m)      chown(CCS(s),n,m)
 #define Ufgets(b,n,f)      fgets(CS(b),n,f)
-#define Ufopen(s,t)        fopen(CCS(s),CCS(t))
+#define Ufopen(s,t)        exim_fopen(CCS(s),CCS(t))
 #define Ulink(s,t)         link(CCS(s),CCS(t))
 #define Ulstat(s,t)        lstat(CCS(s),t)
 
-#ifdef O_BINARY                                        /* This is for Cygwin,  */
-#define Uopen(s,n,m)       open(CCS(s),(n)|O_BINARY,m) /* where all files must */
-#else                                                  /* be opened as binary  */
-#define Uopen(s,n,m)       open(CCS(s),n,m)            /* to avoid problems    */
-#endif                                                 /* with CRLF endings.   */
+#ifdef O_BINARY							/* This is for Cygwin,  */
+# define Uopen(s,n,m)       exim_open(CCS(s),(n)|O_BINARY,m)	/* where all files must */
+# define Uopen2(s,n)        exim_open2(CCS(s),(n)|O_BINARY)
+#else								/* be opened as binary  */
+# define Uopen(s,n,m)       exim_open(CCS(s),n,m)		/* to avoid problems    */
+# define Uopen2(s,n)        exim_open2(CCS(s),n)	
+#endif								/* with CRLF endings.   */
 #define Uread(f,b,l)       read(f,CS(b),l)
 #define Urename(s,t)       rename(CCS(s),CCS(t))
 #define Ustat(s,t)         stat(CCS(s),t)
-#define Ustrcat(s,t)       strcat(CS(s),CCS(t))
 #define Ustrchr(s,n)       US strchr(CCS(s),n)
 #define CUstrchr(s,n)      CUS strchr(CCS(s),n)
 #define CUstrerror(n)      CUS strerror(n)
 #define Ustrcmp(s,t)       strcmp(CCS(s),CCS(t))
-#define Ustrcpy(s,t)       strcpy(CS(s),CCS(t))
+#define Ustrcpy_nt(s,t)    strcpy(CS s, CCS t)		/* no taint check */
 #define Ustrcspn(s,t)      strcspn(CCS(s),CCS(t))
 #define Ustrftime(s,m,f,t) strftime(CS(s),m,f,t)
 #define Ustrlen(s)         (int)strlen(CCS(s))
-#define Ustrncat(s,t,n)    strncat(CS(s),CCS(t),n)
 #define Ustrncmp(s,t,n)    strncmp(CCS(s),CCS(t),n)
-#define Ustrncpy(s,t,n)    strncpy(CS(s),CCS(t),n)
+#define Ustrncpy_nt(s,t,n) strncpy(CS s, CCS t, n)	/* no taint check */
 #define Ustrpbrk(s,t)      strpbrk(CCS(s),CCS(t))
 #define Ustrrchr(s,n)      US strrchr(CCS(s),n)
 #define CUstrrchr(s,n)     CUS strrchr(CCS(s),n)
@@ -115,6 +138,18 @@ functions that are called quite often; for other calls to external libraries
 #define Ustrtol(s,t,b)     strtol(CCS(s),CSS(t),b)
 #define Ustrtoul(s,t,b)    strtoul(CCS(s),CSS(t),b)
 #define Uunlink(s)         unlink(CCS(s))
+
+#if defined(EM_VERSION_C) || defined(LOCAL_SCAN) || defined(DLFUNC_IMPL)
+# define Ustrcat(s,t)       strcat(CS(s), CCS(t))
+# define Ustrcpy(s,t)       strcpy(CS(s), CCS(t))
+# define Ustrncat(s,t,n)    strncat(CS(s), CCS(t), n)
+# define Ustrncpy(s,t,n)    strncpy(CS(s), CCS(t), n)
+#else
+# define Ustrcat(s,t)       __Ustrcat(s, CUS(t), __FUNCTION__, __LINE__)
+# define Ustrcpy(s,t)       __Ustrcpy(s, CUS(t), __FUNCTION__, __LINE__)
+# define Ustrncat(s,t,n)    __Ustrncat(s, CUS(t), n, __FUNCTION__, __LINE__)
+# define Ustrncpy(s,t,n)    __Ustrncpy(s, CUS(t), n, __FUNCTION__, __LINE__)
 #endif
 
+#endif
 /* End of mytypes.h */

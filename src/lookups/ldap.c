@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Many thanks to Stuart Lynne for contributing the original code for this
 driver. Further contributions from Michael Haardt, Brian Candler, Barry
@@ -143,8 +145,6 @@ LDAP_CONNECTION *lcp;
 struct timeval timeout;
 struct timeval *timeoutptr = NULL;
 
-uschar *attr;
-uschar **attrp;
 gstring * data = NULL;
 uschar *dn = NULL;
 uschar *host;
@@ -165,8 +165,8 @@ int    rescount = 0;
 BOOL   attribute_found = FALSE;
 BOOL   ldapi = FALSE;
 
-DEBUG(D_lookup)
-  debug_printf("perform_ldap_search: ldap%s URL = \"%s\" server=%s port=%d "
+DEBUG(D_lookup) debug_printf_indent("perform_ldap_search:"
+    " ldap%s URL = \"%s\" server=%s port=%d "
     "sizelimit=%d timelimit=%d tcplimit=%d\n",
     search_type == SEARCH_LDAP_MULTIPLE ? "m" :
     search_type == SEARCH_LDAP_DN       ? "dn" :
@@ -209,7 +209,7 @@ else
   port = ludp->lud_port;
   }
 
-DEBUG(D_lookup) debug_printf("after ldap_url_parse: host=%s port=%d\n",
+DEBUG(D_lookup) debug_printf_indent("after ldap_url_parse: host=%s port=%d\n",
   host, port);
 
 if (port == 0) port = LDAP_PORT;      /* Default if none given */
@@ -245,7 +245,7 @@ if (host)
 
 /* Count the attributes; we need this later to tell us how to format results */
 
-for (attrp = USS ludp->lud_attrs; attrp && *attrp; attrp++)
+for (uschar ** attrp = USS ludp->lud_attrs; attrp && *attrp; attrp++)
   attrs_requested++;
 
 /* See if we can find a cached connection to this host. The port is not
@@ -303,24 +303,18 @@ if (!lcp)
   than the host name + "ldaps:///" plus : and a port number, say 20 + the
   length of the host name. What we get should accommodate both, easily. */
 
-  uschar *shost = (host == NULL)? US"" : host;
-  uschar *init_url = store_get(20 + 3 * Ustrlen(shost));
-  uschar *init_ptr;
+  uschar * shost = host ? host : US"";
+  rmark reset_point = store_mark();
+  gstring * g;
 
   /* Handle connection via Unix socket ("ldapi"). We build a basic LDAP URI to
   contain the path name, with slashes escaped as %2F. */
 
   if (ldapi)
     {
-    int ch;
-    init_ptr = init_url + 8;
-    Ustrcpy(init_url, "ldapi://");
-    while ((ch = *shost++))
-      if (ch == '/')
-	{ Ustrncpy(init_ptr, "%2F", 3); init_ptr += 3; }
-      else
-	*init_ptr++ = ch;
-    *init_ptr = 0;
+    g = string_catn(NULL, US"ldapi://", 8);
+    for (uschar ch; (ch = *shost); shost++)
+      g = ch == '/' ? string_catn(g, US"%2F", 3) : string_catn(g, shost, 1);
     }
 
   /* This is not an ldapi call. Just build a URI with the protocol type, host
@@ -328,22 +322,24 @@ if (!lcp)
 
   else
     {
-    init_ptr = Ustrchr(ldap_url, '/');
-    Ustrncpy(init_url, ldap_url, init_ptr - ldap_url);
-    init_ptr = init_url + (init_ptr - ldap_url);
-    sprintf(CS init_ptr, "//%s:%d/", shost, port);
+    uschar * init_ptr = Ustrchr(ldap_url, '/');
+    g = string_catn(NULL, ldap_url, init_ptr - ldap_url);
+    g = string_fmt_append(g, "//%s:%d/", shost, port);
     }
 
   /* Call ldap_initialize() and check the result */
+   {
+    const uschar * s = string_from_gstring(g);
 
-  DEBUG(D_lookup) debug_printf("ldap_initialize with URL %s\n", init_url);
-  if ((rc = ldap_initialize(&ld, CS init_url)) != LDAP_SUCCESS)
-    {
-    *errmsg = string_sprintf("ldap_initialize: (error %d) URL \"%s\"\n",
-      rc, init_url);
-    goto RETURN_ERROR;
-    }
-  store_reset(init_url);   /* Might as well save memory when we can */
+    DEBUG(D_lookup) debug_printf_indent("ldap_initialize with URL %s\n", s);
+    if ((rc = ldap_initialize(&ld, CS s)) != LDAP_SUCCESS)
+      {
+      *errmsg = string_sprintf("ldap_initialize: (error %d) URL \"%s\"\n",
+	rc, s);
+      goto RETURN_ERROR;
+      }
+   }
+  store_reset(reset_point);   /* Might as well save memory when we can */
 
 
   /* ------------------------- Not OpenLDAP ---------------------- */
@@ -411,7 +407,7 @@ if (!lcp)
   ldap_set_option(ld, LDAP_OPT_PROTOCOL_VERSION, (void *)&eldap_version);
 #endif
 
-  DEBUG(D_lookup) debug_printf("initialized for LDAP (v%d) server %s%s\n",
+  DEBUG(D_lookup) debug_printf_indent("initialized for LDAP (v%d) server %s%s\n",
     eldap_version, host, porttext);
 
   /* If not using ldapi and TLS is available, set appropriate TLS options: hard
@@ -431,9 +427,9 @@ if (!lcp)
 	: Ustrcmp(eldap_require_cert, "try")    == 0 ? LDAP_OPT_X_TLS_TRY
 	: LDAP_OPT_X_TLS_NEVER;
 
-      DEBUG(D_lookup)
-        debug_printf("Require certificate overrides LDAP_OPT_X_TLS option (%d)\n",
-                     tls_option);
+      DEBUG(D_lookup) debug_printf_indent(
+	"Require certificate overrides LDAP_OPT_X_TLS option (%d)\n",
+	tls_option);
       }
     else
 # endif  /* LDAP_OPT_X_TLS_REQUIRE_CERT */
@@ -441,13 +437,13 @@ if (!lcp)
       {
       tls_option = LDAP_OPT_X_TLS_HARD;
       DEBUG(D_lookup)
-        debug_printf("LDAP_OPT_X_TLS_HARD set due to ldaps:// URI\n");
+        debug_printf_indent("LDAP_OPT_X_TLS_HARD set due to ldaps:// URI\n");
       }
     else
       {
       tls_option = LDAP_OPT_X_TLS_TRY;
       DEBUG(D_lookup)
-        debug_printf("LDAP_OPT_X_TLS_TRY set due to ldap:// URI\n");
+        debug_printf_indent("LDAP_OPT_X_TLS_TRY set due to ldap:// URI\n");
       }
     ldap_set_option(ld, LDAP_OPT_X_TLS, (void *)&tls_option);
     }
@@ -490,21 +486,21 @@ if (!lcp)
     rc = ldap_set_option(ldsetctx, LDAP_OPT_X_TLS_REQUIRE_CERT, &cert_option);
     if (rc)
       DEBUG(D_lookup)
-        debug_printf("Unable to set TLS require cert_option(%d) globally: %s\n",
+        debug_printf_indent("Unable to set TLS require cert_option(%d) globally: %s\n",
           cert_option, ldap_err2string(rc));
     }
 #endif
 #ifdef LDAP_OPT_X_TLS_NEWCTX
   if ((rc = ldap_set_option(ldsetctx, LDAP_OPT_X_TLS_NEWCTX, &am_server)))
     DEBUG(D_lookup)
-      debug_printf("Unable to reload TLS context %d: %s\n",
+      debug_printf_indent("Unable to reload TLS context %d: %s\n",
                    rc, ldap_err2string(rc));
   #endif
 
   /* Now add this connection to the chain of cached connections */
 
-  lcp = store_get(sizeof(LDAP_CONNECTION));
-  lcp->host = (host == NULL)? NULL : string_copy(host);
+  lcp = store_get(sizeof(LDAP_CONNECTION), GET_UNTAINTED);
+  lcp->host = host ? string_copy(host) : NULL;
   lcp->bound = FALSE;
   lcp->user = NULL;
   lcp->password = NULL;
@@ -519,7 +515,7 @@ if (!lcp)
 
 else
   DEBUG(D_lookup)
-    debug_printf("re-using cached connection to LDAP server %s%s\n",
+    debug_printf_indent("re-using cached connection to LDAP server %s%s\n",
       host, porttext);
 
 /* Bind with the user/password supplied, or an anonymous bind if these values
@@ -534,7 +530,7 @@ if (  !lcp->bound
    || lcp->password && password && Ustrcmp(lcp->password, password) != 0
    )
   {
-  DEBUG(D_lookup) debug_printf("%sbinding with user=%s password=%s\n",
+  DEBUG(D_lookup) debug_printf_indent("%sbinding with user=%s password=%s\n",
     lcp->bound ? "re-" : "", user, password);
 
   if (eldap_start_tls && !lcp->is_start_tls_called && !ldapi)
@@ -553,7 +549,7 @@ if (  !lcp->bound
       }
     lcp->is_start_tls_called = TRUE;
 #else
-    DEBUG(D_lookup) debug_printf("TLS initiation not supported with this Exim"
+    DEBUG(D_lookup) debug_printf_indent("TLS initiation not supported with this Exim"
       " and your LDAP library.\n");
 #endif
     }
@@ -582,7 +578,7 @@ if (  !lcp->bound
   if (search_type == SEARCH_LDAP_AUTH && rc == LDAP_INVALID_CREDENTIALS)
     {
     DEBUG(D_lookup)
-      debug_printf("Invalid credentials: ldapauth returns FAIL\n");
+      debug_printf_indent("Invalid credentials: ldapauth returns FAIL\n");
     error_yield = FAIL;
     goto RETURN_ERROR_NOMSG;
     }
@@ -611,7 +607,7 @@ if (  !lcp->bound
 
 if (search_type == SEARCH_LDAP_AUTH)
   {
-  DEBUG(D_lookup) debug_printf("Bind succeeded: ldapauth returns OK\n");
+  DEBUG(D_lookup) debug_printf_indent("Bind succeeded: ldapauth returns OK\n");
   goto RETURN_OK;
   }
 
@@ -643,7 +639,7 @@ ldap_set_option(lcp->ld, LDAP_OPT_REFERRALS, referrals);
 
 /* Start the search on the server. */
 
-DEBUG(D_lookup) debug_printf("Start search\n");
+DEBUG(D_lookup) debug_printf_indent("Start search\n");
 
 msgid = ldap_search(lcp->ld, ludp->lud_dn, ludp->lud_scope, ludp->lud_filter,
   ludp->lud_attrs, 0);
@@ -675,7 +671,7 @@ while ((rc = ldap_result(lcp->ld, msgid, 0, timeoutptr, &result)) ==
                     then we get two entries, one for A and one for B.
                     Here we just count the values per entry */
 
-  DEBUG(D_lookup) debug_printf("LDAP result loop\n");
+  DEBUG(D_lookup) debug_printf_indent("LDAP result loop\n");
 
   for(e = ldap_first_entry(lcp->ld, result), valuecount = 0;
       e;
@@ -684,7 +680,7 @@ while ((rc = ldap_result(lcp->ld, msgid, 0, timeoutptr, &result)) ==
     uschar *new_dn;
     BOOL insert_space = FALSE;
 
-    DEBUG(D_lookup) debug_printf("LDAP entry loop\n");
+    DEBUG(D_lookup) debug_printf_indent("LDAP entry loop\n");
 
     rescount++;   /* Count results */
 
@@ -730,10 +726,10 @@ while ((rc = ldap_result(lcp->ld, msgid, 0, timeoutptr, &result)) ==
     sequence of name=value pairs, separated by (space), with the value always in quotes.
     If there are multiple values, they are given within the quotes, comma separated. */
 
-    else for (attr = US ldap_first_attribute(lcp->ld, e, &ber);
+    else for (uschar * attr = US ldap_first_attribute(lcp->ld, e, &ber);
               attr; attr = US ldap_next_attribute(lcp->ld, e, ber))
       {
-      DEBUG(D_lookup) debug_printf("LDAP attr loop\n");
+      DEBUG(D_lookup) debug_printf_indent("LDAP attr loop\n");
 
       /* In case of attrs_requested == 1 we just count the values, in all other cases
       (0, >1) we count the values per attribute */
@@ -761,7 +757,7 @@ while ((rc = ldap_result(lcp->ld, msgid, 0, timeoutptr, &result)) ==
             int len = Ustrlen(value);
             ++valuecount;
 
-            DEBUG(D_lookup) debug_printf("LDAP value loop %s:%s\n", attr, value);
+            DEBUG(D_lookup) debug_printf_indent("LDAP value loop %s:%s\n", attr, value);
 
             /* In case we requested one attribute only but got several times
             into that attr loop, we need to append the additional values.
@@ -776,9 +772,7 @@ while ((rc = ldap_result(lcp->ld, msgid, 0, timeoutptr, &result)) ==
             internal quotes, backslashes, newlines, and must double commas. */
 
             if (attrs_requested != 1)
-              {
-              int j;
-              for (j = 0; j < len; j++)
+              for (int j = 0; j < len; j++)
                 {
                 if (value[j] == '\n')
                   data = string_catn(data, US"\\n", 2);
@@ -791,19 +785,15 @@ while ((rc = ldap_result(lcp->ld, msgid, 0, timeoutptr, &result)) ==
                   data = string_catn(data, value+j, 1);
                   }
                 }
-              }
 
             /* For single attributes, just double commas */
 
 	    else
-	      {
-	      int j;
-	      for (j = 0; j < len; j++)
+	      for (int j = 0; j < len; j++)
 	        if (value[j] == ',')
 	          data = string_catn(data, US",,", 2);
 	        else
 	          data = string_catn(data, value+j, 1);
-	      }
 
 
             /* Move on to the next value */
@@ -846,7 +836,7 @@ an empty string. */
 
 if (!data) data = string_get(1);
 (void) string_from_gstring(data);
-gstring_reset_unused(data);
+gstring_release_unused(data);
 
 /* Copy the last dn into eldap_dn */
 
@@ -860,7 +850,7 @@ if (dn)
 #endif
   }
 
-DEBUG(D_lookup) debug_printf("search ended by ldap_result yielding %d\n",rc);
+DEBUG(D_lookup) debug_printf_indent("search ended by ldap_result yielding %d\n",rc);
 
 if (rc == 0)
   {
@@ -882,7 +872,7 @@ methods of handling error codes and generating error messages. */
 if (rc == -1 || !result)
   {
   int err;
-  DEBUG(D_lookup) debug_printf("ldap_result failed\n");
+  DEBUG(D_lookup) debug_printf_indent("ldap_result failed\n");
 
 #if defined LDAP_LIB_SOLARIS || defined LDAP_LIB_OPENLDAP2
     ldap_get_option(lcp->ld, LDAP_OPT_ERROR_NUMBER, &err);
@@ -925,7 +915,7 @@ We need to parse the message to find out exactly what's happened. */
   ldap_rc = rc;
   ldap_parse_rc = ldap_parse_result(lcp->ld, result, &rc, CSS &matched,
     CSS &error2, NULL, NULL, 0);
-  DEBUG(D_lookup) debug_printf("ldap_parse_result: %d\n", ldap_parse_rc);
+  DEBUG(D_lookup) debug_printf_indent("ldap_parse_result: %d\n", ldap_parse_rc);
   if (ldap_parse_rc < 0 &&
       (ldap_parse_rc != LDAP_NO_RESULTS_RETURNED
       #ifdef LDAP_RES_SEARCH_REFERENCE
@@ -967,7 +957,7 @@ We need to parse the message to find out exactly what's happened. */
       the lookup, so return DEFER (which is the default in error_yield).
 */
 
-DEBUG(D_lookup) debug_printf("ldap_parse_result yielded %d: %s\n",
+DEBUG(D_lookup) debug_printf_indent("ldap_parse_result yielded %d: %s\n",
   rc, ldap_err2string(rc));
 
 if (rc != LDAP_SUCCESS && rc != LDAP_SIZELIMIT_EXCEEDED
@@ -993,7 +983,7 @@ if (rc != LDAP_SUCCESS && rc != LDAP_SIZELIMIT_EXCEEDED
 #endif
 
     {
-    DEBUG(D_lookup) debug_printf("lookup failure forced\n");
+    DEBUG(D_lookup) debug_printf_indent("lookup failure forced\n");
     error_yield = FAIL;
     }
   goto RETURN_ERROR;
@@ -1012,7 +1002,7 @@ if (search_type != SEARCH_LDAP_MULTIPLE && rescount > 1)
 
 if (rescount < 1)
   {
-  *errmsg = string_sprintf("LDAP search: no results");
+  *errmsg = US"LDAP search: no results";
   error_yield = FAIL;
   goto RETURN_ERROR_BREAK;
   }
@@ -1029,7 +1019,7 @@ if (!attribute_found)
 
 /* Otherwise, it's all worked */
 
-DEBUG(D_lookup) debug_printf("LDAP search: returning: %s\n", data->s);
+DEBUG(D_lookup) debug_printf_indent("LDAP search: returning: %s\n", data->s);
 *res = data->s;
 
 RETURN_OK:
@@ -1043,7 +1033,7 @@ RETURN_ERROR_BREAK:
 *defer_break = TRUE;
 
 RETURN_ERROR:
-DEBUG(D_lookup) debug_printf("%s\n", *errmsg);
+DEBUG(D_lookup) debug_printf_indent("%s\n", *errmsg);
 
 RETURN_ERROR_NOMSG:
 if (result) ldap_msgfree(result);
@@ -1093,22 +1083,15 @@ control_ldap_search(const uschar *ldap_url, int search_type, uschar **res,
   uschar **errmsg)
 {
 BOOL defer_break = FALSE;
-int timelimit = LDAP_NO_LIMIT;
-int sizelimit = LDAP_NO_LIMIT;
+int timelimit = LDAP_NO_LIMIT, sizelimit = LDAP_NO_LIMIT;
 int tcplimit = 0;
 int sep = 0;
 int dereference = LDAP_DEREF_NEVER;
-void* referrals = LDAP_OPT_ON;
-const uschar *url = ldap_url;
-const uschar *p;
-uschar *user = NULL;
-uschar *password = NULL;
-uschar *local_servers = NULL;
-uschar *server;
-const uschar *list;
-uschar buffer[512];
+void * referrals = LDAP_OPT_ON;
+const uschar * url = ldap_url, * p, * list;
+uschar * user = NULL, * password = NULL, * local_servers = NULL;
 
-while (isspace(*url)) url++;
+Uskip_whitespace(&url);
 
 /* Until the string begins "ldap", search for the other parameter settings that
 are recognized. They are of the form NAME=VALUE, with the value being
@@ -1118,7 +1101,7 @@ NAME has the value "ldap". */
 while (strncmpic(url, US"ldap", 4) != 0)
   {
   const uschar *name = url;
-  while (*url != 0 && *url != '=') url++;
+  while (*url && *url != '=') url++;
   if (*url == '=')
     {
     int namelen;
@@ -1152,7 +1135,7 @@ while (strncmpic(url, US"ldap", 4) != 0)
         {
         *errmsg = string_sprintf("LDAP_OP_DEREF not defined in this LDAP "
           "library - cannot use \"dereference\"");
-        DEBUG(D_lookup) debug_printf("%s\n", *errmsg);
+        DEBUG(D_lookup) debug_printf_indent("%s\n", *errmsg);
         return DEFER;
         }
       #endif
@@ -1164,9 +1147,8 @@ while (strncmpic(url, US"ldap", 4) != 0)
         else if (strcmpic(value, US"nofollow") == 0) referrals = LDAP_OPT_OFF;
         else
           {
-          *errmsg = string_sprintf("LDAP option REFERRALS is not \"follow\" "
-            "or \"nofollow\"");
-          DEBUG(D_lookup) debug_printf("%s\n", *errmsg);
+          *errmsg = US"LDAP option REFERRALS is not \"follow\" or \"nofollow\"";
+          DEBUG(D_lookup) debug_printf_indent("%s\n", *errmsg);
           return DEFER;
           }
         }
@@ -1175,7 +1157,7 @@ while (strncmpic(url, US"ldap", 4) != 0)
         {
         *errmsg = string_sprintf("LDAP_OP_REFERRALS not defined in this LDAP "
           "library - cannot use \"referrals\"");
-        DEBUG(D_lookup) debug_printf("%s\n", *errmsg);
+        DEBUG(D_lookup) debug_printf_indent("%s\n", *errmsg);
         return DEFER;
         }
       #endif
@@ -1185,15 +1167,15 @@ while (strncmpic(url, US"ldap", 4) != 0)
         *errmsg =
           string_sprintf("unknown parameter \"%.*s\" precedes LDAP URL",
             namelen, name);
-        DEBUG(D_lookup) debug_printf("LDAP query error: %s\n", *errmsg);
+        DEBUG(D_lookup) debug_printf_indent("LDAP query error: %s\n", *errmsg);
         return DEFER;
         }
-      while (isspace(*url)) url++;
+      Uskip_whitespace(&url);
       continue;
       }
     }
   *errmsg = US"malformed parameter setting precedes LDAP URL";
-  DEBUG(D_lookup) debug_printf("LDAP query error: %s\n", *errmsg);
+  DEBUG(D_lookup) debug_printf_indent("LDAP query error: %s\n", *errmsg);
   return DEFER;
   }
 
@@ -1203,11 +1185,10 @@ result of ${quote_ldap_dn:...} quoting, which does apply URL quoting, because
 that is needed when the DN is used as a base DN in a query. Sigh. This is all
 far too complicated. */
 
-if (user != NULL)
+if (user)
   {
-  uschar *s;
   uschar *t = user;
-  for (s = user; *s != 0; s++)
+  for (uschar * s = user; *s != 0; s++)
     {
     int c, d;
     if (*s == '%' && isxdigit(c=s[1]) && isxdigit(d=s[2]))
@@ -1225,9 +1206,9 @@ if (user != NULL)
   }
 
 DEBUG(D_lookup)
-  debug_printf("LDAP parameters: user=%s pass=%s size=%d time=%d connect=%d "
+  debug_printf_indent("LDAP parameters: user=%s pass=%s size=%d time=%d connect=%d "
     "dereference=%d referrals=%s\n", user, password, sizelimit, timelimit,
-    tcplimit, dereference, (referrals == LDAP_OPT_ON)? "on" : "off");
+    tcplimit, dereference, referrals == LDAP_OPT_ON ? "on" : "off");
 
 /* If the request is just to check authentication, some credentials must
 be given. The password must not be empty because LDAP binds with an empty
@@ -1235,14 +1216,14 @@ password are considered anonymous, and will succeed on most installations. */
 
 if (search_type == SEARCH_LDAP_AUTH)
   {
-  if (user == NULL || password == NULL)
+  if (!user || !password)
     {
     *errmsg = US"ldapauth lookups must specify the username and password";
     return DEFER;
     }
-  if (password[0] == 0)
+  if (!*password)
     {
-    DEBUG(D_lookup) debug_printf("Empty password: ldapauth returns FAIL\n");
+    DEBUG(D_lookup) debug_printf_indent("Empty password: ldapauth returns FAIL\n");
     return FAIL;
     }
   }
@@ -1255,28 +1236,26 @@ if (Ustrncmp(p, "://", 3) != 0)
   {
   *errmsg = string_sprintf("LDAP URL does not start with \"ldap://\", "
     "\"ldaps://\", or \"ldapi://\" (it starts with \"%.16s...\")", url);
-  DEBUG(D_lookup) debug_printf("LDAP query error: %s\n", *errmsg);
+  DEBUG(D_lookup) debug_printf_indent("LDAP query error: %s\n", *errmsg);
   return DEFER;
   }
 
 /* No default servers, or URL contains a server name: just one attempt */
 
-if ((eldap_default_servers == NULL && local_servers == NULL) || p[3] != '/')
-  {
+if (!eldap_default_servers && !local_servers  || p[3] != '/')
   return perform_ldap_search(url, NULL, 0, search_type, res, errmsg,
     &defer_break, user, password, sizelimit, timelimit, tcplimit, dereference,
     referrals);
-  }
 
-/* Loop through the default servers until OK or FAIL. Use local_servers list
- * if defined in the lookup, otherwise use the global default list */
-list = (local_servers == NULL) ? eldap_default_servers : local_servers;
-while ((server = string_nextinlist(&list, &sep, buffer, sizeof(buffer))) != NULL)
+/* Loop through the servers until OK or FAIL. Use local_servers list
+if defined in the lookup, otherwise use the global default list */
+
+list = local_servers ? local_servers : eldap_default_servers;
+for (uschar * server; server = string_nextinlist(&list, &sep, NULL, 0); )
   {
-  int rc;
-  int port = 0;
+  int rc, port = 0;
   uschar *colon = Ustrchr(server, ':');
-  if (colon != NULL)
+  if (colon)
     {
     *colon = 0;
     port = Uatoi(colon+1);
@@ -1301,38 +1280,33 @@ are handled by a common function, with a flag to differentiate between them.
 The handle and filename arguments are not used. */
 
 static int
-eldap_find(void *handle, uschar *filename, const uschar *ldap_url, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+eldap_find(void * handle, const uschar * filename, const uschar * ldap_url,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
-/* Keep picky compilers happy */
-do_cache = do_cache;
 return(control_ldap_search(ldap_url, SEARCH_LDAP_SINGLE, result, errmsg));
 }
 
 static int
-eldapm_find(void *handle, uschar *filename, const uschar *ldap_url, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+eldapm_find(void * handle, const uschar * filename, const uschar * ldap_url,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
-/* Keep picky compilers happy */
-do_cache = do_cache;
 return(control_ldap_search(ldap_url, SEARCH_LDAP_MULTIPLE, result, errmsg));
 }
 
 static int
-eldapdn_find(void *handle, uschar *filename, const uschar *ldap_url, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+eldapdn_find(void * handle, const uschar * filename, const uschar * ldap_url,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
-/* Keep picky compilers happy */
-do_cache = do_cache;
 return(control_ldap_search(ldap_url, SEARCH_LDAP_DN, result, errmsg));
 }
 
 int
-eldapauth_find(void *handle, uschar *filename, const uschar *ldap_url, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+eldapauth_find(void * handle, const uschar * filename, const uschar * ldap_url,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache)
 {
-/* Keep picky compilers happy */
-do_cache = do_cache;
 return(control_ldap_search(ldap_url, SEARCH_LDAP_AUTH, result, errmsg));
 }
 
@@ -1345,7 +1319,7 @@ return(control_ldap_search(ldap_url, SEARCH_LDAP_AUTH, result, errmsg));
 /* See local README for interface description. */
 
 static void *
-eldap_open(uschar *filename, uschar **errmsg)
+eldap_open(const uschar * filename, uschar ** errmsg)
 {
 return (void *)(1);    /* Just return something non-null */
 }
@@ -1362,16 +1336,13 @@ Make sure that eldap_dn does not refer to reclaimed or worse, freed store */
 static void
 eldap_tidy(void)
 {
-LDAP_CONNECTION *lcp = NULL;
 eldap_dn = NULL;
 
-while ((lcp = ldap_connections) != NULL)
+for (LDAP_CONNECTION *lcp; lcp = ldap_connections; ldap_connections = lcp->next)
   {
-  DEBUG(D_lookup) debug_printf("unbind LDAP connection to %s:%d\n", lcp->host,
-    lcp->port);
-  if(lcp->bound == TRUE)
-    ldap_unbind(lcp->ld);
-  ldap_connections = lcp->next;
+  DEBUG(D_lookup) debug_printf_indent("unbind LDAP connection to %s:%d\n",
+    lcp->host, lcp->port);
+  if(lcp->bound) ldap_unbind(lcp->ld);
   }
 }
 
@@ -1432,6 +1403,7 @@ Arguments:
   s          the string to be quoted
   opt        additional option text or NULL if none
              only "dn" is recognized
+  idx	     lookup type index
 
 Returns:     the processed string or NULL for a bad option
 */
@@ -1457,18 +1429,15 @@ quote_ldap_dn, respectively. */
 
 
 static uschar *
-eldap_quote(uschar *s, uschar *opt)
+eldap_quote(uschar * s, uschar * opt, unsigned idx)
 {
-register int c;
-int count = 0;
-int len = 0;
+int c, count = 0, len = 0;
 BOOL dn = FALSE;
-uschar *t = s;
-uschar *quoted;
+uschar * t = s, * quoted;
 
 /* Test for a DN quotation. */
 
-if (opt != NULL)
+if (opt)
   {
   if (Ustrcmp(opt, "dn") != 0) return NULL;    /* No others recognized */
   dn = TRUE;
@@ -1481,24 +1450,25 @@ where, for example, < turns into %5C%3C. For simplicity, we just add 5 for each
 possibly escaped character. The really fast way would be just to test for
 non-alphanumerics, but it is probably better to spot a few others that are
 never escaped, because if there are no specials at all, we can avoid copying
-the string. */
+the string.
+XXX No longer true; we always copy, to support quoted-enforcement */
 
-while ((c = *t++) != 0)
+while ((c = *t++))
   {
   len++;
   if (!isalnum(c) && Ustrchr(ALWAYS_LITERAL, c) == NULL) count += 5;
   }
-if (count == 0) return s;
+/*if (count == 0) return s;*/
 
 /* Get sufficient store to hold the quoted string */
 
-t = quoted = store_get(len + count + 1);
+t = quoted = store_get_quoted(len + count + 1, s, idx);
 
 /* Handle plain quote_ldap */
 
 if (!dn)
   {
-  while ((c = *s++) != 0)
+  while ((c = *s++))
     {
     if (!isalnum(c))
       {
@@ -1523,7 +1493,7 @@ if (!dn)
 
 else
   {
-  uschar *ss = s + len;
+  uschar * ss = s + len;
 
   /* Find the last char before any trailing spaces */
 
@@ -1547,8 +1517,8 @@ else
       {
       if (Ustrchr(LDAP_DN_QUOTE, c) != NULL)
         {
-        Ustrncpy(t, "%5C", 3);               /* insert \ where needed */
-        t += 3;                              /* fall through to check URL */
+        memcpy(t, US"%5C", 3);			/* insert \ where needed */
+        t += 3;					/* fall through to check URL */
         }
       if (Ustrchr(URL_NONQUOTE, c) == NULL)  /* e.g. ] => %5D */
         {
@@ -1562,9 +1532,9 @@ else
 
   /* Handle the trailing spaces */
 
-  while (*ss++ != 0)
+  while (*ss++)
     {
-    Ustrncpy(t, "%5C%20", 6);
+    memcpy(t, US"%5C%20", 6);
     t += 6;
     }
   }
@@ -1585,49 +1555,50 @@ return quoted;
 
 #include "../version.h"
 
-void
-ldap_version_report(FILE *f)
+gstring *
+ldap_version_report(gstring * g)
 {
 #ifdef DYNLOOKUP
-fprintf(f, "Library version: LDAP: Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g, "Library version: LDAP: Exim version %s\n", EXIM_VERSION_STR);
 #endif
+return g;
 }
 
 
 static lookup_info ldap_lookup_info = {
-  US"ldap",                      /* lookup name */
-  lookup_querystyle,             /* query-style lookup */
-  eldap_open,                    /* open function */
-  NULL,                          /* check function */
-  eldap_find,                    /* find function */
-  NULL,                          /* no close function */
-  eldap_tidy,                    /* tidy function */
-  eldap_quote,                   /* quoting function */
-  ldap_version_report            /* version reporting */
+  .name = US"ldap",			/* lookup name */
+  .type = lookup_querystyle,		/* query-style lookup */
+  .open = eldap_open,			/* open function */
+  .check = NULL,			/* check function */
+  .find = eldap_find,			/* find function */
+  .close = NULL,			/* no close function */
+  .tidy = eldap_tidy,			/* tidy function */
+  .quote = eldap_quote,			/* quoting function */
+  .version_report = ldap_version_report            /* version reporting */
 };
 
 static lookup_info ldapdn_lookup_info = {
-  US"ldapdn",                     /* lookup name */
-  lookup_querystyle,             /* query-style lookup */
-  eldap_open,       /* sic */    /* open function */
-  NULL,                          /* check function */
-  eldapdn_find,                  /* find function */
-  NULL,                          /* no close function */
-  eldap_tidy,       /* sic */    /* tidy function */
-  eldap_quote,      /* sic */    /* quoting function */
-  NULL                           /* no version reporting (redundant) */
+  .name = US"ldapdn",			/* lookup name */
+  .type = lookup_querystyle,		/* query-style lookup */
+  .open = eldap_open,			/* sic */    /* open function */
+  .check = NULL,			/* check function */
+  .find = eldapdn_find,			/* find function */
+  .close = NULL,			/* no close function */
+  .tidy = eldap_tidy,			/* sic */    /* tidy function */
+  .quote = eldap_quote,			/* sic */    /* quoting function */
+  .version_report = NULL                           /* no version reporting (redundant) */
 };
 
 static lookup_info ldapm_lookup_info = {
-  US"ldapm",                     /* lookup name */
-  lookup_querystyle,             /* query-style lookup */
-  eldap_open,       /* sic */    /* open function */
-  NULL,                          /* check function */
-  eldapm_find,                   /* find function */
-  NULL,                          /* no close function */
-  eldap_tidy,       /* sic */    /* tidy function */
-  eldap_quote,      /* sic */    /* quoting function */
-  NULL                           /* no version reporting (redundant) */
+  .name = US"ldapm",			/* lookup name */
+  .type = lookup_querystyle,		/* query-style lookup */
+  .open = eldap_open,			/* sic */    /* open function */
+  .check = NULL,			/* check function */
+  .find = eldapm_find,			/* find function */
+  .close = NULL,			/* no close function */
+  .tidy = eldap_tidy,			/* sic */    /* tidy function */
+  .quote = eldap_quote,			/* sic */    /* quoting function */
+  .version_report = NULL                           /* no version reporting (redundant) */
 };
 
 #ifdef DYNLOOKUP

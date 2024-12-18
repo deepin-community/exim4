@@ -4,6 +4,7 @@
 
 /* Copyright (c) University of Cambridge 1995 - 2012, 2014 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* This module provides DANE (RFC6659) support for Exim.  See also
 the draft RFC for DANE-over-SMTP, "SMTP security via opportunistic DANE TLS"
@@ -29,7 +30,7 @@ static void dummy(int x) { dummy(x-1); }
 #else
 
 /* Enabling DANE without enabling TLS cannot work. Abort the compilation. */
-# ifndef SUPPORT_TLS
+# ifdef DISABLE_TLS
 #  error DANE support requires that TLS support must be enabled. Abort build.
 # endif
 
@@ -38,7 +39,7 @@ static void dummy(int x) { dummy(x-1); }
 #  error DANE support requires that the DNS resolver library supports DNSSEC
 # endif
 
-# ifndef USE_GNUTLS
+# ifdef USE_OPENSSL
 #  include "dane-openssl.c"
 # endif
 

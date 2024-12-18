@@ -1,5 +1,8 @@
 #! /bin/sh
 
+# Copyright (c) The Exim Maintainers 1995 - 2021
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 # We turn the configure-built build-$foo/lookups/Makefile.predynamic into Makefile
 
 # We always re-exec ourselves at least once, because it's the cleanest and
@@ -160,7 +163,7 @@ exec > "$target"
 sed -n "1,/$tag_marker/p" < "$input"
 
 for name_mod in \
-    CDB DBM:dbmdb DNSDB DSEARCH IBASE LSEARCH MYSQL NIS NISPLUS ORACLE \
+    CDB DBM:dbmdb DNSDB DSEARCH IBASE JSON LMDB LSEARCH MYSQL NIS NISPLUS ORACLE \
     PASSWD PGSQL REDIS SQLITE TESTDB WHOSON
 do
   emit_module_rule $name_mod
@@ -177,10 +180,8 @@ fi
 
 OBJ="${OBJ} spf.o"
 
-if want_experimental LMDB
-then
-  OBJ="${OBJ} lmdb.o"
-fi
+# readsock is always wanted as it implements the ${readsock } expansion
+OBJ="${OBJ} readsock.o"
 
 echo "MODS = $MODS"
 echo "OBJ = $OBJ"

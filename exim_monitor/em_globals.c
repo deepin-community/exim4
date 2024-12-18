@@ -2,8 +2,10 @@
 *                Exim Monitor                    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "em_hdr.h"
@@ -81,7 +83,7 @@ uschar *queue_stripchart_name = NULL;
 int     queue_update = 60;
 int     queue_width = 600;
 
-pcre   *yyyymmdd_regex;
+pcre2_code   *yyyymmdd_regex;
 
 uschar *size_stripchart = NULL;
 uschar *size_stripchart_name = NULL;
@@ -89,7 +91,7 @@ int     spool_is_split = FALSE;
 int     start_small = FALSE;
 int     stripchart_height = 90;
 int     stripchart_number = 1;
-pcre  **stripchart_regex;
+pcre2_code  **stripchart_regex;
 uschar **stripchart_title;
 int    *stripchart_total;
 int     stripchart_update = 60;
@@ -196,15 +198,17 @@ uschar *queue_name             = US"";
 int     received_count         = 0;
 uschar *received_protocol      = NULL;
 struct timeval received_time   = { 0, 0 };
+struct timeval received_time_complete = { 0, 0 };
 int     recipients_count       = 0;
 recipient_item *recipients_list = NULL;
 int     recipients_list_max    = 0;
 BOOL    running_in_test_harness=FALSE;
 
-uschar *sender_address         = NULL;
+const uschar *sender_address    = NULL;
 uschar *sender_fullhost        = NULL;
 uschar *sender_helo_name       = NULL;
 uschar *sender_host_address    = NULL;
+uschar *sender_host_auth_pubname = NULL;
 uschar *sender_host_authenticated = NULL;
 uschar *sender_host_name       = NULL;
 int     sender_host_port       = 0;
@@ -220,18 +224,8 @@ int     string_datestamp_type  = -1;
 
 BOOL    timestamps_utc         = FALSE;
 tls_support tls_in = {
- {-1},	/* tls_active */
- 0,	/* bits */
- FALSE,	/* tls_certificate_verified */
-#ifdef SUPPORT_DANE
- FALSE, /* dane_verified */
- 0,     /* tlsa_usage */
-#endif
- NULL,	/* tls_cipher */
- FALSE,	/* tls_on_connect */
- NULL,	/* tls_on_connect_ports */
- NULL,	/* tls_peerdn */
- NULL	/* tls_sni */
+ .active = { .sock = -1 }
+ /* remainder zero/null/false */
 };
 
 tree_node *tree_duplicates     = NULL;

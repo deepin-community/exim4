@@ -13,7 +13,7 @@ KEY=$DIR/exim.key
 # from a file. See /usr/share/doc/exim4-base/README.Debian.gz
 #DH=$DIR/exim.dhparam
 
-if ! which openssl > /dev/null ;then
+if ! command -v openssl > /dev/null ;then
 	echo "$0: openssl is not installed, exiting" 1>&2
 	exit 1
 fi
@@ -32,7 +32,7 @@ if [ "$1" = "--force" ]; then
 fi     
 
 #SSLEAY=/tmp/exim.ssleay.$$.cnf
-SSLEAY="$(tempfile -m600 -pexi)"
+SSLEAY="$(mktemp)"
 
 cat > $SSLEAY <<EOM
 RANDFILE = $HOME/.rnd

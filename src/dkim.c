@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge, 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Code for DKIM support. Other DKIM relevant code is in
    receive.c, transport.c and transports/smtp.c */
@@ -21,6 +23,7 @@ void
 params_dkim(void)
 {
 builtin_macro_create_var(US"_DKIM_SIGN_HEADERS", US PDKIM_DEFAULT_SIGN_HEADERS);
+builtin_macro_create_var(US"_DKIM_OVERSIGN_HEADERS", US PDKIM_OVERSIGN_HEADERS);
 }
 # else	/*!MACRO_PREDEF*/
 
@@ -37,33 +40,31 @@ static const uschar * dkim_collect_error = NULL;
 
 
 
-/*XXX the caller only uses the first record if we return multiple.
+/* Look up the DKIM record in DNS for the given hostname.
+Will use the first found if there are multiple.
+The return string is tainted, having come from off-site.
 */
 
 uschar *
-dkim_exim_query_dns_txt(uschar * name)
+dkim_exim_query_dns_txt(const uschar * name)
 {
-dns_answer dnsa;
+dns_answer * dnsa = store_get_dns_answer();
 dns_scan dnss;
-dns_record *rr;
-gstring * g = NULL;
+rmark reset_point = store_mark();
+gstring * g = string_get_tainted(256, GET_TAINTED);
 
 lookup_dnssec_authenticated = NULL;
-if (dns_lookup(&dnsa, name, T_TXT, NULL) != DNS_SUCCEED)
-  return NULL;	/*XXX better error detail?  logging? */
+if (dns_lookup(dnsa, name, T_TXT, NULL) != DNS_SUCCEED)
+  goto bad;
 
 /* Search for TXT record */
 
-for (rr = dns_next_rr(&dnsa, &dnss, RESET_ANSWERS);
+for (dns_record * rr = dns_next_rr(dnsa, &dnss, RESET_ANSWERS);
      rr;
-     rr = dns_next_rr(&dnsa, &dnss, RESET_NEXT))
+     rr = dns_next_rr(dnsa, &dnss, RESET_NEXT))
   if (rr->type == T_TXT)
-    {
-    int rr_offset = 0;
-
-    /* Copy record content to the answer buffer */
-
-    while (rr_offset < rr->size)
+    {			/* Copy record content to the answer buffer */
+    for (int rr_offset = 0; rr_offset < rr->size; )
       {
       uschar len = rr->data[rr_offset++];
 
@@ -74,18 +75,20 @@ for (rr = dns_next_rr(&dnsa, &dnss, RESET_ANSWERS);
       rr_offset += len;
       }
 
-    /* check if this looks like a DKIM record */
+    /* Check if this looks like a DKIM record */
     if (Ustrncmp(g->s, "v=", 2) != 0 || strncasecmp(CS g->s, "v=dkim", 6) == 0)
       {
-      gstring_reset_unused(g);
+      store_free_dns_answer(dnsa);
+      gstring_release_unused(g);
       return string_from_gstring(g);
       }
 
-    if (g) g->ptr = 0;		/* overwrite previous record */
+    gstring_reset(g);		/* overwrite previous record */
     }
 
 bad:
-if (g) store_reset(g);
+store_reset(reset_point);
+store_free_dns_answer(dnsa);
 return NULL;	/*XXX better error detail?  logging? */
 }
 
@@ -93,6 +96,8 @@ return NULL;	/*XXX better error detail?  logging? */
 void
 dkim_exim_init(void)
 {
+if (f.dkim_init_done) return;
+f.dkim_init_done = TRUE;
 pdkim_init();
 }
 
@@ -101,12 +106,17 @@ pdkim_init();
 void
 dkim_exim_verify_init(BOOL dot_stuffing)
 {
-/* There is a store-reset between header & body reception
-so cannot use the main pool. Any allocs done by Exim
-memory-handling must use the perm pool. */
+dkim_exim_init();
+
+/* There is a store-reset between header & body reception for the main pool
+(actually, after every header line) so cannot use that as we need the data we
+store per-header, during header processing, at the end of body reception
+for evaluating the signature.  Any allocs done for dkim verify
+memory-handling must use a different pool.  We use a separate one that we
+can reset per message. */
 
 dkim_verify_oldpool = store_pool;
-store_pool = POOL_PERM;
+store_pool = POOL_MESSAGE;
 
 /* Free previous context if there is one */
 
@@ -119,19 +129,22 @@ dkim_verify_ctx = pdkim_init_verify(&dkim_exim_query_dns_txt, dot_stuffing);
 dkim_collect_input = dkim_verify_ctx ? DKIM_MAX_SIGNATURES : 0;
 dkim_collect_error = NULL;
 
-/* Start feed up with any cached data */
-receive_get_cache();
+/* Start feed up with any cached data, but limited to message data */
+receive_get_cache(chunking_state == CHUNKING_LAST
+		  ? chunking_data_left : GETC_BUFFER_UNLIMITED);
 
 store_pool = dkim_verify_oldpool;
 }
 
 
+/* Submit a chunk of data for verification input.
+Only use the data when the feed is activated. */
 void
 dkim_exim_verify_feed(uschar * data, int len)
 {
 int rc;
 
-store_pool = POOL_PERM;
+store_pool = POOL_MESSAGE;
 if (  dkim_collect_input
    && (rc = pdkim_feed(dkim_verify_ctx, data, len)) != PDKIM_OK)
   {
@@ -261,6 +274,11 @@ else
 		"(headers probably modified in transit)]");
 	  break;
 
+	case PDKIM_VERIFY_INVALID_PUBKEY_KEYSIZE:
+	  logmsg = string_cat(logmsg,
+		US"signature invalid (key too short)]");
+	  break;
+
 	default:
 	  logmsg = string_cat(logmsg, US"unspecified reason]");
 	}
@@ -271,7 +289,7 @@ else
       break;
     }
 
-log_write(0, LOG_MAIN, "%s", string_from_gstring(logmsg));
+log_write(0, LOG_MAIN, "%Y", logmsg);
 return;
 }
 
@@ -280,20 +298,19 @@ return;
 void
 dkim_exim_verify_log_all(void)
 {
-pdkim_signature * sig;
-for (sig = dkim_signatures; sig; sig = sig->next) dkim_exim_verify_log_sig(sig);
+for (pdkim_signature * sig = dkim_signatures; sig; sig = sig->next)
+  dkim_exim_verify_log_sig(sig);
 }
 
 
 void
 dkim_exim_verify_finish(void)
 {
-pdkim_signature * sig;
 int rc;
 gstring * g = NULL;
 const uschar * errstr = NULL;
 
-store_pool = POOL_PERM;
+store_pool = POOL_MESSAGE;
 
 /* Delete eventual previous signature chain */
 
@@ -320,7 +337,7 @@ if (rc != PDKIM_OK && errstr)
 
 /* Build a colon-separated list of signing domains (and identities, if present) in dkim_signers */
 
-for (sig = dkim_signatures; sig; sig = sig->next)
+for (pdkim_signature * sig = dkim_signatures; sig; sig = sig->next)
   {
   if (sig->domain)   g = string_append_listele(g, ':', sig->domain);
   if (sig->identity) g = string_append_listele(g, ':', sig->identity);
@@ -372,7 +389,6 @@ int
 dkim_exim_acl_run(uschar * id, gstring ** res_ptr,
   uschar ** user_msgptr, uschar ** log_msgptr)
 {
-pdkim_signature * sig;
 uschar * cmp_val;
 int rc = -1;
 
@@ -385,7 +401,7 @@ if (f.dkim_disable_verify || !id || !dkim_verify_ctx)
 
 /* Find signatures to run ACL on */
 
-for (sig = dkim_signatures; sig; sig = sig->next)
+for (pdkim_signature * sig = dkim_signatures; sig; sig = sig->next)
   if (  (cmp_val = Ustrchr(id, '@') != NULL ? US sig->identity : US sig->domain)
      && strcmpic(cmp_val, id) == 0
      )
@@ -401,7 +417,7 @@ for (sig = dkim_signatures; sig; sig = sig->next)
     dkim_cur_sig = sig;
     dkim_signing_domain = US sig->domain;
     dkim_signing_selector = US sig->selector;
-    dkim_key_length = sig->sighash.len * 8;
+    dkim_key_length = sig->keybits;
 
     /* These two return static strings, so we can compare the addr
     later to see if the ACL overwrote them.  Check that when logging */
@@ -555,6 +571,7 @@ switch (what)
 						return US"pubkey_unavailable";
       case PDKIM_VERIFY_INVALID_PUBKEY_DNSRECORD:return US"pubkey_dns_syntax";
       case PDKIM_VERIFY_INVALID_PUBKEY_IMPORT:	return US"pubkey_der_syntax";
+      case PDKIM_VERIFY_INVALID_PUBKEY_KEYSIZE:	return US"pubkey_too_short";
       case PDKIM_VERIFY_FAIL_BODY:		return US"bodyhash_mismatch";
       case PDKIM_VERIFY_FAIL_MESSAGE:		return US"signature_incorrect";
       }
@@ -569,6 +586,8 @@ void
 dkim_exim_sign_init(void)
 {
 int old_pool = store_pool;
+
+dkim_exim_init();
 store_pool = POOL_MAIN;
 pdkim_init_context(&dkim_sign_ctx, FALSE, &dkim_exim_query_dns_txt);
 store_pool = old_pool;
@@ -605,6 +624,7 @@ if (dkim->dot_stuffed)
 
 store_pool = POOL_MAIN;
 
+GET_OPTION("dkim_domain");
 if ((s = dkim->dkim_domain) && !(dkim_domain = expand_cstring(s)))
   /* expansion error, do not send message. */
   { errwhen = US"dkim_domain"; goto expand_bad; }
@@ -623,6 +643,7 @@ if (dkim_domain)
   /* Only sign once for each domain, no matter how often it
   appears in the expanded list. */
 
+  dkim_signing_domain = string_copylc(dkim_signing_domain);
   if (match_isinlist(dkim_signing_domain, CUSS &seen_doms,
       0, NULL, NULL, MCL_STRING, TRUE, NULL) == OK)
     continue;
@@ -632,6 +653,7 @@ if (dkim_domain)
   /* Set $dkim_selector expansion variable to each selector in list,
   for this domain. */
 
+  GET_OPTION("dkim_selector");
   if (!(dkim_sel = expand_string(dkim->dkim_selector)))
     { errwhen = US"dkim_selector"; goto expand_bad; }
 
@@ -649,6 +671,7 @@ if (dkim_domain)
 
     /* Get canonicalization to use */
 
+    GET_OPTION("dkim_canon");
     dkim_canon_expanded = dkim->dkim_canon
       ? expand_string(dkim->dkim_canon) : US"relaxed";
     if (!dkim_canon_expanded)	/* expansion error, do not send message. */
@@ -666,6 +689,7 @@ if (dkim_domain)
       pdkim_canon = PDKIM_CANON_RELAXED;
       }
 
+    GET_OPTION("dkim_sign_headers");
     if (  dkim->dkim_sign_headers
        && !(dkim_sign_headers_expanded = expand_string(dkim->dkim_sign_headers)))
       { errwhen = US"dkim_sign_header"; goto expand_bad; }
@@ -673,6 +697,7 @@ if (dkim_domain)
 
     /* Get private key to use. */
 
+    GET_OPTION("dkim_private_key");
     if (!(dkim_private_key_expanded = expand_string(dkim->dkim_private_key)))
       { errwhen = US"dkim_private_key"; goto expand_bad; }
 
@@ -687,21 +712,28 @@ if (dkim_domain)
 	     expand_file_big_buffer(dkim_private_key_expanded)))
       goto bad;
 
+    GET_OPTION("dkim_hash");
     if (!(dkim_hash_expanded = expand_string(dkim->dkim_hash)))
       { errwhen = US"dkim_hash"; goto expand_bad; }
 
+    GET_OPTION("dkim_identity");
     if (dkim->dkim_identity)
       if (!(dkim_identity_expanded = expand_string(dkim->dkim_identity)))
 	{ errwhen = US"dkim_identity"; goto expand_bad; }
       else if (!*dkim_identity_expanded)
 	dkim_identity_expanded = NULL;
 
+    GET_OPTION("dkim_timestamps");
     if (dkim->dkim_timestamps)
       if (!(dkim_timestamps_expanded = expand_string(dkim->dkim_timestamps)))
 	{ errwhen = US"dkim_timestamps"; goto expand_bad; }
       else
-	xval = (tval = (unsigned long) time(NULL))
-	      + strtoul(CCS dkim_timestamps_expanded, NULL, 10);
+        {
+        tval = (unsigned long) time(NULL);
+        xval = strtoul(CCS dkim_timestamps_expanded, NULL, 10);
+        if (xval > 0)
+          xval += tval;
+        }
 
     if (!(sig = pdkim_init_sign(&dkim_sign_ctx, dkim_signing_domain,
 			  dkim_signing_selector,
@@ -720,6 +752,9 @@ if (dkim_domain)
 
     if (!pdkim_set_sig_bodyhash(&dkim_sign_ctx, sig))
       goto bad;
+
+    dkim_signing_record = string_append_listele(dkim_signing_record, ':', dkim_signing_domain);
+    dkim_signing_record = string_append_listele(dkim_signing_record, ':', dkim_signing_selector);
 
     if (!dkim_sign_ctx.sig)		/* link sig to context chain */
       dkim_sign_ctx.sig = sig;
@@ -782,14 +817,15 @@ CLEANUP:
 
 pk_bad:
   log_write(0, LOG_MAIN|LOG_PANIC,
-	       	"DKIM: signing failed: %.100s", pdkim_errstr(pdkim_rc));
+		"DKIM: signing failed: %.100s", pdkim_errstr(pdkim_rc));
 bad:
   sigbuf = NULL;
   goto CLEANUP;
 
 expand_bad:
-  log_write(0, LOG_MAIN | LOG_PANIC, "failed to expand %s: %s",
-	      errwhen, expand_string_message);
+  *errstr = string_sprintf("failed to expand %s: %s",
+              errwhen, expand_string_message);
+  log_write(0, LOG_MAIN | LOG_PANIC, "%s", *errstr);
   goto bad;
 }
 
@@ -799,12 +835,11 @@ expand_bad:
 gstring *
 authres_dkim(gstring * g)
 {
-pdkim_signature * sig;
 int start = 0;		/* compiler quietening */
 
-DEBUG(D_acl) start = g->ptr;
+DEBUG(D_acl) start = gstring_length(g);
 
-for (sig = dkim_signatures; sig; sig = sig->next)
+for (pdkim_signature * sig = dkim_signatures; sig; sig = sig->next)
   {
   g = string_catn(g, US";\n\tdkim=", 8);
 
@@ -846,6 +881,9 @@ for (sig = dkim_signatures; sig; sig = sig->next)
           g = string_cat(g,
 	    US"fail (signature did not verify; headers probably modified in transit)\n\t\t");
 	  break;
+        case PDKIM_VERIFY_INVALID_PUBKEY_KEYSIZE:	/* should this really be "polcy"? */
+          g = string_fmt_append(g, "fail (public key too short: %u bits)\n\t\t", sig->keybits);
+          break;
         default:
           g = string_cat(g, US"fail (unspecified reason)\n\t\t");
 	  break;
@@ -861,10 +899,10 @@ for (sig = dkim_signatures; sig; sig = sig->next)
   }
 
 DEBUG(D_acl)
-  if (g->ptr == start)
-    debug_printf("DKIM: no authres\n");
+  if (gstring_length(g) == start)
+    debug_printf("DKIM:\tno authres\n");
   else
-    debug_printf("DKIM: authres '%.*s'\n", g->ptr - start - 3, g->s + start + 3);
+    debug_printf("DKIM:\tauthres '%.*s'\n", g->ptr - start - 3, g->s + start + 3);
 return g;
 }
 

@@ -1,8 +1,9 @@
 /*
  *  Exim - an Internet mail transport agent
  *
- *  Copyright (C) 2010 - 2018  Exim maintainers
+ *  Copyright (c) The Exim Maintainers 2010 - 2023
  *  Copyright (c) University of Cambridge 1995 - 2009
+ *  SPDX-License-Identifier: GPL-2.0-or-later
  *
  *  Hash interface functions
  */
@@ -29,18 +30,19 @@ sha1;
 
 /******************************************************************************/
 #ifdef SHA_OPENSSL
+# define HAVE_PARTIAL_SHA
 
 BOOL
 exim_sha_init(hctx * h, hashmethod m)
 {
-/*XXX extend for sha512 */
+# if OPENSSL_VERSION_NUMBER < 0x30000000L
 switch (h->method = m)
   {
   case HASH_SHA1:     h->hashlen = 20; SHA1_Init  (&h->u.sha1);     break;
   case HASH_SHA2_256: h->hashlen = 32; SHA256_Init(&h->u.sha2_256); break;
   case HASH_SHA2_384: h->hashlen = 48; SHA384_Init(&h->u.sha2_512); break;
   case HASH_SHA2_512: h->hashlen = 64; SHA512_Init(&h->u.sha2_512); break;
-#ifdef EXIM_HAVE_SHA3
+#  ifdef EXIM_HAVE_SHA3
   case HASH_SHA3_224: h->hashlen = 28;
 		      EVP_DigestInit(h->u.mctx = EVP_MD_CTX_new(), EVP_sha3_224());
 		      break;
@@ -53,64 +55,105 @@ switch (h->method = m)
   case HASH_SHA3_512: h->hashlen = 64;
 		      EVP_DigestInit(h->u.mctx = EVP_MD_CTX_new(), EVP_sha3_512());
 		      break;
-#endif
+#  endif
   default:	      h->hashlen = 0; return FALSE;
   }
 return TRUE;
+
+# else
+EVP_MD * md;
+
+h->hashlen = 0;
+if (!(h->u.mctx = EVP_MD_CTX_new())) return FALSE;
+switch (h->method = m)
+  {
+  case HASH_SHA1:     h->hashlen = 20; md = EVP_MD_fetch(NULL, "SHA1", NULL); break;
+  case HASH_SHA2_256: h->hashlen = 32; md = EVP_MD_fetch(NULL, "SHA2-256", NULL); break;
+  case HASH_SHA2_384: h->hashlen = 48; md = EVP_MD_fetch(NULL, "SHA2-384", NULL); break;
+  case HASH_SHA2_512: h->hashlen = 64; md = EVP_MD_fetch(NULL, "SHA2-512", NULL); break;
+  case HASH_SHA3_224: h->hashlen = 28; md = EVP_MD_fetch(NULL, "SHA3-224", NULL); break;
+  case HASH_SHA3_256: h->hashlen = 32; md = EVP_MD_fetch(NULL, "SHA3-256", NULL); break;
+  case HASH_SHA3_384: h->hashlen = 48; md = EVP_MD_fetch(NULL, "SHA3-384", NULL); break;
+  case HASH_SHA3_512: h->hashlen = 64; md = EVP_MD_fetch(NULL, "SHA3-512", NULL); break;
+  default:	      return FALSE;
+  }
+if (md && EVP_DigestInit_ex(h->u.mctx, md, NULL))
+  return TRUE;
+
+h->hashlen = 0;
+return FALSE;
+# endif
 }
 
 
 void
 exim_sha_update(hctx * h, const uschar * data, int len)
 {
+# if OPENSSL_VERSION_NUMBER < 0x30000000L
 switch (h->method)
   {
   case HASH_SHA1:     SHA1_Update  (&h->u.sha1,     data, len); break;
   case HASH_SHA2_256: SHA256_Update(&h->u.sha2_256, data, len); break;
   case HASH_SHA2_384: SHA384_Update(&h->u.sha2_512, data, len); break;
   case HASH_SHA2_512: SHA512_Update(&h->u.sha2_512, data, len); break;
-#ifdef EXIM_HAVE_SHA3
+#  ifdef EXIM_HAVE_SHA3
   case HASH_SHA3_224:
   case HASH_SHA3_256:
   case HASH_SHA3_384:
   case HASH_SHA3_512: EVP_DigestUpdate(h->u.mctx, data, len); break;
-#endif
+#  endif
   /* should be blocked by init not handling these, but be explicit to
   guard against accidents later (and hush up clang -Wswitch) */
   default: assert(0);
   }
+
+# else
+
+EVP_DigestUpdate(h->u.mctx, data, len);
+# endif
 }
 
 
 void
 exim_sha_finish(hctx * h, blob * b)
 {
-b->data = store_get(b->len = h->hashlen);
+/* Hashing is sufficient to purify any tainted input */
+b->data = store_get(b->len = h->hashlen, GET_UNTAINTED);
+
+# if OPENSSL_VERSION_NUMBER < 0x30000000L
 switch (h->method)
   {
   case HASH_SHA1:     SHA1_Final  (b->data, &h->u.sha1);     break;
   case HASH_SHA2_256: SHA256_Final(b->data, &h->u.sha2_256); break;
   case HASH_SHA2_384: SHA384_Final(b->data, &h->u.sha2_512); break;
   case HASH_SHA2_512: SHA512_Final(b->data, &h->u.sha2_512); break;
-#ifdef EXIM_HAVE_SHA3
+#  ifdef EXIM_HAVE_SHA3
   case HASH_SHA3_224:
   case HASH_SHA3_256:
   case HASH_SHA3_384:
   case HASH_SHA3_512: EVP_DigestFinal(h->u.mctx, b->data, NULL); break;
-#endif
+#  endif
   default: assert(0);
   }
+
+# else
+
+EVP_DigestFinal_ex(h->u.mctx, b->data, NULL);
+EVP_MD_free((EVP_MD *) EVP_MD_CTX_get0_md(h->u.mctx));
+EVP_MD_CTX_free(h->u.mctx);
+
+# endif
 }
 
 
 
 #elif defined(SHA_GNUTLS)
+# define HAVE_PARTIAL_SHA
 /******************************************************************************/
 
 BOOL
 exim_sha_init(hctx * h, hashmethod m)
 {
-/*XXX extend for sha512 */
 switch (h->method = m)
   {
   case HASH_SHA1:     h->hashlen = 20; gnutls_hash_init(&h->sha, GNUTLS_DIG_SHA1);   break;
@@ -139,19 +182,19 @@ gnutls_hash(h->sha, data, len);
 void
 exim_sha_finish(hctx * h, blob * b)
 {
-b->data = store_get(b->len = h->hashlen);
+b->data = store_get(b->len = h->hashlen, GET_UNTAINTED);
 gnutls_hash_output(h->sha, b->data);
 }
 
 
 
 #elif defined(SHA_GCRYPT)
+# define HAVE_PARTIAL_SHA
 /******************************************************************************/
 
 BOOL
 exim_sha_init(hctx * h, hashmethod m)
 {
-/*XXX extend for sha512 */
 switch (h->method = m)
   {
   case HASH_SHA1:     h->hashlen = 20; gcry_md_open(&h->sha, GCRY_MD_SHA1, 0);   break;
@@ -177,7 +220,7 @@ gcry_md_write(h->sha, data, len);
 void
 exim_sha_finish(hctx * h, blob * b)
 {
-b->data = store_get(b->len = h->hashlen);
+b->data = store_get(b->len = h->hashlen, GET_UNTAINTED);
 memcpy(b->data, gcry_md_read(h->sha, 0), h->hashlen);
 }
 
@@ -185,6 +228,7 @@ memcpy(b->data, gcry_md_read(h->sha, 0), h->hashlen);
 
 
 #elif defined(SHA_POLARSSL)
+# define HAVE_PARTIAL_SHA
 /******************************************************************************/
 
 BOOL
@@ -215,7 +259,7 @@ switch (h->method)
 void
 exim_sha_finish(hctx * h, blob * b)
 {
-b->data = store_get(b->len = h->hashlen);
+b->data = store_get(b->len = h->hashlen, GET_INTAINTED);
 switch (h->method)
   {
   case HASH_SHA1:   sha1_finish(h->u.sha1, b->data); break;
@@ -268,19 +312,18 @@ Returns:     nothing
 static void
 native_sha1_mid(sha1 *base, const uschar *text)
 {
-int i;
 uint A, B, C, D, E;
 uint W[80];
 
 base->length += 64;
 
-for (i = 0; i < 16; i++)
+for (int i = 0; i < 16; i++)
   {
   W[i] = ((uint)text[0] << 24) | (text[1] << 16) | (text[2] << 8) | text[3];
   text += 4;
   }
 
-for (i = 16; i < 80; i++)
+for (int i = 16; i < 80; i++)
   {
   register unsigned int x = W[i-3] ^ W[i-8] ^ W[i-14] ^ W[i-16];
   W[i] = (x << 1) | (x >> 31);
@@ -292,7 +335,7 @@ C = base->H[2];
 D = base->H[3];
 E = base->H[4];
 
-for (i = 0; i < 20; i++)
+for (int i = 0; i < 20; i++)
   {
   unsigned int T;
   T = ((A << 5) | (A >> 27)) + ((B & C) | ((~B) & D)) + E + W[i] + 0x5a827999;
@@ -303,7 +346,7 @@ for (i = 0; i < 20; i++)
   A = T;
   }
 
-for (i = 20; i < 40; i++)
+for (int i = 20; i < 40; i++)
   {
   unsigned int T;
   T = ((A << 5) | (A >> 27)) + (B ^ C ^ D) + E + W[i] + 0x6ed9eba1;
@@ -314,7 +357,7 @@ for (i = 20; i < 40; i++)
   A = T;
   }
 
-for (i = 40; i < 60; i++)
+for (int i = 40; i < 60; i++)
   {
   unsigned int T;
   T = ((A << 5) | (A >> 27)) + ((B & C) | (B & D) | (C & D)) + E + W[i] +
@@ -326,7 +369,7 @@ for (i = 40; i < 60; i++)
   A = T;
   }
 
-for (i = 60; i < 80; i++)
+for (int i = 60; i < 80; i++)
   {
   unsigned int T;
   T = ((A << 5) | (A >> 27)) + (B ^ C ^ D) + E + W[i] + 0xca62c1d6;
@@ -365,9 +408,8 @@ Returns:    nothing
 */
 
 static void
-native_sha1_end(sha1 *base, const uschar *text, int length, uschar *digest)
+native_sha1_end(sha1 * base, const uschar * text, int length, uschar * digest)
 {
-int i;
 uschar work[64];
 
 /* Process in chunks of 64 until we have less than 64 bytes left. */
@@ -384,7 +426,7 @@ out to 64, process it, and then set up the final chunk as 56 bytes of
 padding. If it has less than 56 bytes, we pad it out to 56 bytes as the
 final chunk. */
 
-memcpy(work, text, length);
+if (length) memcpy(work, text, length);
 work[length] = 0x80;
 
 if (length > 55)
@@ -395,9 +437,7 @@ if (length > 55)
   memset(work, 0, 56);
   }
 else
-  {
   memset(work+length+1, 0, 55-length);
-  }
 
 /* The final 8 bytes of the final chunk are a 64-bit representation of the
 length of the input string *bits*, before padding, high order word first, and
@@ -420,7 +460,7 @@ native_sha1_mid(base, work);
 
 /* Pass back the result, high-order byte first in each word. */
 
-for (i = 0; i < 5; i++)
+for (int i = 0; i < 5; i++)
   {
   register int x = base->H[i];
   *digest++ = (x >> 24) & 0xff;
@@ -455,7 +495,7 @@ native_sha1_mid(&h->sha1, US data);	/* implicit size always 64 */
 void
 exim_sha_finish(hctx * h, blob * b)
 {
-b->data = store_get(b->len = h->hashlen);
+b->data = store_get(b->len = h->hashlen, GET_UNTAINTED);
 
 native_sha1_end(&h->sha1, NULL, 0, b->data);
 }
@@ -519,6 +559,14 @@ memcpy(digest, b.data, 20);
 
 
 
+#ifdef HAVE_PARTIAL_SHA
+# undef HAVE_PARTIAL_SHA
+void
+exim_sha_update_string(hctx * h, const uschar * s)
+{
+if (s) exim_sha_update(h, s, Ustrlen(s));
+}
+#endif
 
 
 
@@ -528,7 +576,7 @@ memcpy(digest, b.data, 20);
 **************************************************
 *************************************************/
 
-# ifdef STAND_ALONE
+#ifdef STAND_ALONE
 
 /* Test values. The first 128 may contain binary zeros and have increasing
 length. */
@@ -843,6 +891,6 @@ printf("Computed:  %s\n", s);
 if (strcmp(s, atest) != 0) printf("*** No match ***\n");
 
 }
-# endif	/*STAND_ALONE*/
+#endif	/*STAND_ALONE*/
 
 /* End of File */

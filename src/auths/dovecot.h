@@ -3,12 +3,15 @@
 *************************************************/
 
 /* Copyright (c) University of Cambridge 1995 - 2009 */
+/* Copyright (c) The Exim Maintainters 2020 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Private structure for the private options. */
 
 typedef struct {
-  uschar *server_socket;
+  uschar *	server_socket;
+  BOOL		server_tls;
 } auth_dovecot_options_block;
 
 /* Data for reading the private options. */

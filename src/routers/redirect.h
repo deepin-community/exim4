@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2022 */
 /* Copyright (c) University of Cambridge 1995 - 2009 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Header for the redirect router */
 
@@ -33,14 +35,6 @@ typedef struct {
 
   uid_t  *owners;
   gid_t  *owngroups;
-
-#ifdef EXPERIMENTAL_SRS
-  uschar *srs;
-  uschar *srs_alias;
-  uschar *srs_condition;
-  uschar *srs_dbinsert;
-  uschar *srs_dbselect;
-#endif
 
   int   modemask;
   int   bit_options;

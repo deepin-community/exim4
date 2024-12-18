@@ -1,7 +1,9 @@
 #! /bin/sh
 
+# Copyright (c) The Exim Maintainers 2023
 # Copyright (c) University of Cambridge, 1995 - 2007
 # See the file NOTICE for conditions of use and distribution.
+# SPDX-License-Identifier: GPL-2.0-or-later
 
 # Except when they appear in comments, the following placeholders in this
 # source are replaced when it is turned into a runnable script:
@@ -55,7 +57,7 @@ signal=EXIWHAT_KILL_SIGNAL
 # See if this installation is using the esoteric "USE_NODE" feature of Exim,
 # in which it uses the host's name as a suffix for the configuration file name.
 
-if test "x$1" = x--version
+if [ "x$1" = x--version -o "x$1" = x-v ]
 then
     echo "`basename $0`: $0"
     echo "build: EXIM_RELEASE_VERSIONEXIM_VARIANT_VERSION"
@@ -98,9 +100,9 @@ fi
 
 st='	 '
 exim_path=`grep "^[$st]*exim_path" $config | sed "s/.*=[$st]*//"`
-if test "$exim_path" = ""; then exim_path=BIN_DIRECTORY/exim4; fi
-spool_directory=`$exim_path -bP spool_directory | sed "s/.*=[ ]*//"`
-process_log_path=`$exim_path -bP process_log_path | sed "s/.*=[ ]*//"`
+if test "$exim_path" = ""; then exim_path=BIN_DIRECTORY/exim; fi
+spool_directory=`$exim_path -C $config -bP spool_directory | sed "s/.*=[ ]*//"`
+process_log_path=`$exim_path -C $config -bP process_log_path | sed "s/.*=[ ]*//"`
 
 # The file that Exim writes when sent the SIGUSR1 signal is specified by
 # the process_log_path option. If that is not defined, Exim uses the file

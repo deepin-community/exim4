@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Functions for sending messages to sender or to mailmaster. */
 
@@ -28,14 +30,109 @@ Returns:    nothing
 void
 moan_write_from(FILE *f)
 {
-uschar *s = expand_string(dsn_from);
-if (!s)
+uschar * s;
+GET_OPTION("dsn_from");
+if (!(s = expand_string(dsn_from)))
   {
   log_write(0, LOG_MAIN|LOG_PANIC,
     "Failed to expand dsn_from (using default): %s", expand_string_message);
   s = expand_string(US DEFAULT_DSN_FROM);
   }
 fprintf(f, "From: %s\n", s);
+}
+
+
+
+/*************************************************
+*            Write References: line for DSN      *
+*************************************************/
+
+/* Generate a References: header if there is in the header_list
+at least one of Message-ID:, References:, or In-Reply-To: (see RFC 2822).
+
+Arguments:  f		the FILE to write to
+	    message_id	optional already-found message-id, or NULL
+
+Returns:    nothing
+*/
+
+void
+moan_write_references(FILE * fp, uschar * message_id)
+{
+header_line * h;
+
+if (!message_id)
+  for (h = header_list; h; h = h->next)
+    if (h->type == htype_id)
+      {
+      message_id = Ustrchr(h->text, ':') + 1;
+      Uskip_whitespace(&message_id);
+      }
+
+for (h = header_list; h; h = h->next)
+  if (h->type != htype_old && strncmpic(US"References:", h->text, 11) == 0)
+    break;
+
+if (!h)
+  for (h = header_list; h; h = h->next)
+    if (h->type != htype_old && strncmpic(US"In-Reply-To:", h->text, 12) == 0)
+      break;
+
+/* We limit the total length of references.  Although there is no fixed
+limit, some systems do not like headers growing beyond recognition.
+Keep the first message ID for the thread root and the last few for
+the position inside the thread, up to a maximum of 12 altogether.
+Also apply the max line length limit from RFC 2822 2.1.1
+
+XXX preferably we would get any limit from the outbound transport,
+passed in here for a limit value.
+*/
+
+if (h || message_id)
+  {
+  unsigned use = fprintf(fp, "References:");
+  if (message_id) use += Ustrlen(message_id) + 1;
+  if (h)
+    {
+    const uschar * s;
+    uschar * id, * error;
+    uschar * referenced_ids[12];
+    int reference_count = 0;
+
+    s = Ustrchr(h->text, ':') + 1;
+    f.parse_allow_group = FALSE;
+    while (*s && (s = parse_message_id(s, &id, &error)))
+      {
+      unsigned this = Ustrlen(id);
+      if (  reference_count == nelem(referenced_ids)
+	 || use + this + reference_count > 998
+         )
+	{
+	if (reference_count > 1)
+	  {
+	  /* drop position 1 and shuffle down */
+	  use -= Ustrlen(referenced_ids + 1);
+	  memmove(referenced_ids + 1, referenced_ids + 2,
+	     sizeof(referenced_ids) - 2*sizeof(*referenced_ids));
+
+	  /* append new one */
+	  referenced_ids[reference_count - 1] = id;
+	  }
+	}
+      else
+	referenced_ids[reference_count++] = id;
+      use += this;
+      }
+
+    for (int i = 0; i < reference_count; ++i)
+      fprintf(fp, " %s", referenced_ids[i]);
+    }
+
+  /* The message id will have a newline on the end of it. */
+
+  if (message_id) fprintf(fp, " %s", message_id);
+  else fprintf(fp, "\n");
+  }
 }
 
 
@@ -62,8 +159,8 @@ Returns:         TRUE if message successfully sent
 */
 
 BOOL
-moan_send_message(uschar *recipient, int ident, error_block *eblock,
-  header_line *headers, FILE *message_file, uschar *firstline)
+moan_send_message(const uschar * recipient, int ident, error_block * eblock,
+  header_line * headers, FILE * message_file, uschar * firstline)
 {
 int written = 0;
 int fd;
@@ -73,12 +170,13 @@ int size_limit = bounce_return_size_limit;
 FILE * fp;
 int pid;
 
-#ifdef EXPERIMENTAL_DMARC
+#ifdef SUPPORT_DMARC
 uschar * s, * s2;
 
 /* For DMARC if there is a specific sender set, expand the variable for the
 header From: and grab the address from that for the envelope FROM. */
 
+GET_OPTION("dmarc_forensic_sender");
 if (  ident == ERRMESS_DMARC_FORENSIC
    && dmarc_forensic_sender
    && (s = expand_string(dmarc_forensic_sender))
@@ -86,15 +184,16 @@ if (  ident == ERRMESS_DMARC_FORENSIC
    && (s2 = expand_string(string_sprintf("${address:%s}", s)))
    && *s2
    )
-  pid = child_open_exim2(&fd, s2, bounce_sender_authentication);
+  pid = child_open_exim2(&fd, s2, bounce_sender_authentication,
+		US"moan_send_message");
 else
   {
   s = NULL;
-  pid = child_open_exim(&fd);
+  pid = child_open_exim(&fd, US"moan_send_message");
   }
 
 #else
-pid = child_open_exim(&fd);
+pid = child_open_exim(&fd, US"moan_send_message");
 #endif
 
 if (pid < 0)
@@ -111,7 +210,7 @@ fp = fdopen(fd, "wb");
 if (errors_reply_to) fprintf(fp, "Reply-To: %s\n", errors_reply_to);
 fprintf(fp, "Auto-Submitted: auto-replied\n");
 
-#ifdef EXPERIMENTAL_DMARC
+#ifdef SUPPORT_DMARC
 if (s)
   fprintf(fp, "From: %s\n", s);
 else
@@ -119,6 +218,7 @@ else
   moan_write_from(fp);
 
 fprintf(fp, "To: %s\n", recipient);
+moan_write_references(fp, NULL);
 
 switch(ident)
   {
@@ -145,7 +245,7 @@ switch(ident)
       "A message that you sent contained one or more recipient addresses that were\n"
       "incorrectly constructed:\n\n");
 
-    while (eblock != NULL)
+    while (eblock)
       {
       fprintf(fp, "  %s: %s\n", eblock->text1, eblock->text2);
       count++;
@@ -228,7 +328,7 @@ switch(ident)
   fprintf(fp, "\n");
   break;
 
-#ifdef EXPERIMENTAL_DMARC
+#ifdef SUPPORT_DMARC
   case ERRMESS_DMARC_FORENSIC:
     bounce_return_message = TRUE;
     bounce_return_body    = FALSE;
@@ -308,7 +408,7 @@ if (bounce_return_message)
   if (bounce_return_body && message_file)
     {
     BOOL enddot = f.dot_ends && message_file == stdin;
-    uschar * buf = store_get(bounce_return_linesize_limit+2);
+    uschar * buf = store_get(bounce_return_linesize_limit+2, GET_TAINTED);
 
     if (firstline) fprintf(fp, "%s", CS firstline);
 
@@ -339,7 +439,7 @@ if (bounce_return_message)
       fputs(CS buf, fp);
       }
     }
-#ifdef EXPERIMENTAL_DMARC
+#ifdef SUPPORT_DMARC
   /* Overkill, but use exact test in case future code gets inserted */
   else if (bounce_return_body && message_file == NULL)
     {
@@ -415,9 +515,12 @@ if (check_sender && message_file && f.trusted_caller &&
   {
   uschar *new_sender = NULL;
   if (regex_match_and_setup(regex_From, big_buffer, 0, -1))
+    {
+    GET_OPTION("uucp_from_sender");
     new_sender = expand_string(uucp_from_sender);
+    }
   if (new_sender) sender_address = new_sender;
-    else firstline = big_buffer;
+  else firstline = big_buffer;
   }
 
 /* If viable sender address, send a message */
@@ -463,7 +566,7 @@ switch(ident)
 
   case ERRMESS_TOOMANYRECIP:
   log_write(0, LOG_MAIN, "%s: too many recipients (max set to %d)", msg,
-    recipients_max);
+    recipients_max_expanded);
   break;
 
   case ERRMESS_LOCAL_SCAN:
@@ -509,7 +612,7 @@ moan_tell_someone(uschar *who, address_item *addr,
 FILE *f;
 va_list ap;
 int fd;
-int pid = child_open_exim(&fd);
+int pid = child_open_exim(&fd, US"moan_tell_someone");
 
 if (pid < 0)
   {
@@ -522,21 +625,22 @@ f = fdopen(fd, "wb");
 fprintf(f, "Auto-Submitted: auto-replied\n");
 moan_write_from(f);
 fprintf(f, "To: %s\n", who);
+moan_write_references(f, NULL);
 fprintf(f, "Subject: %s\n\n", subject);
 va_start(ap, format);
 vfprintf(f, format, ap);
 va_end(ap);
 
-if (addr != NULL)
+if (addr)
   {
   fprintf(f, "\nThe following address(es) have yet to be delivered:\n");
-  for (; addr != NULL; addr = addr->next)
+  for (; addr; addr = addr->next)
     {
-    uschar *parent = (addr->parent == NULL)? NULL : addr->parent->address;
+    const uschar * parent = addr->parent ? addr->parent->address : NULL;
     fprintf(f, "  %s", addr->address);
-    if (parent != NULL) fprintf(f, " <%s>", parent);
+    if (parent) fprintf(f, " <%s>", parent);
     if (addr->basic_errno > 0) fprintf(f, ": %s", strerror(addr->basic_errno));
-    if (addr->message != NULL) fprintf(f, ": %s", addr->message);
+    if (addr->message) fprintf(f, ": %s", addr->message);
     fprintf(f, "\n");
     }
   }
@@ -615,7 +719,7 @@ fprintf(stderr, "%d previous message%s successfully processed.\n",
 
 fprintf(stderr, "The rest of the batch was abandoned.\n");
 
-exim_exit(yield, US"batch");
+exim_exit(yield);
 }
 
 
@@ -635,37 +739,35 @@ Returns:    additional recipient list or NULL
 */
 
 uschar *
-moan_check_errorcopy(uschar *recipient)
+moan_check_errorcopy(const uschar * recipient)
 {
-uschar *item, *localpart, *domain;
-const uschar *listptr = errors_copy;
+uschar * item;
+const uschar * localpart, * domain;
+const uschar * listptr = errors_copy;
 uschar *yield = NULL;
-uschar buffer[256];
 int sep = 0;
 int llen;
 
-if (errors_copy == NULL) return NULL;
+if (!errors_copy) return NULL;
 
 /* Set up pointer to the local part and domain, and compute the
 length of the local part. */
 
 localpart = recipient;
 domain = Ustrrchr(recipient, '@');
-if (domain == NULL) return NULL;  /* should not occur, but avoid crash */
+if (!domain) return NULL;	/* should not occur, but avoid crash */
 llen = domain++ - recipient;
 
 /* Scan through the configured items */
 
-while ((item = string_nextinlist(&listptr, &sep, buffer, sizeof(buffer)))
-       != NULL)
+while ((item = string_nextinlist(&listptr, &sep, NULL, 0)))
   {
-  const uschar *newaddress = item;
-  const uschar *pattern = string_dequote(&newaddress);
+  const uschar * newaddress = item;
+  const uschar * pattern = string_dequote(&newaddress);
 
   /* If no new address found, just skip this item. */
 
-  while (isspace(*newaddress)) newaddress++;
-  if (*newaddress == 0) continue;
+  if (!Uskip_whitespace(&newaddress)) continue;
 
   /* We now have an item to match as an address in item, and the additional
   address in newaddress. If the pattern matches, expand the new address string
@@ -724,22 +826,18 @@ moan_skipped_syntax_errors(uschar *rname, error_block *eblock,
 int pid, fd;
 uschar *s, *t;
 FILE *f;
-error_block *e;
 
-for (e = eblock; e != NULL; e = e->next)
-  {
+for (error_block * e = eblock; e; e = e->next)
   if (e->text2 != NULL)
     log_write(0, LOG_MAIN, "%s router: skipped error: %s in \"%s\"",
       rname, e->text1, e->text2);
   else
     log_write(0, LOG_MAIN, "%s router: skipped error: %s", rname,
       e->text1);
-  }
 
-if (syntax_errors_to == NULL) return TRUE;
+if (!syntax_errors_to) return TRUE;
 
-s = expand_string(syntax_errors_to);
-if (s == NULL)
+if (!(s = expand_string(syntax_errors_to)))
   {
   log_write(0, LOG_MAIN, "%s router failed to expand %s: %s", rname,
     syntax_errors_to, expand_string_message);
@@ -749,7 +847,7 @@ if (s == NULL)
 /* If we can't create a process to send the message, just forget about
 it. */
 
-pid = child_open_exim(&fd);
+pid = child_open_exim(&fd, US"moan_skipped_syntax_errors");
 
 if (pid < 0)
   {
@@ -763,11 +861,11 @@ fprintf(f, "Auto-Submitted: auto-replied\n");
 moan_write_from(f);
 fprintf(f, "To: %s\n", s);
 fprintf(f, "Subject: error(s) in forwarding or filtering\n\n");
+moan_write_references(f, NULL);
 
-if (custom != NULL)
+if (custom)
   {
-  t = expand_string(custom);
-  if (t == NULL)
+  if (!(t = expand_string(custom)))
     {
     log_write(0, LOG_MAIN, "%s router failed to expand %s: %s", rname,
       custom, expand_string_message);
@@ -779,7 +877,7 @@ if (custom != NULL)
 fprintf(f, "The %s router encountered the following error(s):\n\n",
   rname);
 
-for (e = eblock; e != NULL; e = e->next)
+for (error_block * e = eblock; e; e = e->next)
   {
   fprintf(f, "  %s", e->text1);
   if (e->text2 != NULL)

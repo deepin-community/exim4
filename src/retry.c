@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Functions concerned with retrying unsuccessful deliveries. */
 
@@ -29,7 +31,7 @@ Returns:        TRUE if the ultimate timeout has been reached
 */
 
 BOOL
-retry_ultimate_address_timeout(uschar *retry_key, const uschar *domain,
+retry_ultimate_address_timeout(const uschar * retry_key, const uschar *domain,
   dbdata_retry *retry_record, time_t now)
 {
 BOOL address_timeout;
@@ -71,6 +73,29 @@ DEBUG(D_retry)
 return address_timeout;
 }
 
+
+
+const uschar *
+retry_host_key_build(const host_item * host, BOOL incl_ip,
+  const uschar * portstring)
+{
+const uschar * s = host->name;
+gstring * g = string_is_ip_address(s, NULL)
+  ? string_fmt_append(NULL, "T:[%s]", s)    /* wrap a name which is a bare ip */
+  : string_fmt_append(NULL, "T:%s",   s);
+
+s = host->address;
+if (incl_ip)
+  g = Ustrchr(s, ':')
+    ? string_fmt_append(g, ":[%s]", s)	    /* wrap an ipv6  */
+    : string_fmt_append(g, ":%s",   s);
+
+if (portstring)
+  g = string_cat(g, portstring);
+
+gstring_release_unused(g);
+return string_from_gstring(g);
+}
 
 
 /*************************************************
@@ -122,19 +147,19 @@ Returns:    TRUE if the host has expired but is usable because
 
 BOOL
 retry_check_address(const uschar *domain, host_item *host, uschar *portstring,
-  BOOL include_ip_address, uschar **retry_host_key, uschar **retry_message_key)
+  BOOL include_ip_address,
+  const uschar **retry_host_key, const uschar **retry_message_key)
 {
 BOOL yield = FALSE;
 time_t now = time(NULL);
-uschar *host_key, *message_key;
-open_db dbblock;
-open_db *dbm_file;
-tree_node *node;
-dbdata_retry *host_retry_record, *message_retry_record;
+const uschar * host_key, * message_key;
+open_db dbblock, * dbm_file;
+tree_node * node;
+dbdata_retry * host_retry_record, * message_retry_record;
 
 *retry_host_key = *retry_message_key = NULL;
 
-DEBUG(D_transport|D_retry) debug_printf("checking status of %s\n", host->name);
+DEBUG(D_transport|D_retry) debug_printf("checking retry status of %s\n", host->name);
 
 /* Do nothing if status already set; otherwise initialize status as usable. */
 
@@ -142,14 +167,11 @@ if (host->status != hstatus_unknown) return FALSE;
 host->status = hstatus_usable;
 
 /* Generate the host key for the unusable tree and the retry database. Ensure
-host names are lower cased (that's what %S does). */
+host names are lower cased (that's what %S does).
+Generate the message-specific key too.
+Be sure to maintain lack-of-spaces in retry keys; exinext depends on it. */
 
-host_key = include_ip_address?
-  string_sprintf("T:%S:%s%s", host->name, host->address, portstring) :
-  string_sprintf("T:%S%s", host->name, portstring);
-
-/* Generate the message-specific key */
-
+host_key = retry_host_key_build(host, include_ip_address, portstring);
 message_key = string_sprintf("%s:%s", host_key, message_id);
 
 /* Search the tree of unusable IP addresses. This is filled in when deliveries
@@ -170,7 +192,7 @@ if ((node = tree_search(tree_unusable, host_key)))
 /* Open the retry database, giving up if there isn't one. Otherwise, search for
 the retry records, and then close the database again. */
 
-if (!(dbm_file = dbfn_open(US"retry", O_RDONLY, &dbblock, FALSE)))
+if (!(dbm_file = dbfn_open(US"retry", O_RDONLY, &dbblock, FALSE, TRUE)))
   {
   DEBUG(D_deliver|D_retry|D_hints_lookup)
     debug_printf("no retry data available\n");
@@ -289,9 +311,9 @@ Returns:  nothing
 */
 
 void
-retry_add_item(address_item *addr, uschar *key, int flags)
+retry_add_item(address_item * addr, const uschar * key, int flags)
 {
-retry_item *rti = store_get(sizeof(retry_item));
+retry_item * rti = store_get(sizeof(retry_item), GET_UNTAINTED);
 host_item * host = addr->host_used;
 
 rti->next = addr->retries;
@@ -342,11 +364,11 @@ Returns:       pointer to retry rule, or NULL
 */
 
 retry_config *
-retry_find_config(const uschar *key, const uschar *alternate, int basic_errno,
+retry_find_config(const uschar * key, const uschar * alternate, int basic_errno,
   int more_errno)
 {
-const uschar *colon = Ustrchr(key, ':');
-retry_config *yield;
+const uschar * colon = Ustrchr(key, ':');
+retry_config * yield;
 
 /* If there's a colon in the key, there are two possibilities:
 
@@ -354,7 +376,8 @@ retry_config *yield;
 
       hostname:ip+port
 
-    In this case, we copy the host name.
+    In this case, we copy the host name (which could be an [ip], including
+    being an [ipv6], and we drop the []).
 
 (2) This is a key for a pipe, file, or autoreply delivery, in the format
 
@@ -368,6 +391,8 @@ retry_config *yield;
 if (colon)
   key = isalnum(*key)
     ? string_copyn(key, colon-key)	/* the hostname */
+    : *key == '['
+    ? string_copyn(key+1, Ustrchr(key, ']')-1-key)	/* the ip */
     : Ustrrchr(key, ':') + 1;		/* Take from the last colon */
 
 /* Sort out the keys */
@@ -517,13 +542,12 @@ Returns:        nothing
 */
 
 void
-retry_update(address_item **addr_defer, address_item **addr_failed,
-  address_item **addr_succeed)
+retry_update(address_item ** addr_defer, address_item ** addr_failed,
+  address_item ** addr_succeed)
 {
 open_db dbblock;
 open_db *dbm_file = NULL;
 time_t now = time(NULL);
-int i;
 
 DEBUG(D_retry) debug_printf("Processing retry items\n");
 
@@ -531,13 +555,12 @@ DEBUG(D_retry) debug_printf("Processing retry items\n");
 Deferred addresses must be handled after failed ones, because some may be moved
 to the failed chain if they have timed out. */
 
-for (i = 0; i < 3; i++)
+for (int i = 0; i < 3; i++)
   {
-  address_item *endaddr, *addr;
-  address_item *last_first = NULL;
-  address_item **paddr = i==0 ? addr_succeed :
-    i==1 ? addr_failed : addr_defer;
-  address_item **saved_paddr = NULL;
+  address_item * endaddr, *addr;
+  address_item * last_first = NULL;
+  address_item ** paddr = i==0 ? addr_succeed : i==1 ? addr_failed : addr_defer;
+  address_item ** saved_paddr = NULL;
 
   DEBUG(D_retry) debug_printf("%s addresses:\n",
     i == 0 ? "Succeeded" : i == 1 ? "Failed" : "Deferred");
@@ -555,7 +578,6 @@ for (i = 0; i < 3; i++)
   while ((endaddr = *paddr))
     {
     BOOL timed_out = FALSE;
-    retry_item *rti;
 
     for (addr = endaddr; addr; addr = addr->parent)
       {
@@ -567,7 +589,7 @@ for (i = 0; i < 3; i++)
 
       /* Loop for each retry item. */
 
-      for (rti = addr->retries; rti; rti = rti->next)
+      for (retry_item * rti = addr->retries; rti; rti = rti->next)
         {
         uschar *message;
         int message_length, message_space, failing_interval, next_try;
@@ -582,7 +604,7 @@ for (i = 0; i < 3; i++)
         reached their retry next try time. */
 
         if (!dbm_file)
-          dbm_file = dbfn_open(US"retry", O_RDWR, &dbblock, TRUE);
+          dbm_file = dbfn_open(US"retry", O_RDWR, &dbblock, TRUE, TRUE);
 
         if (!dbm_file)
           {
@@ -656,19 +678,27 @@ for (i = 0; i < 3; i++)
 	  ? US string_printing(rti->message)
 	  : US"unknown error";
         message_length = Ustrlen(message);
-        if (message_length > 150) message_length = 150;
+        if (message_length > EXIM_DB_RLIMIT)
+	  {
+	  DEBUG(D_retry)
+	    debug_printf_indent("truncating message from %u to %u bytes\n",
+				message_length, EXIM_DB_RLIMIT);
+	  message_length = EXIM_DB_RLIMIT;
+	  }
 
         /* Read a retry record from the database or construct a new one.
         Ignore an old one if it is too old since it was last updated. */
 
-        retry_record = dbfn_read(dbm_file, rti->key);
+        retry_record = dbfn_read_with_length(dbm_file, rti->key,
+					      &message_space);
         if (  retry_record
 	   && now - retry_record->time_stamp > retry_data_expire)
           retry_record = NULL;
 
         if (!retry_record)
           {
-          retry_record = store_get(sizeof(dbdata_retry) + message_length);
+          retry_record = store_get(sizeof(dbdata_retry) + message_length,
+				   message);
           message_space = message_length;
           retry_record->first_failed = now;
           retry_record->last_try = now;
@@ -676,7 +706,7 @@ for (i = 0; i < 3; i++)
           retry_record->expired = FALSE;
           retry_record->text[0] = 0;      /* just in case */
           }
-        else message_space = Ustrlen(retry_record->text);
+	else message_space -= sizeof(dbdata_retry);
 
         /* Compute how long this destination has been failing */
 
@@ -807,15 +837,17 @@ for (i = 0; i < 3; i++)
         if (next_try - now > retry_interval_max)
           next_try = now + retry_interval_max;
 
-        /* If the new message length is greater than the previous one, we
-        have to copy the record first. */
+        /* If the new message length is greater than the previous one, we have
+	to copy the record first.  If we're using an old one, the read used
+	tainted memory so we're ok to write into it. */
 
-        if (message_length > message_space)
-          {
-          dbdata_retry *newr = store_get(sizeof(dbdata_retry) + message_length);
-          memcpy(newr, retry_record, sizeof(dbdata_retry));
-          retry_record = newr;
-          }
+	if (message_length > message_space)
+	  {
+	  dbdata_retry * newr =
+	    store_get(sizeof(dbdata_retry) + message_length, message);
+	  memcpy(newr, retry_record, sizeof(dbdata_retry));
+	  retry_record = newr;
+	  }
 
         /* Set up the retry record; message_length may be less than the string
         length for very long error strings. */
@@ -825,7 +857,7 @@ for (i = 0; i < 3; i++)
         retry_record->basic_errno = rti->basic_errno;
         retry_record->more_errno = rti->more_errno;
         Ustrncpy(retry_record->text, message, message_length);
-        retry_record->text[message_length] = 0;
+        retry_record->text[message_length] = 0;	/* nul-term string in db */
 
         DEBUG(D_retry)
           {
@@ -930,3 +962,5 @@ DEBUG(D_retry) debug_printf("end of retry processing\n");
 }
 
 /* End of retry.c */
+/* vi: aw ai sw=2
+*/

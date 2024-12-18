@@ -1,0 +1,412 @@
+From a731c6050a1510734776851aaff5ad2f32fa3ae5 Mon Sep 17 00:00:00 2001
+From: Jeremy Harris <jgh146exb@wizmail.org>
+Date: Mon, 5 Aug 2024 12:51:12 +0100
+Subject: [PATCH] Fix SPA authenticator.  Bug 3106
+
+---
+ doc/ChangeLog    |   6 ++
+ src/auths/auth-spa.c | 205 ++++++++++++++++-----------------------
+ src/auths/auth-spa.h |  17 ++--
+ src/auths/spa.c      |   2 +-
+ 4 files changed, 99 insertions(+), 131 deletions(-)
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -1,9 +1,15 @@
+ This document describes *changes* to previous versions, that might
+ affect Exim's operation, with an unchanged configuration file.  For new
+ options, and new features, see the NewStuff file next to this ChangeLog.
+ 
++JH/07 Bug 3106: Fix coding in SPA authenticator. A macro argument was not
++      properly parenthesized, resulting in a logic error.  While the simple
++      fix was provided by Andrew Aitchison, the over-large code block resulting
++      from this macro made me want to replace it with a real function so more
++      extensive rework becamse needed.
++
+ Exim version 4.98
+ -----------------
+ 
+ JH/01 Support list of dkim results in the dkim_status ACL condition, making
+       it more usable in the data ACL.
+--- a/src/auths/auth-spa.c
++++ b/src/auths/auth-spa.c
+@@ -1201,59 +1201,71 @@ A = B = C = D = 0;
+ char versionString[] = "libntlm version 0.21";
+ 
+ /* Utility routines that handle NTLM auth structures. */
+ 
+ /* The [IS]VAL macros are to take care of byte order for non-Intel
+- * Machines -- I think this file is OK, but it hasn't been tested.
+- * The other files (the ones stolen from Samba) should be OK.
+- */
+-
+-
+-/* I am not crazy about these macros -- they seem to have gotten
+- * a bit complex.  A new scheme for handling string/buffer fields
+- * in the structures probably needs to be designed
+- */
+-
+-#define spa_bytes_add(ptr, header, buf, count) \
+-{ \
+-if (  buf && (count) != 0	/* we hate -Wint-in-bool-contex */ \
+-   && ptr->bufIndex + count < sizeof(ptr->buffer)		\
+-   ) \
+-  { \
+-  SSVAL(&ptr->header.len,0,count); \
+-  SSVAL(&ptr->header.maxlen,0,count); \
+-  SIVAL(&ptr->header.offset,0,((ptr->buffer - ((uint8x*)ptr)) + ptr->bufIndex)); \
+-  memcpy(ptr->buffer+ptr->bufIndex, buf, count); \
+-  ptr->bufIndex += count; \
+-  } \
+-else \
+-  { \
+-  ptr->header.len = \
+-  ptr->header.maxlen = 0; \
+-  SIVAL(&ptr->header.offset,0,((ptr->buffer - ((uint8x*)ptr)) + ptr->bufIndex)); \
+-  } \
+-}
+-
+-#define spa_string_add(ptr, header, string) \
+-{ \
+-uschar * p = string; \
+-int len = 0; \
+-if (p) len = Ustrlen(p); \
+-spa_bytes_add(ptr, header, p, len); \
+-}
+-
+-#define spa_unicode_add_string(ptr, header, string) \
+-{ \
+-uschar * p = string; \
+-uschar * b = NULL; \
+-int len = 0; \
+-if (p) \
+-  { \
+-  len = Ustrlen(p); \
+-  b = US strToUnicode(CS p); \
+-  } \
+-spa_bytes_add(ptr, header, b, len*2); \
++Machines -- I think this file is OK, but it hasn't been tested.
++The other files (the ones stolen from Samba) should be OK.  */
++
++
++/* Append a string to the buffer and point the header struct at that. */
++
++static void
++spa_bytes_add(SPAbuf * buffer, size_t off, SPAStrHeader * header,
++  const uschar * src, int count)
++{
++off += buffer->bufIndex;
++if (  src && count != 0			/* we hate -Wint-in-bool-contex */
++   && buffer->bufIndex + count < sizeof(buffer->buffer)	
++   )
++  {
++  SSVAL(&header->len, 0, count);
++  SSVAL(&header->maxlen, 0, count);
++  SIVAL(&header->offset, 0, off);
++  memcpy(buffer->buffer + buffer->bufIndex, src, count);
++  buffer->bufIndex += count;
++  }
++else
++  {
++  header->len = header->maxlen = 0;
++  SIVAL(&header->offset, 0, off);
++  }
++}
++
++static void
++spa_string_add(SPAbuf * buffer, size_t off, SPAStrHeader * header,
++  const uschar * string)
++{
++int len = string ? Ustrlen(string) : 0;
++spa_bytes_add(buffer, off, header, string, len);
++}
++
++static uschar *
++strToUnicode(const uschar * p)
++{
++static uschar buf[1024];
++size_t l = Ustrlen(p);
++
++assert (l * 2 < sizeof buf);
++
++for (int i = 0; l--; ) { buf[i++] = *p++; buf[i++] = 0; }
++return buf;
++}
++
++static void
++spa_unicode_add_string(SPAbuf * buffer, size_t off, SPAStrHeader * header,
++  const uschar * string)
++{
++const uschar * p = string;
++uschar * b = NULL;
++int len = 0;
++if (p)
++  {
++  len = Ustrlen(p);
++  b = US strToUnicode(p);
++  }
++spa_bytes_add(buffer, off, header, b, len*2);
+ }
+ 
+ 
+ #ifdef notdef
+ 
+@@ -1291,28 +1303,10 @@ for (i = 0; i < len; ++i)
+ buf[i] = '\0';
+ return buf;
+ }
+ 
+ static uschar *
+-strToUnicode (char *p)
+-{
+-static uschar buf[1024];
+-size_t l = strlen (p);
+-int i = 0;
+-
+-assert (l * 2 < sizeof buf);
+-
+-while (l--)
+-  {
+-  buf[i++] = *p++;
+-  buf[i++] = 0;
+-  }
+-
+-return buf;
+-}
+-
+-static uschar *
+ toString (char *p, size_t len)
+ {
+ static uschar buf[1024];
+ 
+ assert (len + 1 < sizeof buf);
+@@ -1402,16 +1396,18 @@ if (p)
+   if (!domain)
+     domain = p + 1;
+   *p = '\0';
+   }
+ 
+-request->bufIndex = 0;
++request->buf.bufIndex = 0;
+ memcpy (request->ident, "NTLMSSP\0\0\0", 8);
+ SIVAL (&request->msgType, 0, 1);
+ SIVAL (&request->flags, 0, 0x0000b207);      /* have to figure out what these mean */
+-spa_string_add (request, user, u);
+-spa_string_add (request, domain, domain);
++spa_string_add(&request->buf, offsetof(SPAAuthRequest, buf), &request->user,
++		u);
++spa_string_add(&request->buf, offsetof(SPAAuthRequest, buf), &request->domain,
++		domain);
+ }
+ 
+ 
+ 
+ void
+@@ -1425,11 +1421,11 @@ int random_seed = (int)time(NULL) ^ ((p
+ /* Ensure challenge data is cleared, in case it isn't all used. This
+ patch added by PH on suggestion of Russell King */
+ 
+ memset(challenge, 0, sizeof(SPAAuthChallenge));
+ 
+-challenge->bufIndex = 0;
++challenge->buf.bufIndex = 0;
+ memcpy (challenge->ident, "NTLMSSP\0", 8);
+ SIVAL (&challenge->msgType, 0, 2);
+ SIVAL (&challenge->flags, 0, 0x00008201);
+ SIVAL (&challenge->uDomain.len, 0, 0x0000);
+ SIVAL (&challenge->uDomain.maxlen, 0, 0x0000);
+@@ -1447,58 +1443,16 @@ memcpy(challenge->challengeData,chalstr,
+ }
+ 
+ 
+ 
+ 
+-/* This is the original source of this function, preserved here for reference.
++/* The original version of this function is available in git.
+ The new version below was re-organized by PH following a patch and some further
+ suggestions from Mark Lyda to fix the problem that is described at the head of
+ this module. At the same time, I removed the untidiness in the code below that
+-involves the "d" and "domain" variables. */
+-
+-#ifdef NEVER
+-void
+-spa_build_auth_response (SPAAuthChallenge * challenge,
+-                        SPAAuthResponse * response, char *user,
+-                        char *password)
+-{
+-uint8x lmRespData[24];
+-uint8x ntRespData[24];
+-char *d = strdup (GetUnicodeString (challenge, uDomain));
+-char *domain = d;
+-char *u = strdup (user);
+-char *p = strchr (u, '@');
+-
+-if (p)
+-  {
+-  domain = p + 1;
+-  *p = '\0';
+-  }
+-
+-spa_smb_encrypt (US password, challenge->challengeData, lmRespData);
+-spa_smb_nt_encrypt (US password, challenge->challengeData, ntRespData);
+-
+-response->bufIndex = 0;
+-memcpy (response->ident, "NTLMSSP\0\0\0", 8);
+-SIVAL (&response->msgType, 0, 3);
+-
+-spa_bytes_add (response, lmResponse, lmRespData, 24);
+-spa_bytes_add (response, ntResponse, ntRespData, 24);
+-spa_unicode_add_string (response, uDomain, domain);
+-spa_unicode_add_string (response, uUser, u);
+-spa_unicode_add_string (response, uWks, u);
+-spa_string_add (response, sessionKey, NULL);
+-
+-response->flags = challenge->flags;
+-
+-free (d);
+-free (u);
+-}
+-#endif
+-
+-
+-/* This is the re-organized version (see comments above) */
++involves the "d" and "domain" variables.
++Further modified by JGH to replace complex macro "functions" with real ones. */
+ 
+ void
+ spa_build_auth_response (SPAAuthChallenge * challenge,
+                         SPAAuthResponse * response, uschar * user,
+                         uschar * password)
+@@ -1508,10 +1462,12 @@ uint8x ntRespData[24];
+ uint32x cf = IVAL(&challenge->flags, 0);
+ uschar * u = string_copy(user);
+ uschar * p = Ustrchr(u, '@');
+ uschar * d = NULL;
+ uschar * domain;
++SPAbuf * buf = &response->buf;
++const size_t off = offsetof(SPAAuthResponse, buf);
+ 
+ if (p)
+   {
+   domain = p + 1;
+   *p = '\0';
+@@ -1522,28 +1478,31 @@ else domain = d = string_copy(cf & 0x1
+   : CUS get_challenge_str(challenge, &challenge->uDomain));
+ 
+ spa_smb_encrypt(password, challenge->challengeData, lmRespData);
+ spa_smb_nt_encrypt(password, challenge->challengeData, ntRespData);
+ 
+-response->bufIndex = 0;
++buf->bufIndex = 0;
+ memcpy (response->ident, "NTLMSSP\0\0\0", 8);
+ SIVAL (&response->msgType, 0, 3);
+ 
+-spa_bytes_add(response, lmResponse, lmRespData, cf & 0x200 ? 24 : 0);
+-spa_bytes_add(response, ntResponse, ntRespData, cf & 0x8000 ? 24 : 0);
++spa_bytes_add(buf, off, &response->lmResponse, lmRespData, cf & 0x200 ? 24 : 0);
++spa_bytes_add(buf, off, &response->ntResponse, ntRespData, cf & 0x8000 ? 24 : 0);
+ 
+-if (cf & 0x1) {      /* Unicode Text */
+-     spa_unicode_add_string(response, uDomain, domain);
+-     spa_unicode_add_string(response, uUser, u);
+-     spa_unicode_add_string(response, uWks, u);
+-} else {             /* OEM Text */
+-     spa_string_add(response, uDomain, domain);
+-     spa_string_add(response, uUser, u);
+-     spa_string_add(response, uWks, u);
+-}
++if (cf & 0x1)		/* Unicode Text */
++  {
++  spa_unicode_add_string(buf, off, &response->uDomain, domain);
++  spa_unicode_add_string(buf, off, &response->uUser, u);
++  spa_unicode_add_string(buf, off, &response->uWks, u);
++  }
++else
++  {			/* OEM Text */
++  spa_string_add(buf, off, &response->uDomain, domain);
++  spa_string_add(buf, off, &response->uUser, u);
++  spa_string_add(buf, off, &response->uWks, u);
++  }
+ 
+-spa_string_add(response, sessionKey, NULL);
++spa_string_add(buf, off, &response->sessionKey, NULL);
+ response->flags = challenge->flags;
+ }
+ 
+ 
+ #endif   /*!MACRO_PREDEF*/
+--- a/src/auths/auth-spa.h
++++ b/src/auths/auth-spa.h
+@@ -37,31 +37,35 @@ typedef struct
+        uint32x         offset;
+ } SPAStrHeader;
+ 
+ typedef struct
+ {
++	uint8x	buffer[1024];
++	uint32x	bufIndex;
++} SPAbuf;
++
++typedef struct
++{
+        char         ident[8];
+        uint32x         msgType;
+        SPAStrHeader    uDomain;
+        uint32x         flags;
+        uint8x         challengeData[8];
+        uint8x         reserved[8];
+        SPAStrHeader    emptyString;
+-       uint8x         buffer[1024];
+-       uint32x         bufIndex;
++       SPAbuf		buf;
+ } SPAAuthChallenge;
+ 
+ 
+ typedef struct
+ {
+        char         ident[8];
+        uint32x         msgType;
+        uint32x         flags;
+        SPAStrHeader    user;
+        SPAStrHeader    domain;
+-       uint8x         buffer[1024];
+-       uint32x         bufIndex;
++       SPAbuf		buf;
+ } SPAAuthRequest;
+ 
+ typedef struct
+ {
+        char         ident[8];
+@@ -71,15 +75,14 @@ typedef struct
+        SPAStrHeader    uDomain;
+        SPAStrHeader    uUser;
+        SPAStrHeader    uWks;
+        SPAStrHeader    sessionKey;
+        uint32x         flags;
+-       uint8x         buffer[1024];
+-       uint32x         bufIndex;
++       SPAbuf		buf;
+ } SPAAuthResponse;
+ 
+-#define spa_request_length(ptr) (((ptr)->buffer - (uint8x*)(ptr)) + (ptr)->bufIndex)
++#define spa_request_length(ptr) (((uint8x*)&(ptr)->buf - (uint8x*)(ptr)) + (ptr)->buf.bufIndex)
+ 
+ void spa_bits_to_base64 (unsigned char *, const unsigned char *, int);
+ int spa_base64_to_bits(char *, int, const char *);
+ void spa_build_auth_response (SPAAuthChallenge * challenge,
+        SPAAuthResponse * response, uschar * user, uschar * password);
+--- a/src/auths/spa.c
++++ b/src/auths/spa.c
+@@ -193,11 +193,11 @@ that causes failure if the size of msgbu
+   int i;
+   char * p;
+   int len = SVAL(&responseptr->uUser.len,0)/2;
+ 
+   if (  (off = IVAL(&responseptr->uUser.offset,0)) >= sizeof(SPAAuthResponse)
+-     || len >= sizeof(responseptr->buffer)/2
++     || len >= sizeof(responseptr->buf.buffer)/2
+      || (p = (CS responseptr) + off) + len*2 >= CS (responseptr+1)
+      )
+     {
+     DEBUG(D_auth)
+       debug_printf("auth_spa_server(): bad uUser spec in response\n");

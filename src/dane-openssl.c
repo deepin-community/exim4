@@ -2,7 +2,7 @@
  *  Author: Viktor Dukhovni
  *  License: THIS CODE IS IN THE PUBLIC DOMAIN.
  *
- * Copyright (c) The Exim Maintainers 2014 - 2018
+ * Copyright (c) The Exim Maintainers 2014 - 2019
  */
 #include <stdio.h>
 #include <string.h>
@@ -25,9 +25,18 @@
 #if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
 # define X509_up_ref(x) CRYPTO_add(&((x)->references), 1, CRYPTO_LOCK_X509)
 #endif
+
+/* LibreSSL 2.9.0 and later - 2.9.0 has removed a number of macros ... */
+#ifdef LIBRESSL_VERSION_NUMBER
+# if LIBRESSL_VERSION_NUMBER >= 0x2090000fL
+#  define EXIM_HAVE_ASN1_MACROS
+# endif
+#endif
+/* OpenSSL */
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L && !defined(LIBRESSL_VERSION_NUMBER)
 # define EXIM_HAVE_ASN1_MACROS
 # define EXIM_OPAQUE_X509
+/* Older OpenSSL and all LibreSSL */
 #else
 # define X509_STORE_CTX_get_verify(ctx)		(ctx)->verify
 # define X509_STORE_CTX_get_verify_cb(ctx)	(ctx)->verify_cb
@@ -120,7 +129,7 @@ static ERR_STRING_DATA dane_str_reasons[] = {
 };
 #endif
 
-#define DANEerr(f, r) ERR_PUT_error(err_lib_dane, (f), (r), __FILE__, __LINE__)
+#define DANEerr(f, r) ERR_PUT_error(err_lib_dane, (f), (r), __FUNCTION__, __LINE__)
 
 static int err_lib_dane = -1;
 static int dane_idx = -1;
@@ -240,7 +249,6 @@ int matched;
  */
 for (matched = 0; !matched && slist; slist = slist->next)
   {
-  dane_mtype_list m;
   unsigned char mdbuf[EVP_MAX_MD_SIZE];
   unsigned char *buf = NULL;
   unsigned char *buf2;
@@ -273,9 +281,8 @@ for (matched = 0; !matched && slist; slist = slist->next)
   /*
    * Loop over each mtype and data element
    */
-  for (m = slist->value->mtype; !matched && m; m = m->next)
+  for (dane_mtype_list m = slist->value->mtype; !matched && m; m = m->next)
     {
-    dane_data_list d;
     unsigned char *cmpbuf = buf;
     unsigned int cmplen = len;
 
@@ -289,7 +296,7 @@ for (matched = 0; !matched && slist; slist = slist->next)
       if (!EVP_Digest(buf, len, cmpbuf, &cmplen, m->value->md, 0))
 	  matched = -1;
       }
-    for (d = m->value->data; !matched && d; d = d->next)
+    for (dane_data_list d = m->value->data; !matched && d; d = d->next)
 	if (  cmplen == d->value->datalen
 	   && memcmp(cmpbuf, d->value->data, cmplen) == 0)
 	    matched = slist->value->selector + 1;
@@ -394,10 +401,9 @@ akid_issuer_name(AUTHORITY_KEYID *akid)
 {
 if (akid && akid->issuer)
   {
-  int     i;
   GENERAL_NAMES *gens = akid->issuer;
 
-  for (i = 0; i < sk_GENERAL_NAME_num(gens); ++i)
+  for (int i = 0; i < sk_GENERAL_NAME_num(gens); ++i)
     {
     GENERAL_NAME *gn = sk_GENERAL_NAME_value(gens, i);
 
@@ -545,8 +551,6 @@ return 0;
 static int
 ta_signed(ssl_dane *dane, X509 *cert, int depth)
 {
-dane_cert_list x;
-dane_pkey_list k;
 EVP_PKEY *pk;
 int done = 0;
 
@@ -557,7 +561,7 @@ int done = 0;
  * first (name comparisons), before we bother with signature checks
  * (public key operations).
  */
-for (x = dane->certs; !done && x; x = x->next)
+for (dane_cert_list x = dane->certs; !done && x; x = x->next)
   {
   if (X509_check_issued(x->value, cert) == X509_V_OK)
     {
@@ -597,7 +601,7 @@ for (x = dane->certs; !done && x; x = x->next)
  * This may push errors onto the stack when the certificate signature is
  * not of the right type or length, throw these away,
  */
-for (k = dane->pkeys; !done && k; k = k->next)
+for (dane_pkey_list k = dane->pkeys; !done && k; k = k->next)
   if (X509_verify(cert, k->value) > 0)
     done = wrap_issuer(dane, k->value, cert, depth, WRAP_MID) ? 1 : -1;
   else
@@ -610,8 +614,6 @@ static int
 set_trust_anchor(X509_STORE_CTX *ctx, ssl_dane *dane, X509 *cert)
 {
 int matched = 0;
-int n;
-int i;
 int depth = 0;
 EVP_PKEY *takey;
 X509 *ca;
@@ -647,8 +649,9 @@ if (!(in = sk_X509_dup(in)))
  *
  * Caller ensures that the initial certificate is not self-signed.
  */
-for (n = sk_X509_num(in); n > 0; --n, ++depth)
+for (int n = sk_X509_num(in); n > 0; --n, ++depth)
   {
+  int i;
   for (i = 0; i < n; ++i)
     if (X509_check_issued(sk_X509_value(in, i), cert) == X509_V_OK)
       break;
@@ -749,9 +752,8 @@ static int
 match_name(const char *certid, ssl_dane *dane)
 {
 int multi = dane->multi;
-dane_host_list hosts;
 
-for (hosts = dane->hosts; hosts; hosts = hosts->next)
+for (dane_host_list hosts = dane->hosts; hosts; hosts = hosts->next)
   {
   int match_subdomain = 0;
   const char *domain = hosts->value;
@@ -867,9 +869,8 @@ gens = X509_get_ext_d2i(cert, NID_subject_alt_name, 0, 0);
 if (gens)
   {
   int n = sk_GENERAL_NAME_num(gens);
-  int i;
 
-  for (i = 0; i < n; ++i)
+  for (int i = 0; i < n; ++i)
     {
     const GENERAL_NAME *gn = sk_GENERAL_NAME_value(gens, i);
     const char *certid;
@@ -1084,52 +1085,52 @@ if (dane->selectors[DANESSL_USAGE_DANE_EE])
     }
   }
 
-  if (dane->selectors[DANESSL_USAGE_DANE_TA])
+if (dane->selectors[DANESSL_USAGE_DANE_TA])
+  {
+  if ((matched = set_trust_anchor(ctx, dane, cert)) < 0)
     {
-    if ((matched = set_trust_anchor(ctx, dane, cert)) < 0)
-      {
-      X509_STORE_CTX_set_error(ctx, X509_V_ERR_OUT_OF_MEM);
-      return -1;
-      }
-    if (matched)
-      {
-      /*
-       * Check that setting the untrusted chain updates the expected
-       * structure member at the expected offset.
-       */
-      X509_STORE_CTX_trusted_stack(ctx, dane->roots);
-      X509_STORE_CTX_set_chain(ctx, dane->chain);
-      OPENSSL_assert(dane->chain == X509_STORE_CTX_get0_untrusted(ctx));
-      }
+    X509_STORE_CTX_set_error(ctx, X509_V_ERR_OUT_OF_MEM);
+    return -1;
     }
-
-  /*
-   * Name checks and usage 0/1 constraint enforcement are delayed until
-   * X509_verify_cert() builds the full chain and calls our verify_chain()
-   * wrapper.
-   */
-  dane->verify = X509_STORE_CTX_get_verify(ctx);
-  X509_STORE_CTX_set_verify(ctx, verify_chain);
-
-  if (X509_verify_cert(ctx))
-    return 1;
-
-  /*
-   * If the chain is invalid, clear any matching cert or hostname, to
-   * protect callers that might erroneously rely on these alone without
-   * checking the validation status.
-   */
-  if (dane->match)
+  if (matched)
     {
-    X509_free(dane->match);
-    dane->match = 0;
+    /*
+     * Check that setting the untrusted chain updates the expected
+     * structure member at the expected offset.
+     */
+    X509_STORE_CTX_trusted_stack(ctx, dane->roots);
+    X509_STORE_CTX_set_chain(ctx, dane->chain);
+    OPENSSL_assert(dane->chain == X509_STORE_CTX_get0_untrusted(ctx));
     }
-  if (dane->mhost)
-    {
-    OPENSSL_free(dane->mhost);
-    dane->mhost = 0;
-    }
-   return 0;
+  }
+
+/*
+ * Name checks and usage 0/1 constraint enforcement are delayed until
+ * X509_verify_cert() builds the full chain and calls our verify_chain()
+ * wrapper.
+ */
+dane->verify = X509_STORE_CTX_get_verify(ctx);
+X509_STORE_CTX_set_verify(ctx, verify_chain);
+
+if (X509_verify_cert(ctx))
+  return 1;
+
+/*
+ * If the chain is invalid, clear any matching cert or hostname, to
+ * protect callers that might erroneously rely on these alone without
+ * checking the validation status.
+ */
+if (dane->match)
+  {
+  X509_free(dane->match);
+  dane->match = 0;
+  }
+if (dane->mhost)
+  {
+  OPENSSL_free(dane->mhost);
+  dane->mhost = 0;
+  }
+ return 0;
 }
 
 static dane_list
@@ -1157,10 +1158,9 @@ return l;
 static void
 list_free(void *list, void (*f)(void *))
 {
-dane_list head;
 dane_list next;
 
-for (head = (dane_list) list; head; head = next)
+for (dane_list head = (dane_list) list; head; head = next)
   {
   next = head->next;
   if (f && head->value)
@@ -1209,7 +1209,6 @@ void
 DANESSL_cleanup(SSL *ssl)
 {
 ssl_dane *dane;
-int u;
 
 DEBUG(D_tls) debug_printf("Dane lib-cleanup\n");
 
@@ -1220,7 +1219,7 @@ if (dane_idx < 0 || !(dane = SSL_get_ex_data(ssl, dane_idx)))
 dane_reset(dane);
 if (dane->hosts)
   list_free(dane->hosts, ossl_free);
-for (u = 0; u <= DANESSL_USAGE_LAST; ++u)
+for (int u = 0; u <= DANESSL_USAGE_LAST; ++u)
   if (dane->selectors[u])
     list_free(dane->selectors[u], dane_selector_free);
 if (dane->pkeys)
@@ -1536,7 +1535,6 @@ int
 DANESSL_init(SSL *ssl, const char *sni_domain, const char **hostnames)
 {
 ssl_dane *dane;
-int i;
 
 DEBUG(D_tls) debug_printf("Dane ssl_init\n");
 if (dane_idx < 0)
@@ -1575,7 +1573,7 @@ dane->multi = 0;			/* Future SSL control interface */
 dane->count = 0;
 dane->hosts = 0;
 
-for (i = 0; i <= DANESSL_USAGE_LAST; ++i)
+for (int i = 0; i <= DANESSL_USAGE_LAST; ++i)
   dane->selectors[i] = 0;
 
 if (hostnames && (dane->hosts = host_list_init(hostnames)) == 0)

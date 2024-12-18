@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2023 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Thanks to Petr Cech for contributing the original code for these
 functions. Thanks to Joachim Wieland for the initial patch for the Unix domain
@@ -33,7 +35,7 @@ static pgsql_connection *pgsql_connections = NULL;
 /* See local README for interface description. */
 
 static void *
-pgsql_open(uschar *filename, uschar **errmsg)
+pgsql_open(const uschar * filename, uschar ** errmsg)
 {
 return (void *)(1);    /* Just return something non-null */
 }
@@ -53,7 +55,7 @@ pgsql_connection *cn;
 while ((cn = pgsql_connections) != NULL)
   {
   pgsql_connections = cn->next;
-  DEBUG(D_lookup) debug_printf("close PGSQL connection: %s\n", cn->server);
+  DEBUG(D_lookup) debug_printf_indent("close PGSQL connection: %s\n", cn->server);
   PQfinish(cn->handle);
   }
 }
@@ -77,7 +79,7 @@ static void
 notice_processor(void *arg, const char *message)
 {
 arg = arg;   /* Keep compiler happy */
-DEBUG(D_lookup) debug_printf("PGSQL: %s\n", message);
+DEBUG(D_lookup) debug_printf_indent("PGSQL: %s\n", message);
 }
 
 
@@ -113,22 +115,23 @@ Arguments:
   errmsg       where to point an error message
   defer_break  set TRUE if no more servers are to be tried after DEFER
   do_cache     set FALSE if data is changed
+  opts	       options list
 
 Returns:       OK, FAIL, or DEFER
 */
 
 static int
 perform_pgsql_search(const uschar *query, uschar *server, uschar **resultptr,
-  uschar **errmsg, BOOL *defer_break, uint *do_cache)
+  uschar **errmsg, BOOL *defer_break, uint *do_cache, const uschar * opts)
 {
 PGconn *pg_conn = NULL;
 PGresult *pg_result = NULL;
 
-int i;
 gstring * result = NULL;
 int yield = DEFER;
 unsigned int num_fields, num_tuples;
 pgsql_connection *cn;
+rmark reset_point = store_mark();
 uschar *server_copy = NULL;
 uschar *sdata[3];
 
@@ -137,7 +140,7 @@ path, database, user, password. We can write to the string, since it is in a
 nextinlist temporary buffer. The copy of the string that is used for caching
 has the password removed. This copy is also used for debugging output. */
 
-for (i = 2; i >= 0; i--)
+for (int i = 2; i >= 0; i--)
   {
   uschar *pp = Ustrrchr(server, '/');
   if (!pp)
@@ -182,7 +185,7 @@ if (!cn)
     last_slash = Ustrrchr(server, '/');
     last_dot = Ustrrchr(server, '.');
 
-    DEBUG(D_lookup) debug_printf("PGSQL new connection: socket=%s "
+    DEBUG(D_lookup) debug_printf_indent("PGSQL new connection: socket=%s "
       "database=%s user=%s\n", server, sdata[0], sdata[1]);
 
     /* A valid socket name looks like this: /var/run/postgresql/.s.PGSQL.5432
@@ -222,7 +225,7 @@ if (!cn)
       return DEFER;
       }
 
-    DEBUG(D_lookup) debug_printf("PGSQL new connection: host=%s port=%s "
+    DEBUG(D_lookup) debug_printf_indent("PGSQL new connection: host=%s port=%s "
       "database=%s user=%s\n", server, port, sdata[0], sdata[1]);
     }
 
@@ -239,7 +242,7 @@ if (!cn)
 
   if(PQstatus(pg_conn) == CONNECTION_BAD)
     {
-    store_reset(server_copy);
+    reset_point = store_reset(reset_point);
     *errmsg = string_sprintf("PGSQL connection failed: %s",
       PQerrorMessage(pg_conn));
     PQfinish(pg_conn);
@@ -260,7 +263,7 @@ if (!cn)
 
   /* Add the connection to the cache */
 
-  cn = store_get(sizeof(pgsql_connection));
+  cn = store_get(sizeof(pgsql_connection), GET_UNTAINTED);
   cn->server = server_copy;
   cn->handle = pg_conn;
   cn->next = pgsql_connections;
@@ -271,7 +274,7 @@ if (!cn)
 
 else
   {
-  DEBUG(D_lookup) debug_printf("PGSQL using cached connection for %s\n",
+  DEBUG(D_lookup) debug_printf_indent("PGSQL using cached connection for %s\n",
     server_copy);
   }
 
@@ -289,8 +292,8 @@ switch(PQresultStatus(pg_result))
 
     result = string_cat(result, US PQcmdTuples(pg_result));
     *do_cache = 0;
-    DEBUG(D_lookup) debug_printf("PGSQL: command does not return any data "
-      "but was successful. Rows affected: %s\n", string_from_gstring(result));
+    DEBUG(D_lookup) debug_printf_indent("PGSQL: command does not return any data "
+      "but was successful. Rows affected: %Y\n", result);
     break;
 
   case PGRES_TUPLES_OK:
@@ -320,7 +323,7 @@ num_tuples = PQntuples(pg_result);
 /* Get the fields and construct the result string. If there is more than one
 row, we insert '\n' between them. */
 
-for (i = 0; i < num_tuples; i++)
+for (int i = 0; i < num_tuples; i++)
   {
   if (result)
     result = string_catn(result, US"\n", 1);
@@ -329,14 +332,12 @@ for (i = 0; i < num_tuples; i++)
     result = string_catn(result,
 	US PQgetvalue(pg_result, i, 0), PQgetlength(pg_result, i, 0));
   else
-    {
-    int j;
-    for (j = 0; j < num_fields; j++)
+    for (int j = 0; j < num_fields; j++)
       {
       uschar *tmp = US PQgetvalue(pg_result, i, j);
       result = lf_quote(US PQfname(pg_result, j), tmp, Ustrlen(tmp), result);
       }
-    }
+  if (!result) result = string_get(1);
   }
 
 /* If result is NULL then no data has been found and so we return FAIL. */
@@ -360,13 +361,13 @@ if (pg_result) PQclear(pg_result);
 
 if (result)
   {
-  store_reset(result->s + result->ptr + 1);
+  gstring_release_unused(result);
   *resultptr = string_from_gstring(result);
   return OK;
   }
 else
   {
-  DEBUG(D_lookup) debug_printf("%s\n", *errmsg);
+  DEBUG(D_lookup) debug_printf_indent("%s\n", *errmsg);
   return yield;      /* FAIL or DEFER */
   }
 }
@@ -384,11 +385,12 @@ query is deferred with a retryable error is now in a separate function that is
 shared with other SQL lookups. */
 
 static int
-pgsql_find(void *handle, uschar *filename, const uschar *query, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+pgsql_find(void * handle, const uschar * filename, const uschar * query,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
 return lf_sqlperform(US"PostgreSQL", US"pgsql_servers", pgsql_servers, query,
-  result, errmsg, do_cache, perform_pgsql_search);
+  result, errmsg, do_cache, opts, perform_pgsql_search);
 }
 
 
@@ -413,27 +415,25 @@ Why, I don't know. Seems odd for just string escaping...]
 Arguments:
   s          the string to be quoted
   opt        additional option text or NULL if none
+  idx	     lookup type index
 
 Returns:     the processed string or NULL for a bad option
 */
 
 static uschar *
-pgsql_quote(uschar *s, uschar *opt)
+pgsql_quote(uschar * s, uschar * opt, unsigned idx)
 {
-register int c;
-int count = 0;
-uschar *t = s;
-uschar *quoted;
+int count = 0, c;
+uschar * t = s, * quoted;
 
-if (opt != NULL) return NULL;     /* No options recognized */
+if (opt) return NULL;     /* No options recognized */
 
-while ((c = *t++) != 0)
+while ((c = *t++))
   if (Ustrchr("\n\t\r\b\'\"\\", c) != NULL) count++;
 
-if (count == 0) return s;
-t = quoted = store_get(Ustrlen(s) + count + 1);
+t = quoted = store_get_quoted(Ustrlen(s) + count + 1, s, idx);
 
-while ((c = *s++) != 0)
+while ((c = *s++))
   {
   if (c == '\'')
     {
@@ -445,16 +445,11 @@ while ((c = *s++) != 0)
     *t++ = '\\';
     switch(c)
       {
-      case '\n': *t++ = 'n';
-      break;
-      case '\t': *t++ = 't';
-      break;
-      case '\r': *t++ = 'r';
-      break;
-      case '\b': *t++ = 'b';
-      break;
-      default:   *t++ = c;
-      break;
+      case '\n': *t++ = 'n'; break;
+      case '\t': *t++ = 't'; break;
+      case '\r': *t++ = 'r'; break;
+      case '\b': *t++ = 'b'; break;
+      default:   *t++ = c;   break;
       }
     }
   else *t++ = c;
@@ -473,11 +468,11 @@ return quoted;
 
 #include "../version.h"
 
-void
-pgsql_version_report(FILE *f)
+gstring *
+pgsql_version_report(gstring * g)
 {
 #ifdef DYNLOOKUP
-fprintf(f, "Library version: PostgreSQL: Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g, "Library version: PostgreSQL: Exim version %s\n", EXIM_VERSION_STR);
 #endif
 
 /* Version reporting: there appears to be no available information about
@@ -485,19 +480,21 @@ the client library in libpq-fe.h; once you have a connection object, you
 can access the server version and the chosen protocol version, but those
 aren't really what we want.  It might make sense to debug_printf those
 when the connection is established though? */
+
+return g;
 }
 
 
 static lookup_info _lookup_info = {
-  US"pgsql",                     /* lookup name */
-  lookup_querystyle,             /* query-style lookup */
-  pgsql_open,                    /* open function */
-  NULL,                          /* no check function */
-  pgsql_find,                    /* find function */
-  NULL,                          /* no close function */
-  pgsql_tidy,                    /* tidy function */
-  pgsql_quote,                   /* quoting function */
-  pgsql_version_report           /* version reporting */
+  .name = US"pgsql",			/* lookup name */
+  .type = lookup_querystyle,		/* query-style lookup */
+  .open = pgsql_open,			/* open function */
+  .check = NULL,			/* no check function */
+  .find = pgsql_find,			/* find function */
+  .close = NULL,			/* no close function */
+  .tidy = pgsql_tidy,			/* tidy function */
+  .quote = pgsql_quote,			/* quoting function */
+  .version_report = pgsql_version_report           /* version reporting */
 };
 
 #ifdef DYNLOOKUP

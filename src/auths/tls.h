@@ -4,6 +4,7 @@
 
 /* Copyright (c) Jeremy Harris 2015 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Private structure for the private options. */
 
@@ -27,4 +28,4 @@ extern auth_tls_options_block auth_tls_option_defaults;
 extern void auth_tls_init(auth_instance *);
 extern int auth_tls_server(auth_instance *, uschar *);
 
-/* End of sa.h */
+/* End of tls.h */

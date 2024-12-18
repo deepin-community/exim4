@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Functions for reading spool files. When compiling for a utility (eximon),
 not all are needed, and some functionality can be cut out. */
@@ -34,42 +36,35 @@ Side effect: message_subdir is set for the (possibly split) spool directory
 */
 
 int
-spool_open_datafile(uschar *id)
+spool_open_datafile(const uschar * id)
 {
-int i;
 struct stat statbuf;
 flock_t lock_data;
 int fd;
 
-/* If split_spool_directory is set, first look for the file in the appropriate
-sub-directory of the input directory. If it is not found there, try the input
-directory itself, to pick up leftovers from before the splitting. If split_
-spool_directory is not set, first look in the main input directory. If it is
-not found there, try the split sub-directory, in case it is left over from a
-splitting state. */
+/* If split_spool_directory is set (handled by set_subdir_str()), first look for
+the file in the appropriate sub-directory of the input directory. If it is not
+found there, try the input directory itself, to pick up leftovers from before
+the splitting. If split_ spool_directory is not set, first look in the main
+input directory. If it is not found there, try the split sub-directory, in case
+it is left over from a splitting state. */
 
-for (i = 0; i < 2; i++)
+for (int i = 0; i < 2; i++)
   {
   uschar * fname;
   int save_errno;
 
-  message_subdir[0] = split_spool_directory == i ? '\0' : id[5];
+  set_subdir_str(message_subdir, id, i);
   fname = spool_fname(US"input", message_subdir, id, US"-D");
-  DEBUG(D_deliver) debug_printf("Trying spool file %s\n", fname);
+  DEBUG(D_deliver) debug_printf_indent("Trying spool file %s\n", fname);
 
   /* We protect against symlink attacks both in not propagating the
-   * file-descriptor to other processes as we exec, and also ensuring that we
-   * don't even open symlinks.
-   * No -D file inside the spool area should be a symlink.
-   */
+  file-descriptor to other processes as we exec, and also ensuring that we
+  don't even open symlinks.
+  No -D file inside the spool area should be a symlink.  */
+
   if ((fd = Uopen(fname,
-#ifdef O_CLOEXEC
-		      O_CLOEXEC |
-#endif
-#ifdef O_NOFOLLOW
-		      O_NOFOLLOW |
-#endif
-		      O_RDWR | O_APPEND, 0)) >= 0)
+		  EXIM_CLOEXEC | EXIM_NOFOLLOW | O_RDWR | O_APPEND, 0)) >= 0)
     break;
   save_errno = errno;
   if (errno == ENOENT)
@@ -77,6 +72,11 @@ for (i = 0; i < 2; i++)
     if (i == 0) continue;
     if (!f.queue_running)
       log_write(0, LOG_MAIN, "Spool%s%s file %s-D not found",
+	*queue_name ? US" Q=" : US"",
+	*queue_name ? queue_name : US"",
+	id);
+    else DEBUG(D_deliver)
+      debug_printf("Spool%s%s file %s-D not found\n",
 	*queue_name ? US" Q=" : US"",
 	*queue_name ? queue_name : US"",
 	id);
@@ -102,13 +102,13 @@ what it locks. */
 lock_data.l_type = F_WRLCK;
 lock_data.l_whence = SEEK_SET;
 lock_data.l_start = 0;
-lock_data.l_len = SPOOL_DATA_START_OFFSET;
+lock_data.l_len = spool_data_start_offset(id);
 
 if (fcntl(fd, F_SETLK, &lock_data) < 0)
   {
-  log_write(L_skip_delivery,
-            LOG_MAIN,
-            "Spool file is locked (another process is handling this message)");
+  log_write(L_skip_delivery, LOG_MAIN,
+      "Spool file for %s is locked (another process is handling this message)",
+      id);
   (void)close(fd);
   errno = 0;
   return -1;
@@ -119,7 +119,7 @@ in the count, but add one for the newline before the data. */
 
 if (fstat(fd, &statbuf) == 0)
   {
-  message_body_size = statbuf.st_size - SPOOL_DATA_START_OFFSET;
+  message_body_size = statbuf.st_size - spool_data_start_offset(id);
   message_size = message_body_size + 1;
   }
 
@@ -186,7 +186,7 @@ BOOL right = buffer[1] == 'Y';
 
 if (n < 5) return FALSE;    /* malformed line */
 buffer[n-1] = 0;            /* Remove \n */
-node = store_get(sizeof(tree_node) + n - 3);
+node = store_get(sizeof(tree_node) + n - 3, GET_TAINTED);	/* rcpt names tainted */
 *connect = node;
 Ustrcpy(node->name, buffer + 3);
 node->data.ptr = NULL;
@@ -253,7 +253,7 @@ sender_helo_name = NULL;
 sender_host_address = NULL;
 sender_host_name = NULL;
 sender_host_port = 0;
-sender_host_authenticated = NULL;
+sender_host_authenticated = sender_host_auth_pubname = NULL;
 sender_ident = NULL;
 f.sender_local = FALSE;
 f.sender_set_untrusted = FALSE;
@@ -274,12 +274,12 @@ f.dkim_disable_verify = FALSE;
 dkim_collect_input = 0;
 #endif
 
-#ifdef SUPPORT_TLS
+#ifndef DISABLE_TLS
 tls_in.certificate_verified = FALSE;
 # ifdef SUPPORT_DANE
 tls_in.dane_verified = FALSE;
 # endif
-tls_in.cipher = NULL;
+tls_in.ver = tls_in.cipher = NULL;
 # ifndef COMPILE_UTILITY	/* tls support fns not built in */
 tls_free_cert(&tls_in.ourcert);
 tls_free_cert(&tls_in.peercert);
@@ -287,9 +287,6 @@ tls_free_cert(&tls_in.peercert);
 tls_in.peerdn = NULL;
 tls_in.sni = NULL;
 tls_in.ocsp = OCSP_NOT_REQ;
-# if defined(EXPERIMENTAL_REQUIRETLS) && !defined(COMPILE_UTILITY)
-tls_requiretls = 0;
-# endif
 #endif
 
 #ifdef WITH_CONTENT_SCAN
@@ -303,6 +300,9 @@ message_smtputf8 = FALSE;
 message_utf8_downconvert = 0;
 #endif
 
+#ifndef COMPILE_UTILITY
+debuglog_name[0] = '\0';
+#endif
 dsn_ret = 0;
 dsn_envid = NULL;
 }
@@ -323,7 +323,7 @@ while ((len = Ustrlen(big_buffer)) == big_buffer_size-1
 
   if (big_buffer_size >= BIG_BUFFER_SIZE * 4) return NULL;
   newsize = big_buffer_size * 2;
-  newbuffer = store_get_perm(newsize);
+  newbuffer = store_get_perm(newsize, FALSE);
   memcpy(newbuffer, big_buffer, len);
 
   big_buffer = newbuffer;
@@ -334,7 +334,6 @@ while ((len = Ustrlen(big_buffer)) == big_buffer_size-1
 if (len <= 0 || big_buffer[len-1] != '\n') return NULL;
 return big_buffer;
 }
-
 
 
 
@@ -375,7 +374,7 @@ int n;
 int rcount = 0;
 long int uid, gid;
 BOOL inheader = FALSE;
-uschar *p;
+const uschar * where;
 
 /* Reset all the global variables to their default values. However, there is
 one exception. DO NOT change the default value of dont_deliver, because it may
@@ -387,10 +386,10 @@ spool_clear_header_globals();
 set, just look in the given directory. Otherwise, look in both the split
 and unsplit directories, as for the data file above. */
 
-for (n = 0; n < 2; n++)
+for (int n = 0; n < 2; n++)
   {
   if (!subdir_set)
-    message_subdir[0] = split_spool_directory == (n == 0) ? name[5] : 0;
+    set_subdir_str(message_subdir, name, n);
 
   if ((fp = Ufopen(spool_fname(US"input", message_subdir, name, US""), "rb")))
     break;
@@ -401,15 +400,21 @@ for (n = 0; n < 2; n++)
 errno = 0;
 
 #ifndef COMPILE_UTILITY
-DEBUG(D_deliver) debug_printf("reading spool file %s\n", name);
+DEBUG(D_deliver) debug_printf_indent("reading spool file %s\n", name);
 #endif  /* COMPILE_UTILITY */
 
 /* The first line of a spool file contains the message id followed by -H (i.e.
 the file name), in order to make the file self-identifying. */
 
+where = US"first line read";
 if (Ufgets(big_buffer, big_buffer_size, fp) == NULL) goto SPOOL_READ_ERROR;
-if (Ustrlen(big_buffer) != MESSAGE_ID_LENGTH + 3 ||
-    Ustrncmp(big_buffer, name, MESSAGE_ID_LENGTH + 2) != 0)
+where = US"first line length";
+if (  (  Ustrlen(big_buffer) != MESSAGE_ID_LENGTH + 3
+      && Ustrlen(big_buffer) != MESSAGE_ID_LENGTH_OLD + 3
+      )
+   || (  Ustrncmp(big_buffer, name, MESSAGE_ID_LENGTH + 2) != 0
+      && Ustrncmp(big_buffer, name, MESSAGE_ID_LENGTH_OLD + 2) != 0
+   )  )
   goto SPOOL_FORMAT_ERROR;
 
 /* The next three lines in the header file are in a fixed format. The first
@@ -419,49 +424,64 @@ negative uids and gids. The second contains the mail address of the message's
 sender, enclosed in <>. The third contains the time the message was received,
 and the number of warning messages for delivery delays that have been sent. */
 
+where = US"2nd line read";
 if (Ufgets(big_buffer, big_buffer_size, fp) == NULL) goto SPOOL_READ_ERROR;
 
-p = big_buffer + Ustrlen(big_buffer);
-while (p > big_buffer && isspace(p[-1])) p--;
-*p = 0;
-if (!isdigit(p[-1])) goto SPOOL_FORMAT_ERROR;
-while (p > big_buffer && (isdigit(p[-1]) || '-' == p[-1])) p--;
-gid = Uatoi(p);
-if (p <= big_buffer || *(--p) != ' ') goto SPOOL_FORMAT_ERROR;
-*p = 0;
-if (!isdigit(p[-1])) goto SPOOL_FORMAT_ERROR;
-while (p > big_buffer && (isdigit(p[-1]) || '-' == p[-1])) p--;
-uid = Uatoi(p);
-if (p <= big_buffer || *(--p) != ' ') goto SPOOL_FORMAT_ERROR;
-*p = 0;
+ {
+  uschar *p = big_buffer + Ustrlen(big_buffer);
+  while (p > big_buffer && isspace(p[-1])) p--;
+  *p = 0;
+  where = US"2nd line fmt 1";
+  if (!isdigit(p[-1])) goto SPOOL_FORMAT_ERROR;
+  while (p > big_buffer && (isdigit(p[-1]) || '-' == p[-1])) p--;
+  gid = Uatoi(p);
+  where = US"2nd line fmt 2";
+  if (p <= big_buffer || *(--p) != ' ') goto SPOOL_FORMAT_ERROR;
+  *p = 0;
+  if (!isdigit(p[-1])) goto SPOOL_FORMAT_ERROR;
+  while (p > big_buffer && (isdigit(p[-1]) || '-' == p[-1])) p--;
+  uid = Uatoi(p);
+  where = US"2nd line fmt 3";
+  if (p <= big_buffer || *(--p) != ' ') goto SPOOL_FORMAT_ERROR;
+  *p = 0;
+ }
 
 originator_login = string_copy(big_buffer);
 originator_uid = (uid_t)uid;
 originator_gid = (gid_t)gid;
 
-/* envelope from */
+where = US"envelope from";
 if (Ufgets(big_buffer, big_buffer_size, fp) == NULL) goto SPOOL_READ_ERROR;
 n = Ustrlen(big_buffer);
 if (n < 3 || big_buffer[0] != '<' || big_buffer[n-2] != '>')
   goto SPOOL_FORMAT_ERROR;
 
-sender_address = store_get(n-2);
-Ustrncpy(sender_address, big_buffer+1, n-3);
-sender_address[n-3] = 0;
+ {
+  uschar * s = store_get(n-2, GET_TAINTED);
+  Ustrncpy(s, big_buffer+1, n-3);
+  s[n-3] = '\0';
+  sender_address = s;
+ }
 
-/* time */
+where = US"time";
 if (Ufgets(big_buffer, big_buffer_size, fp) == NULL) goto SPOOL_READ_ERROR;
 if (sscanf(CS big_buffer, TIME_T_FMT " %d", &received_time.tv_sec, &warning_count) != 2)
   goto SPOOL_FORMAT_ERROR;
 received_time.tv_usec = 0;
+received_time_complete = received_time;
+
 
 message_age = time(NULL) - received_time.tv_sec;
+#ifndef COMPILE_UTILITY
+if (f.running_in_test_harness)
+  message_age = test_harness_fudged_queue_time(message_age);
+#endif
 
 #ifndef COMPILE_UTILITY
-DEBUG(D_deliver) debug_printf("user=%s uid=%ld gid=%ld sender=%s\n",
+DEBUG(D_deliver) debug_printf_indent("user=%s uid=%ld gid=%ld sender=%s\n",
   originator_login, (long int)originator_uid, (long int)originator_gid,
   sender_address);
-#endif  /* COMPILE_UTILITY */
+#endif
 
 /* Now there may be a number of optional lines, each starting with "-". If you
 add a new setting here, make sure you set the default above.
@@ -474,17 +494,46 @@ by not re-scanning the first two characters.
 To allow new versions of Exim that add additional flags to interwork with older
 versions that do not understand them, just ignore any lines starting with "-"
 that we don't recognize. Otherwise it wouldn't be possible to back off a new
-version that left new-style flags written on the spool. */
+version that left new-style flags written on the spool.
 
-p = big_buffer + 2;
+If the line starts with "--" the content of the variable is tainted.
+If the line start "--(<lookuptype>)" it is also quoted for the given <lookuptype>.
+*/
+
 for (;;)
   {
-  int len;
+  const void * proto_mem;
+  uschar * var;
+  const uschar * p;
+
   if (fgets_big_buffer(fp) == NULL) goto SPOOL_READ_ERROR;
   if (big_buffer[0] != '-') break;
   big_buffer[Ustrlen(big_buffer)-1] = 0;
 
-  switch(big_buffer[1])
+  proto_mem = big_buffer[1] == '-' ? GET_TAINTED : GET_UNTAINTED;
+  var =  big_buffer + (proto_mem == GET_UNTAINTED ? 1 : 2);
+  if (*var == '(')				/* marker for quoted value */
+    {
+    uschar * s;
+    for (s = ++var; *s != ')'; ) s++;
+#ifndef COMPILE_UTILITY
+      {
+      int idx;
+      if ((idx = search_findtype(var, s - var)) < 0)
+	{
+	DEBUG(D_any)
+	  debug_printf("Unrecognised quoter %.*s\n", (int)(s - var), var+1);
+	where = NULL;
+	goto SPOOL_FORMAT_ERROR;
+	}
+      proto_mem = store_get_quoted(1, GET_TAINTED, idx);
+      }
+#endif  /* COMPILE_UTILITY */
+    var = s + 1;
+    }
+  p = var + 1;
+
+  switch(*var)
     {
     case 'a':
 
@@ -499,13 +548,14 @@ for (;;)
       uschar *name, *endptr;
       int count;
       tree_node *node;
-      endptr = Ustrchr(big_buffer + 6, ' ');
-      if (endptr == NULL) goto SPOOL_FORMAT_ERROR;
-      name = string_sprintf("%c%.*s", big_buffer[4],
-        (int)(endptr - big_buffer - 6), big_buffer + 6);
+      endptr = Ustrchr(var + 5, ' ');
+      where = US"-aclXn";
+      if (!endptr) goto SPOOL_FORMAT_ERROR;
+      name = string_sprintf("%c%.*s", var[3],
+        (int)(endptr - var - 5), var + 5);
       if (sscanf(CS endptr, " %d", &count) != 1) goto SPOOL_FORMAT_ERROR;
       node = acl_var_create(name);
-      node->data.ptr = store_get(count + 1);
+      node->data.ptr = store_get(count + 1, proto_mem);
       if (fread(node->data.ptr, 1, count+1, fp) < count) goto SPOOL_READ_ERROR;
       ((uschar*)node->data.ptr)[count] = 0;
       }
@@ -516,11 +566,11 @@ for (;;)
       f.allow_unqualified_sender = TRUE;
 
     else if (Ustrncmp(p, "uth_id", 6) == 0)
-      authenticated_id = string_copy(big_buffer + 9);
+      authenticated_id = string_copy_taint(var + 8, proto_mem);
     else if (Ustrncmp(p, "uth_sender", 10) == 0)
-      authenticated_sender = string_copy(big_buffer + 13);
+      authenticated_sender = string_copy_taint(var + 12, proto_mem);
     else if (Ustrncmp(p, "ctive_hostname", 14) == 0)
-      smtp_active_hostname = string_copy(big_buffer + 17);
+      smtp_active_hostname = string_copy_taint(var + 16, proto_mem);
 
     /* For long-term backward compatibility, we recognize "-acl", which was
     used before the number of ACL variables changed from 10 to 20. This was
@@ -534,7 +584,8 @@ for (;;)
       unsigned index, count;
       uschar name[20];   /* Need plenty of space for %u format */
       tree_node * node;
-      if (  sscanf(CS big_buffer + 5, "%u %u", &index, &count) != 2
+      where = US"-acl (old)";
+      if (  sscanf(CS var + 4, "%u %u", &index, &count) != 2
 	 || index >= 20
 	 || count > 16384	/* arbitrary limit on variable size */
          )
@@ -544,7 +595,7 @@ for (;;)
       else
         (void) string_format(name, sizeof(name), "%c%u", 'm', index - 10);
       node = acl_var_create(name);
-      node->data.ptr = store_get(count + 1);
+      node->data.ptr = store_get(count + 1, proto_mem);
       /* We sanity-checked the count, so disable the Coverity error */
       /* coverity[tainted_data] */
       if (fread(node->data.ptr, 1, count+1, fp) < count) goto SPOOL_READ_ERROR;
@@ -554,30 +605,35 @@ for (;;)
 
     case 'b':
     if (Ustrncmp(p, "ody_linecount", 13) == 0)
-      body_linecount = Uatoi(big_buffer + 15);
+      body_linecount = Uatoi(var + 14);
     else if (Ustrncmp(p, "ody_zerocount", 13) == 0)
-      body_zerocount = Uatoi(big_buffer + 15);
+      body_zerocount = Uatoi(var + 14);
 #ifdef EXPERIMENTAL_BRIGHTMAIL
     else if (Ustrncmp(p, "mi_verdicts ", 12) == 0)
-      bmi_verdicts = string_copy(big_buffer + 14);
+      bmi_verdicts = string_copy_taint(var + 13, proto_mem);
 #endif
     break;
 
     case 'd':
     if (Ustrcmp(p, "eliver_firsttime") == 0)
       f.deliver_firsttime = TRUE;
-    /* Check if the dsn flags have been set in the header file */
     else if (Ustrncmp(p, "sn_ret", 6) == 0)
-      dsn_ret= atoi(CS big_buffer + 8);
+      dsn_ret= atoi(CS var + 7);
     else if (Ustrncmp(p, "sn_envid", 8) == 0)
-      dsn_envid = string_copy(big_buffer + 11);
+      dsn_envid = string_copy_taint(var + 10, proto_mem);
+#ifndef COMPILE_UTILITY
+    else if (Ustrncmp(p, "ebug_selector ", 14) == 0)
+      debug_selector = strtol(CS var + 15, NULL, 0);
+    else if (Ustrncmp(p, "ebuglog_name ", 13) == 0)
+      debug_logging_from_spool(var + 14);
+#endif
     break;
 
     case 'f':
     if (Ustrncmp(p, "rozen", 5) == 0)
       {
       f.deliver_freeze = TRUE;
-      if (sscanf(CS big_buffer+7, TIME_T_FMT, &deliver_frozen_at) != 1)
+      if (sscanf(CS var+6, TIME_T_FMT, &deliver_frozen_at) != 1)
 	goto SPOOL_READ_ERROR;
       }
     break;
@@ -587,12 +643,14 @@ for (;;)
       host_lookup_deferred = TRUE;
     else if (Ustrcmp(p, "ost_lookup_failed") == 0)
       host_lookup_failed = TRUE;
+    else if (Ustrncmp(p, "ost_auth_pubname", 16) == 0)
+      sender_host_auth_pubname = string_copy_taint(var + 18, proto_mem);
     else if (Ustrncmp(p, "ost_auth", 8) == 0)
-      sender_host_authenticated = string_copy(big_buffer + 11);
+      sender_host_authenticated = string_copy_taint(var + 10, proto_mem);
     else if (Ustrncmp(p, "ost_name", 8) == 0)
-      sender_host_name = string_copy(big_buffer + 11);
+      sender_host_name = string_copy_taint(var + 10, proto_mem);
     else if (Ustrncmp(p, "elo_name", 8) == 0)
-      sender_helo_name = string_copy(big_buffer + 11);
+      sender_helo_name = string_copy_taint(var + 10, proto_mem);
 
     /* We now record the port number after the address, separated by a
     dot. For compatibility during upgrading, do nothing if there
@@ -600,36 +658,37 @@ for (;;)
 
     else if (Ustrncmp(p, "ost_address", 11) == 0)
       {
-      sender_host_port = host_address_extract_port(big_buffer + 14);
-      sender_host_address = string_copy(big_buffer + 14);
+      sender_host_port = host_address_extract_port(var + 13);
+      sender_host_address = string_copy_taint(var + 13, proto_mem);
       }
     break;
 
     case 'i':
     if (Ustrncmp(p, "nterface_address", 16) == 0)
       {
-      interface_port = host_address_extract_port(big_buffer + 19);
-      interface_address = string_copy(big_buffer + 19);
+      interface_port = host_address_extract_port(var + 18);
+      interface_address = string_copy_taint(var + 18, proto_mem);
       }
     else if (Ustrncmp(p, "dent", 4) == 0)
-      sender_ident = string_copy(big_buffer + 7);
+      sender_ident = string_copy_taint(var + 6, proto_mem);
     break;
 
     case 'l':
     if (Ustrcmp(p, "ocal") == 0)
       f.sender_local = TRUE;
-    else if (Ustrcmp(big_buffer, "-localerror") == 0)
+    else if (Ustrcmp(var, "localerror") == 0)
       f.local_error_message = TRUE;
 #ifdef HAVE_LOCAL_SCAN
     else if (Ustrncmp(p, "ocal_scan ", 10) == 0)
-      local_scan_data = string_copy(big_buffer + 12);
+      local_scan_data = string_copy_taint(var + 11, proto_mem);
 #endif
     break;
 
     case 'm':
-    if (Ustrcmp(p, "anual_thaw") == 0) f.deliver_manual_thaw = TRUE;
+    if (Ustrcmp(p, "anual_thaw") == 0)
+      f.deliver_manual_thaw = TRUE;
     else if (Ustrncmp(p, "ax_received_linelength", 22) == 0)
-      max_received_linelength = Uatoi(big_buffer + 24);
+      max_received_linelength = Uatoi(var + 23);
     break;
 
     case 'N':
@@ -638,12 +697,24 @@ for (;;)
 
     case 'r':
     if (Ustrncmp(p, "eceived_protocol", 16) == 0)
-      received_protocol = string_copy(big_buffer + 19);
+      received_protocol = string_copy_taint(var + 18, proto_mem);
     else if (Ustrncmp(p, "eceived_time_usec", 17) == 0)
       {
       unsigned usec;
-      if (sscanf(CS big_buffer + 21, "%u", &usec) == 1)
+      if (sscanf(CS var + 20, "%u", &usec) == 1)
+	{
 	received_time.tv_usec = usec;
+	if (!received_time_complete.tv_sec) received_time_complete.tv_usec = usec;
+	}
+      }
+    else if (Ustrncmp(p, "eceived_time_complete", 21) == 0)
+      {
+      unsigned sec, usec;
+      if (sscanf(CS var + 23, "%u.%u", &sec, &usec) == 2)
+	{
+	received_time_complete.tv_sec = sec;
+	received_time_complete.tv_usec = usec;
+	}
       }
     break;
 
@@ -652,11 +723,11 @@ for (;;)
       f.sender_set_untrusted = TRUE;
 #ifdef WITH_CONTENT_SCAN
     else if (Ustrncmp(p, "pam_bar ", 8) == 0)
-      spam_bar = string_copy(big_buffer + 10);
+      spam_bar = string_copy_taint(var + 9, proto_mem);
     else if (Ustrncmp(p, "pam_score ", 10) == 0)
-      spam_score = string_copy(big_buffer + 12);
+      spam_score = string_copy_taint(var + 11, proto_mem);
     else if (Ustrncmp(p, "pam_score_int ", 14) == 0)
-      spam_score_int = string_copy(big_buffer + 16);
+      spam_score_int = string_copy_taint(var + 15, proto_mem);
 #endif
 #ifndef COMPILE_UTILITY
     else if (Ustrncmp(p, "pool_file_wireformat", 20) == 0)
@@ -668,31 +739,33 @@ for (;;)
 #endif
     break;
 
-#ifdef SUPPORT_TLS
+#ifndef DISABLE_TLS
     case 't':
     if (Ustrncmp(p, "ls_", 3) == 0)
       {
-      uschar * q = p + 3;
+      const uschar * q = p + 3;
       if (Ustrncmp(q, "certificate_verified", 20) == 0)
 	tls_in.certificate_verified = TRUE;
       else if (Ustrncmp(q, "cipher", 6) == 0)
-	tls_in.cipher = string_copy(big_buffer + 12);
+	tls_in.cipher = string_copy_taint(q+7, proto_mem);
 # ifndef COMPILE_UTILITY	/* tls support fns not built in */
       else if (Ustrncmp(q, "ourcert", 7) == 0)
-	(void) tls_import_cert(big_buffer + 13, &tls_in.ourcert);
+	(void) tls_import_cert(q+8, &tls_in.ourcert);
       else if (Ustrncmp(q, "peercert", 8) == 0)
-	(void) tls_import_cert(big_buffer + 14, &tls_in.peercert);
+	(void) tls_import_cert(q+9, &tls_in.peercert);
 # endif
       else if (Ustrncmp(q, "peerdn", 6) == 0)
-	tls_in.peerdn = string_unprinting(string_copy(big_buffer + 12));
+	tls_in.peerdn = string_unprinting(string_copy_taint(q+7, proto_mem));
       else if (Ustrncmp(q, "sni", 3) == 0)
-	tls_in.sni = string_unprinting(string_copy(big_buffer + 9));
+	tls_in.sni = string_unprinting(string_copy_taint(q+4, proto_mem));
       else if (Ustrncmp(q, "ocsp", 4) == 0)
-	tls_in.ocsp = big_buffer[10] - '0';
-# if defined(EXPERIMENTAL_REQUIRETLS) && !defined(COMPILE_UTILITY)
-      else if (Ustrncmp(q, "requiretls", 10) == 0)
-	tls_requiretls = strtol(CS big_buffer+16, NULL, 0);
+	tls_in.ocsp = q[5] - '0';
+# ifndef DISABLE_TLS_RESUME
+      else if (Ustrncmp(q, "resumption", 10) == 0)
+	tls_in.resumption = q[11] - 'A';
 # endif
+      else if (Ustrncmp(q, "ver", 3) == 0)
+	tls_in.ver = string_copy_taint(q+4, proto_mem);
       }
     break;
 #endif
@@ -719,44 +792,43 @@ host_build_sender_fullhost();
 
 #ifndef COMPILE_UTILITY
 DEBUG(D_deliver)
-  debug_printf("sender_local=%d ident=%s\n", f.sender_local,
-    (sender_ident == NULL)? US"unset" : sender_ident);
+  debug_printf_indent("sender_local=%d ident=%s\n", f.sender_local,
+    sender_ident ? sender_ident : US"unset");
 #endif  /* COMPILE_UTILITY */
 
 /* We now have the tree of addresses NOT to deliver to, or a line
 containing "XX", indicating no tree. */
 
+where = US"nondeliver";
 if (Ustrncmp(big_buffer, "XX\n", 3) != 0 &&
   !read_nonrecipients_tree(&tree_nonrecipients, fp, big_buffer, big_buffer_size))
     goto SPOOL_FORMAT_ERROR;
 
 #ifndef COMPILE_UTILITY
-DEBUG(D_deliver)
-  {
-  debug_printf("Non-recipients:\n");
-  debug_print_tree(tree_nonrecipients);
-  }
+DEBUG(D_deliver) debug_print_tree("Non-recipients", tree_nonrecipients);
 #endif  /* COMPILE_UTILITY */
 
 /* After reading the tree, the next line has not yet been read into the
 buffer. It contains the count of recipients which follow on separate lines.
 Apply an arbitrary sanity check.*/
 
-if (fgets_big_buffer(fp) == NULL) goto SPOOL_READ_ERROR;
+where = US"rcpt cnt";
+if (Ufgets(big_buffer, big_buffer_size, fp) == NULL) goto SPOOL_READ_ERROR;
 if (sscanf(CS big_buffer, "%d", &rcount) != 1 || rcount > 16384)
   goto SPOOL_FORMAT_ERROR;
 
 #ifndef COMPILE_UTILITY
-DEBUG(D_deliver) debug_printf("recipients_count=%d\n", rcount);
+DEBUG(D_deliver) debug_printf_indent("recipients_count=%d\n", rcount);
 #endif  /* COMPILE_UTILITY */
 
 recipients_list_max = rcount;
-recipients_list = store_get(rcount * sizeof(recipient_item));
+recipients_list = store_get(rcount * sizeof(recipient_item), GET_UNTAINTED);
 
 /* We sanitised the count and know we have enough memory, so disable
 the Coverity error on recipients_count */
 /* coverity[tainted_data] */
 
+where = US"recipient";
 for (recipients_count = 0; recipients_count < rcount; recipients_count++)
   {
   int nn;
@@ -766,7 +838,7 @@ for (recipients_count = 0; recipients_count < rcount; recipients_count++)
   uschar *errors_to = NULL;
   uschar *p;
 
-  if (Ufgets(big_buffer, big_buffer_size, fp) == NULL) goto SPOOL_READ_ERROR;
+  if (fgets_big_buffer(fp) == NULL) goto SPOOL_READ_ERROR;
   nn = Ustrlen(big_buffer);
   if (nn < 2) goto SPOOL_FORMAT_ERROR;
 
@@ -817,6 +889,9 @@ for (recipients_count = 0; recipients_count < rcount; recipients_count++)
   if (*p == ',')
     {
     int dummy;
+#if !defined (COMPILE_UTILITY)
+    DEBUG(D_deliver) debug_printf_indent("**** SPOOL_IN - Exim 3 spool file\n");
+#endif
     while (isdigit(*(--p)) || *p == ',');
     if (*p == ' ')
       {
@@ -829,6 +904,9 @@ for (recipients_count = 0; recipients_count < rcount; recipients_count++)
 
   else if (*p == ' ')
     {
+#if !defined (COMPILE_UTILITY)
+    DEBUG(D_deliver) debug_printf_indent("**** SPOOL_IN - early Exim 4 spool file\n");
+#endif
     *p++ = 0;
     (void)sscanf(CS p, "%d", &pno);
     }
@@ -840,12 +918,12 @@ for (recipients_count = 0; recipients_count < rcount; recipients_count++)
     int flags;
 
 #if !defined (COMPILE_UTILITY)
-    DEBUG(D_deliver) debug_printf("**** SPOOL_IN - Exim 4 standard format spoolfile\n");
+    DEBUG(D_deliver) debug_printf_indent("**** SPOOL_IN - Exim standard format spoolfile\n");
 #endif
 
     (void)sscanf(CS p+1, "%d", &flags);
 
-    if ((flags & 0x01) != 0)      /* one_time data exists */
+    if (flags & 0x01)      /* one_time data exists */
       {
       int len;
       while (isdigit(*(--p)) || *p == ',' || *p == '-');
@@ -854,12 +932,12 @@ for (recipients_count = 0; recipients_count < rcount; recipients_count++)
       if (len > 0)
         {
         p -= len;
-        errors_to = string_copy(p);
+        errors_to = string_copy_taint(p, GET_TAINTED);
         }
       }
 
-    *(--p) = 0;   /* Terminate address */
-    if ((flags & 0x02) != 0)      /* one_time data exists */
+    *--p = 0;   /* Terminate address */
+    if (flags & 0x02)      /* one_time data exists */
       {
       int len;
       while (isdigit(*(--p)) || *p == ',' || *p == '-');
@@ -868,29 +946,25 @@ for (recipients_count = 0; recipients_count < rcount; recipients_count++)
       if (len > 0)
         {
         p -= len;
-        orcpt = string_copy(p);
+        orcpt = string_copy_taint(p, GET_TAINTED);
         }
       }
 
-    *(--p) = 0;   /* Terminate address */
+    *--p = 0;   /* Terminate address */
     }
 #if !defined(COMPILE_UTILITY)
   else
-    { DEBUG(D_deliver) debug_printf("**** SPOOL_IN - No additional fields\n"); }
+    { DEBUG(D_deliver) debug_printf_indent("**** SPOOL_IN - No additional fields\n"); }
 
-  if ((orcpt != NULL) || (dsn_flags != 0))
-    {
-    DEBUG(D_deliver) debug_printf("**** SPOOL_IN - address: |%s| orcpt: |%s| dsn_flags: %d\n",
+  if (orcpt || dsn_flags)
+    DEBUG(D_deliver) debug_printf_indent("**** SPOOL_IN - address: <%s> orcpt: <%s> dsn_flags: 0x%x\n",
       big_buffer, orcpt, dsn_flags);
-    }
-  if (errors_to != NULL)
-    {
-    DEBUG(D_deliver) debug_printf("**** SPOOL_IN - address: |%s| errorsto: |%s|\n",
+  if (errors_to)
+    DEBUG(D_deliver) debug_printf_indent("**** SPOOL_IN - address: <%s> errorsto: <%s>\n",
       big_buffer, errors_to);
-    }
 #endif
 
-  recipients_list[recipients_count].address = string_copy(big_buffer);
+  recipients_list[recipients_count].address = string_copy_taint(big_buffer, GET_TAINTED);
   recipients_list[recipients_count].pno = pno;
   recipients_list[recipients_count].errors_to = errors_to;
   recipients_list[recipients_count].orcpt = orcpt;
@@ -906,12 +980,13 @@ always, in order to check on the format of the file, but only create a header
 list if requested to do so. */
 
 inheader = TRUE;
+where = US"headers";
 if (Ufgets(big_buffer, big_buffer_size, fp) == NULL) goto SPOOL_READ_ERROR;
 if (big_buffer[0] != '\n') goto SPOOL_FORMAT_ERROR;
 
 while ((n = fgetc(fp)) != EOF)
   {
-  header_line *h;
+  header_line * h;
   uschar flag[4];
   int i;
 
@@ -922,16 +997,16 @@ while ((n = fgetc(fp)) != EOF)
 
   if (read_headers)
     {
-    h = store_get(sizeof(header_line));
+    h = store_get(sizeof(header_line), GET_UNTAINTED);
     h->next = NULL;
     h->type = flag[0];
     h->slen = n;
-    h->text = store_get(n+1);
+    h->text = store_get(n+1, GET_TAINTED);
 
     if (h->type == htype_received) received_count++;
 
-    if (header_list == NULL) header_list = h;
-      else header_last->next = h;
+    if (header_list) header_last->next = h;
+    else header_list = h;
     header_last = h;
 
     for (i = 0; i < n; i++)
@@ -958,7 +1033,7 @@ line count by adding the body linecount to the header linecount. Close the file
 and give a positive response. */
 
 #ifndef COMPILE_UTILITY
-DEBUG(D_deliver) debug_printf("body_linecount=%d message_linecount=%d\n",
+DEBUG(D_deliver) debug_printf_indent("body_linecount=%d message_linecount=%d\n",
   body_linecount, message_linecount);
 #endif  /* COMPILE_UTILITY */
 
@@ -983,19 +1058,60 @@ if (errno != 0)
 
   fclose(fp);
   errno = n;
-  return inheader? spool_read_hdrerror : spool_read_enverror;
+  return inheader ? spool_read_hdrerror : spool_read_enverror;
   }
 
 SPOOL_FORMAT_ERROR:
 
 #ifndef COMPILE_UTILITY
-DEBUG(D_any) debug_printf("Format error in spool file %s\n", name);
+DEBUG(D_any) debug_printf("Format error in spool file %s%s%s\n", name,
+  where ? ": " : "", where ? where : US"");
 #endif  /* COMPILE_UTILITY */
 
 fclose(fp);
 errno = ERRNO_SPOOLFORMAT;
 return inheader? spool_read_hdrerror : spool_read_enverror;
 }
+
+
+#ifndef COMPILE_UTILITY
+/* Read out just the (envelope) sender string from the spool -H file.
+Remove the <> wrap and return it in allocated store.  Return NULL on error.
+
+We assume that message_subdir is already set.
+*/
+
+uschar *
+spool_sender_from_msgid(const uschar * id)
+{
+FILE * fp;
+int n;
+uschar * yield = NULL;
+
+if (!(fp = Ufopen(spool_fname(US"input", message_subdir, id, US"-H"), "rb")))
+  return NULL;
+
+DEBUG(D_deliver) debug_printf_indent("reading spool file %s-H\n", id);
+
+/* Skip the line with the copy of the filename, then the line with login/uid/gid.
+Read the next line, which should be the envelope sender.
+Do basic validation on that. */
+
+if (  Ufgets(big_buffer, big_buffer_size, fp) != NULL
+   && Ufgets(big_buffer, big_buffer_size, fp) != NULL
+   && Ufgets(big_buffer, big_buffer_size, fp) != NULL
+   && (n = Ustrlen(big_buffer)) >= 3
+   && big_buffer[0] == '<' && big_buffer[n-2] == '>'
+   )
+  {
+  yield = store_get(n-2, GET_TAINTED);
+  Ustrncpy(yield, big_buffer+1, n-3);
+  yield[n-3] = 0;
+  }
+fclose(fp);
+return yield;
+}
+#endif  /* COMPILE_UTILITY */
 
 /* vi: aw ai sw=2
 */

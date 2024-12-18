@@ -1,19 +1,28 @@
---- EDITME.exim4-light	2017-10-28 08:02:20.930695089 +0200
-+++ EDITME.exim4-light	2017-10-28 08:03:25.433584564 +0200
-@@ -760,13 +760,13 @@ SUPPORT_TLS=yes
+--- EDITME.exim4-light.gnutls	2024-06-08 05:43:21.695983021 +0000
++++ EDITME.exim4-light	2024-06-08 05:43:40.707745087 +0000
+@@ -215,21 +215,21 @@
+ # If you are building with TLS, the library configuration must be done:
  
+ # Uncomment this if you are using OpenSSL
+-# USE_OPENSSL=yes
++USE_OPENSSL=yes
  # Uncomment one of these settings if you are using OpenSSL; pkg-config vs not
+ # and an optional location.
  # USE_OPENSSL_PC=openssl
 -# TLS_LIBS=-lssl -lcrypto
 +TLS_LIBS=-lssl -lcrypto
+ # TLS_LIBS=-L/usr/local/openssl/lib -lssl -lcrypto
  
- # Uncomment the first and either the second or the third of these if you
- # are using GnuTLS.  If you have pkg-config, then the second, else the third.
+ # Uncomment this if you are using GnuTLS
 -USE_GNUTLS=yes
 +# USE_GNUTLS=yes
- # USE_GNUTLS_PC=gnutls
--TLS_LIBS=-lgnutls
-+# TLS_LIBS=-lgnutls
+ # Uncomment one of these settings if you are using GnuTLS; pkg-config vs not
+ # and an optional location. If you disable SUPPORT_DANE below, you
+ # can remove the gnutls-dane references here.  Earlier versions of GnuTLS
+ # required libtasn1 and libgrypt also; add if needed.
+ # USE_GNUTLS_PC=gnutls gnutls-dane
+-TLS_LIBS=-lgnutls -lgnutls-dane
++# TLS_LIBS=-lgnutls -lgnutls-dane
+ # TLS_LIBS=-L/usr/local/gnu/lib -lgnutls -ltasn1 -lgcrypt -lgnutls-dane
  
  # If using GnuTLS older than 2.10 and using pkg-config then note that Exim's
- # build process will require libgcrypt-config to exist in your $PATH.  A

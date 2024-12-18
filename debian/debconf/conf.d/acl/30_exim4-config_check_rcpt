@@ -130,9 +130,9 @@ acl_check_rcpt:
   # to the smarthost.
   .ifdef CHECK_RCPT_VERIFY_SENDER
   deny
-    message = Sender verification failed
     !acl = acl_local_deny_exceptions
     !verify = sender
+    message = Sender verification failed
   .endif
 
   # Verify senders listed in local_sender_callout with a callout.
@@ -147,6 +147,21 @@ acl_check_rcpt:
                    {}}
     !verify = sender/callout
 
+  .ifndef CHECK_RCPT_NO_FAIL_TOO_MANY_BAD_RCPT
+  # Reject all RCPT commands after too many bad recipients
+  # This is partly a defense against spam abuse and partly attacker abuse.
+  # Real senders should manage, by the time they get to 10 RCPT directives,
+  # to have had at least half of them be real addresses.
+  #
+  # This is a lightweight check and can protect you against repeated
+  # invocations of more heavy-weight checks which would come after it.
+
+  deny    condition     = ${if and {\
+                        {>{$rcpt_count}{10}}\
+                        {<{$recipients_count}{${eval:$rcpt_count/2}}} }}
+          message       = Rejected for too many bad recipients
+          logwrite      = REJECT [$sender_host_address]: bad recipient count high [${eval:$rcpt_count-$recipients_count}]
+  .endif
 
   # Accept if the message comes from one of the hosts for which we are an
   # outgoing relay. It is assumed that such hosts are most likely to be MUAs,
@@ -180,11 +195,6 @@ acl_check_rcpt:
     authenticated = *
     control = submission/sender_retain
     control = dkim_disable_verify
-
-  # Insist that a HELO/EHLO was accepted.
-
-  require message	= nice hosts say HELO first
-          condition	= ${if def:sender_helo_name}
 
   # Insist that any other recipient address that we accept is either in one of
   # our local domains, or is in a domain for which we explicitly allow
@@ -222,12 +232,12 @@ acl_check_rcpt:
   # The explicit white lists are honored as well as negative items in
   # the black list. See exim4-config_files(5) for details.
   deny
-    message = sender envelope address $sender_address is locally blacklisted here. If you think this is wrong, get in touch with postmaster
-    log_message = sender envelope address is locally blacklisted.
     !acl = acl_local_deny_exceptions
     senders = ${if exists{CONFDIR/local_sender_blacklist}\
                    {CONFDIR/local_sender_blacklist}\
                    {}}
+    message = sender envelope address $sender_address is locally blacklisted here. If you think this is wrong, get in touch with postmaster
+    log_message = sender envelope address is locally blacklisted.
 
 
   # deny bad sites (IP address)
@@ -239,12 +249,12 @@ acl_check_rcpt:
   # The explicit white lists are honored as well as negative items in
   # the black list. See exim4-config_files(5) for details.
   deny
-    message = sender IP address $sender_host_address is locally blacklisted here. If you think this is wrong, get in touch with postmaster
-    log_message = sender IP address is locally blacklisted.
     !acl = acl_local_deny_exceptions
     hosts = ${if exists{CONFDIR/local_host_blacklist}\
                  {CONFDIR/local_host_blacklist}\
                  {}}
+    message = sender IP address $sender_host_address is locally blacklisted here. If you think this is wrong, get in touch with postmaster
+    log_message = sender IP address is locally blacklisted.
 
 
   # Warn if the sender host does not have valid reverse DNS.
@@ -263,51 +273,24 @@ acl_check_rcpt:
   .endif
 
 
-  # Use spfquery to perform a pair of SPF checks (for details, see
-  # http://www.openspf.org/)
-  #
-  # This is quite costly in terms of DNS lookups (~6 lookups per mail).  Do not
-  # enable if that's an issue.  Also note that if you enable this, you must
-  # install "spf-tools-perl" which provides the spfquery command.
-  # Missing spf-tools-perl will trigger the "Unexpected error in
-  # SPF check" warning.
   .ifdef CHECK_RCPT_SPF
+  .ifdef _HAVE_SPF
   deny
-    message = [SPF] $sender_host_address is not allowed to send mail from \
-              ${if def:sender_address_domain {$sender_address_domain}{$sender_helo_name}}.  \
-              Please see \
-	      http://www.openspf.org/Why?scope=${if def:sender_address_domain \
-              {mfrom}{helo}};identity=${if def:sender_address_domain \
-              {$sender_address}{$sender_helo_name}};ip=$sender_host_address
-    log_message = SPF check failed.
     !acl = acl_local_deny_exceptions
-    condition = ${run{/usr/bin/spfquery.mail-spf-perl --ip \
-                   ${quote:$sender_host_address} --identity \
-                   ${if def:sender_address_domain \
-                       {--scope mfrom  --identity ${quote:$sender_address}}\
-                       {--scope helo --identity ${quote:$sender_helo_name}}}}\
-                   {no}{${if eq {$runrc}{1}{yes}{no}}}}
+    spf = fail
+    message = [SPF] $sender_host_address is not allowed to send mail from \
+              ${if def:sender_address_domain {$sender_address_domain}{$sender_helo_name}}.
+    log_message = SPF check failed.
 
   defer
-    message = Temporary DNS error while checking SPF record.  Try again later.
     !acl = acl_local_deny_exceptions
-    condition = ${if eq {$runrc}{5}{yes}{no}}
+    spf = temperror
+    message = Temporary DNS error while checking SPF record.  Try again later.
 
   warn
-    condition = ${if <={$runrc}{6}{yes}{no}}
-    add_header = Received-SPF: ${if eq {$runrc}{0}{pass}\
-                                {${if eq {$runrc}{2}{softfail}\
-                                 {${if eq {$runrc}{3}{neutral}\
-				  {${if eq {$runrc}{4}{permerror}\
-				   {${if eq {$runrc}{6}{none}{error}}}}}}}}}\
-				} client-ip=$sender_host_address; \
-				${if def:sender_address_domain \
-				   {envelope-from=${sender_address}; }{}}\
-				helo=$sender_helo_name
-
-  warn
-    log_message = Unexpected error in SPF check.
-    condition = ${if >{$runrc}{6}{yes}{no}}
+    spf = pass:softfail:neutral:permerror
+    add_header = :at_start:$spf_received
+  .endif
   .endif
 
 

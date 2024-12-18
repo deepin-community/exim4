@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* This file contains a function for decoding message header lines that may
 contain encoded "words" according to the rules described in
@@ -46,7 +48,7 @@ rfc2047_qpdecode(uschar *string, uschar **ptrptr)
 int len = 0;
 uschar *ptr;
 
-ptr = *ptrptr = store_get(Ustrlen(string) + 1);  /* No longer than this */
+ptr = *ptrptr = store_get(Ustrlen(string) + 1, string);  /* No longer than this */
 
 while (*string != 0)
   {
@@ -120,7 +122,7 @@ for (;; string = mimeword + 2)
   encoding = toupper((*q1ptr)[1]);
   **endptr = 0;
   if (encoding == 'B')
-    dlen = b64decode(*q2ptr+1, dptrptr);
+    dlen = b64decode(*q2ptr+1, dptrptr, *q2ptr+1);
   else if (encoding == 'Q')
     dlen = rfc2047_qpdecode(*q2ptr+1, dptrptr);
   **endptr = '?';   /* restore */
@@ -185,14 +187,14 @@ Returns:         the decoded, converted string, or NULL on error; if there are
 */
 
 uschar *
-rfc2047_decode2(uschar *string, BOOL lencheck, uschar *target, int zeroval,
-  int *lenptr, int *sizeptr, uschar **error)
+rfc2047_decode2(uschar *string, BOOL lencheck, const uschar *target,
+  int zeroval, int *lenptr, int *sizeptr, uschar **error)
 {
 int size = Ustrlen(string);
 size_t dlen;
-uschar *dptr;
-gstring *yield;
-uschar *mimeword, *q1, *q2, *endword;
+uschar * dptr;
+gstring * yield;
+uschar * mimeword, * q1, * q2, * endword;
 
 *error = NULL;
 mimeword = decode_mimeword(string, lencheck, &q1, &q2, &endword, &dlen, &dptr);
@@ -208,20 +210,18 @@ building the result as we go. The result may be longer than the input if it is
 translated into a multibyte code such as UTF-8. That's why we use the dynamic
 string building code. */
 
-yield = store_get(sizeof(gstring) + ++size);
-yield->size = size;
-yield->ptr = 0;
-yield->s = US(yield + 1);
+yield = string_get_tainted(++size, string);
 
 while (mimeword)
   {
 
-  #if HAVE_ICONV
+#if HAVE_ICONV
   iconv_t icd = (iconv_t)(-1);
-  #endif
+#endif
 
   if (mimeword != string)
     yield = string_catn(yield, string, mimeword - string);
+/*XXX that might have to convert an untainted string to a tainted one */
 
   /* Do a charset translation if required. This is supported only on hosts
   that have the iconv() function. Translation errors set error, but carry on,
@@ -230,28 +230,22 @@ while (mimeword)
   of long strings - the RFC puts limits on the length, but it's best to be
   robust. */
 
-  #if HAVE_ICONV
+#if HAVE_ICONV
   *q1 = 0;
-  if (target != NULL && strcmpic(target, mimeword+2) != 0)
-    {
-    icd = iconv_open(CS target, CS(mimeword+2));
-
-    if (icd == (iconv_t)(-1))
-      {
+  if (target && strcmpic(target, mimeword+2) != 0)
+    if ((icd = iconv_open(CS target, CS(mimeword+2))) == (iconv_t)-1)
       *error = string_sprintf("iconv_open(\"%s\", \"%s\") failed: %s%s",
         target, mimeword+2, strerror(errno),
         (errno == EINVAL)? " (maybe unsupported conversion)" : "");
-      }
-    }
   *q1 = '?';
-  #endif
+#endif
 
   while (dlen > 0)
     {
     uschar *tptr = NULL;   /* Stops compiler warning */
     int tlen = -1;
 
-    #if HAVE_ICONV
+#if HAVE_ICONV
     uschar tbuffer[256];
     uschar *outptr = tbuffer;
     size_t outleft = sizeof(tbuffer);
@@ -284,7 +278,7 @@ while (mimeword)
         }
       }
 
-    #endif
+#endif
 
     /* No charset translation is happening or there was a translation error;
     just set up the original as the string to be added, and mark it all used.
@@ -300,20 +294,17 @@ while (mimeword)
     /* Deal with zero values; convert them if requested. */
 
     if (zeroval != 0)
-      {
-      int i;
-      for (i = 0; i < tlen; i++)
+      for (int i = 0; i < tlen; i++)
         if (tptr[i] == 0) tptr[i] = zeroval;
-      }
 
     /* Add the new string onto the result */
 
     yield = string_catn(yield, tptr, tlen);
     }
 
-  #if HAVE_ICONV
+#if HAVE_ICONV
   if (icd != (iconv_t)(-1))  iconv_close(icd);
-  #endif
+#endif
 
   /* Update string past the MIME word; skip any white space if the next thing
   is another MIME word. */
@@ -322,8 +313,8 @@ while (mimeword)
   mimeword = decode_mimeword(string, lencheck, &q1, &q2, &endword, &dlen, &dptr);
   if (mimeword)
     {
-    uschar *s = string;
-    while (isspace(*s)) s++;
+    uschar * s = string;
+    Uskip_whitespace(&s);
     if (s == mimeword) string = s;
     }
   }
@@ -343,7 +334,7 @@ return string_from_gstring(yield);
 argument. */
 
 uschar *
-rfc2047_decode(uschar *string, BOOL lencheck, uschar *target, int zeroval,
+rfc2047_decode(uschar *string, BOOL lencheck, const uschar *target, int zeroval,
   int *lenptr, uschar **error)
 {
 return rfc2047_decode2(string, lencheck, target, zeroval, lenptr, NULL, error);

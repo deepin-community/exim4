@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2015 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Functions for maintaining binary balanced trees and some associated
 functions as well. */
@@ -27,12 +29,13 @@ Returns:  nothing
 */
 
 void
-tree_add_nonrecipient(uschar *s)
+tree_add_nonrecipient(const uschar *s)
 {
-tree_node *node = store_get(sizeof(tree_node) + Ustrlen(s));
+rmark rpoint = store_mark();
+tree_node * node = store_get(sizeof(tree_node) + Ustrlen(s), s);
 Ustrcpy(node->name, s);
 node->data.ptr = NULL;
-if (!tree_insertnode(&tree_nonrecipients, node)) store_reset(node);
+if (!tree_insertnode(&tree_nonrecipients, node)) store_reset(rpoint);
 }
 
 
@@ -45,22 +48,24 @@ if (!tree_insertnode(&tree_nonrecipients, node)) store_reset(node);
 
 Argument:
   s       string to add
-  addr    the address is is a duplicate of
+  addr    the address it is a duplicate of
 
 Returns:  nothing
 */
 
 void
-tree_add_duplicate(uschar *s, address_item *addr)
+tree_add_duplicate(const uschar *s, address_item *addr)
 {
-tree_node *node = store_get(sizeof(tree_node) + Ustrlen(s));
+rmark rpoint = store_mark();
+tree_node * node = store_get(sizeof(tree_node) + Ustrlen(s), s);
 Ustrcpy(node->name, s);
 node->data.ptr = addr;
-if (!tree_insertnode(&tree_duplicates, node)) store_reset(node);
+if (!tree_insertnode(&tree_duplicates, node)) store_reset(rpoint);
 }
 
 
 
+#ifndef COMPILE_UTILITY
 /*************************************************
 *    Add entry to unusable addresses tree        *
 *************************************************/
@@ -72,18 +77,19 @@ Returns:     nothing
 */
 
 void
-tree_add_unusable(host_item *h)
+tree_add_unusable(const host_item * h)
 {
-tree_node *node;
-uschar s[256];
-sprintf(CS s, "T:%.200s:%s", h->name, h->address);
-node = store_get(sizeof(tree_node) + Ustrlen(s));
+rmark rpoint = store_mark();
+tree_node * node;
+const uschar * s = retry_host_key_build(h, TRUE, NULL);
+node = store_get(sizeof(tree_node) + Ustrlen(s),
+	    is_tainted(h->name) || is_tainted(h->address) ? GET_TAINTED : GET_UNTAINTED);
 Ustrcpy(node->name, s);
 node->data.val = h->why;
 if (h->status == hstatus_unusable_expired) node->data.val += 256;
-if (!tree_insertnode(&tree_unusable, node)) store_reset(node);
+if (!tree_insertnode(&tree_unusable, node)) store_reset(rpoint);
 }
-
+#endif
 
 
 /*************************************************
@@ -360,6 +366,29 @@ f(p->name, p->data.ptr, ctx);
 tree_walk(p->left, f, ctx);
 tree_walk(p->right, f, ctx);
 }
+
+
+
+/* Add a node to a tree, ignoring possibility of duplicates */
+
+static void
+tree_add_var(uschar * name, uschar * val, void * ctx)
+{
+tree_node ** root = ctx;
+tree_node * node = store_get(sizeof(tree_node) + Ustrlen(name), name);
+Ustrcpy(node->name, name);
+node->data.ptr = val;
+(void) tree_insertnode(root, node);
+}
+
+/* Duplicate a tree */
+
+void
+tree_dup(tree_node ** dstp, tree_node * src)
+{
+tree_walk(src, tree_add_var, dstp);
+}
+
 
 
 /* End of tree.c */

@@ -2,14 +2,22 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 1995 - 2024 */
 /* Copyright (c) Andrew Colin Kissa <andrew@topdog.za.net> 2016 */
 /* Copyright (c) University of Cambridge 2016 */
-/* Copyright (c) The Exim Maintainers 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
 
 
 #include "../exim.h"
+
+#ifdef EXPERIMENTAL_QUEUEFILE	/* whole file */
 #include "queuefile.h"
+
+#ifndef EXIM_HAVE_OPENAT
+# error queuefile transport reqires openat() support
+#endif
 
 /* Options specific to the appendfile transport. They must be in alphabetic
 order (note that "_" comes before the lower case letters). Some of them are
@@ -18,7 +26,7 @@ opt_public flag. */
 
 optionlist queuefile_transport_options[] = {
   { "directory", opt_stringptr,
-    (void *)offsetof(queuefile_transport_options_block, dirname) },
+    OPT_OFF(queuefile_transport_options_block, dirname) },
 };
 
 
@@ -74,14 +82,13 @@ copy_spool_file(int dst, int src)
 {
 int i, j;
 uschar buffer[16384];
-uschar * s;
 
 if (lseek(src, 0, SEEK_SET) != 0)
   return FALSE;
 
 do
   if ((j = read(src, buffer, sizeof(buffer))) > 0)
-    for (s = buffer; (i = write(dst, s, j)) != j; s += i, j -= i)
+    for (uschar * s = buffer; (i = write(dst, s, j)) != j; s += i, j -= i)
       if (i < 0)
 	return FALSE;
   else if (j < 0)
@@ -135,11 +142,11 @@ else					/* use data copy */
     tb->name, srcpath, dstpath);
 
   if (  (s = dstpath,
-	 (dstfd = openat(ddfd, CCS filename, O_RDWR|O_CREAT|O_EXCL, SPOOL_MODE))
+	 (dstfd = exim_openat4(ddfd, CCS filename, O_RDWR|O_CREAT|O_EXCL, SPOOL_MODE))
 	 < 0
 	)
      ||    is_hdr_file
-	&& (s = srcpath, (srcfd = openat(sdfd, CCS filename, O_RDONLY)) < 0)
+	&& (s = srcpath, (srcfd = exim_openat(sdfd, CCS filename, O_RDONLY)) < 0)
      )
     op = US"opening";
 
@@ -188,6 +195,7 @@ DEBUG(D_transport)
 # define O_NOFOLLOW 0
 #endif
 
+GET_OPTION("directory");
 if (!(dstdir = expand_string(ob->dirname)))
   {
   addr->message = string_sprintf("%s transport: failed to expand dirname option",
@@ -277,3 +285,4 @@ return FALSE;
 }
 
 #endif /*!MACRO_PREDEF*/
+#endif /*EXPERIMENTAL_QUEUEFILE*/

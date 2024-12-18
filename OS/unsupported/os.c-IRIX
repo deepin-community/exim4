@@ -2,7 +2,9 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2022 */
 /* Copyright (c) University of Cambridge 2001 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* See the file NOTICE for conditions of use and distribution. */
 
 /* Irix-specific code. This is concatenated onto the generic src/os.c file.
@@ -59,7 +61,7 @@ if (sysctl(mib, 6, NULL, &needed, NULL, 0) < 0)
   log_write(0, LOG_PANIC_DIE, "iflist-sysctl-estimate failed: %s",
     strerror(errno));
 
-buf = store_get(needed);
+buf = store_get(needed, GET_UNTAINTED);
 
 if (sysctl(mib, 6, buf, &needed, NULL, 0) < 0)
   log_write(0, LOG_PANIC_DIE, "sysctl of ifnet list failed: %s",

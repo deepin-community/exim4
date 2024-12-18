@@ -1,7 +1,9 @@
 #!PERL_COMMAND
 
+# Copyright (c) The Exim Maintainers 2023
 # Copyright (c) 2001-2017 University of Cambridge.
 # See the file NOTICE for conditions of use and distribution.
+# SPDX-License-Identifier: GPL-2.0-or-later
 
 # Perl script to generate statistics from one or more Exim log files.
 
@@ -501,10 +503,6 @@ To install these, download and unpack them, then use the normal perl installatio
  make test
  make install
 
-On B<Debian GNU/Linux> you can use
-C<apt-get install libgd-perl libgd-text-perl libgd-graph-perl>
-instead.
-
 =item B<-chartdir>I <dir>
 
 Create the charts in the directory <dir>
@@ -537,7 +535,8 @@ about how to create charts from the tables.
 
 =head1 AUTHOR
 
-There is a website at https://www.exim.org/.
+There is a website at https://www.exim.org - this contains details of the
+mailing list exim-users@exim.org.
 
 =head1 TO DO
 
@@ -560,7 +559,7 @@ use File::Basename;
 # use Time::Local;  # PH/FANF
 use POSIX;
 
-if (@ARGV and $ARGV[0] eq '--version') {
+if (@ARGV and ($ARGV[0] eq '--version' || $ARGV[0] eq '-v')) {
     print basename($0) . ": $0\n",
         "build: EXIM_RELEASE_VERSIONEXIM_VARIANT_VERSION\n",
         "perl(runtime): $]\n";
@@ -1901,7 +1900,11 @@ sub generate_parser {
       next if ($length < 38 + $extra);
     }
 
-    $id   = substr($_, 20 + $extra, 16);
+    # $id = substr($_, 20 + $extra, 16);	# old ID was 16 chars
+    $id = substr($_, 20 + $extra, 23);		# new IS is 23 chars
+    $id =~ s/(\S+).*/$1/;
+    $extra += length($id) - 16;
+
     $flag = substr($_, 37 + $extra, 2);
 
     if ($flag !~ /^([<>=*-]+|SA)$/ && /rejected|refused|dropped/) {

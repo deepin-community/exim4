@@ -1,5 +1,7 @@
+/* Copyright (c) The Exim Maintainers 2023 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "exim.h"
 
@@ -14,7 +16,7 @@ static uschar encode_base64[64] =
 size_t slen;
 uschar *sptr;
 gstring * yield = NULL;
-int i = 0, j;	/* compiler quietening */
+int i = 0;	/* compiler quietening */
 uschar c = 0;	/* compiler quietening */
 BOOL base64mode = FALSE;
 BOOL lastsep = FALSE;
@@ -106,7 +108,7 @@ while (slen > 0)
         i = 0;
         }
 
-      for (j = 0; j < 2; j++, s++) switch (i++)
+      for (int j = 0; j < 2; j++, s++) switch (i++)
 	{
 	case 0:
 	  /* Top 6 bits of the first octet */
@@ -199,9 +201,7 @@ iconv_close(icd);
 #endif
 
 yield = string_catn(yield, outbuf, outptr - outbuf);
-
-if (yield->s[yield->ptr-1] == '.')
-  yield->ptr--;
+gstring_trim_trailing(yield, '.');
 
 return string_from_gstring(yield);
 }

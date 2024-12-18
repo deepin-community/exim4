@@ -7,7 +7,7 @@
 mail_spool:
   debug_print = "T: appendfile for $local_part@$domain"
   driver = appendfile
-  file = /var/mail/$local_part
+  file = /var/mail/$local_part_data
   delivery_date_add
   envelope_to_add
   return_path_add

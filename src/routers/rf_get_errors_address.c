@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 #include "rf_functions.h"
@@ -33,17 +35,16 @@ Returns:       OK if no problem
 */
 
 int
-rf_get_errors_address(address_item *addr, router_instance *rblock,
-  int verify, uschar **errors_to)
+rf_get_errors_address(address_item * addr, router_instance * rblock,
+  int verify, const uschar ** errors_to)
 {
-uschar *s;
+uschar * s;
 
 *errors_to = addr->prop.errors_address;
-if (rblock->errors_to == NULL) return OK;
+if (!rblock->errors_to) return OK;
 
-s = expand_string(rblock->errors_to);
-
-if (s == NULL)
+GET_OPTION("errors_to");
+if (!(s = expand_string(rblock->errors_to)))
   {
   if (f.expand_string_forcedfail)
     {
@@ -58,7 +59,7 @@ if (s == NULL)
 
 /* If the errors_to address is empty, it means "ignore errors" */
 
-if (*s == 0)
+if (!*s)
   {
   addr->prop.ignore_error = TRUE;   /* For locally detected errors */
   *errors_to = US"";                   /* Return path for SMTP */
@@ -82,19 +83,16 @@ if (verify != v_none)
 else
   {
   BOOL save_address_test_mode = f.address_test_mode;
-  int save1 = 0;
+  const uschar * save_sender = sender_address;
   int i;
   const uschar ***p;
   const uschar *address_expansions_save[ADDRESS_EXPANSIONS_COUNT];
   address_item *snew = deliver_make_addr(s, FALSE);
 
-  if (sender_address != NULL)
-    {
-    save1 = sender_address[0];
-    sender_address[0] = 0;
-    }
+  if (sender_address)
+    sender_address = US"";
 
-  for (i = 0, p = address_expansions; *p != NULL;)
+  for (i = 0, p = address_expansions; *p;)
     address_expansions_save[i++] = **p++;
   f.address_test_mode = FALSE;
 
@@ -119,10 +117,10 @@ else
     debug_printf("------ End verifying errors address %s ------\n", s);
 
   f.address_test_mode = save_address_test_mode;
-  for (i = 0, p = address_expansions; *p != NULL;)
+  for (i = 0, p = address_expansions; *p; )
     **p++ = address_expansions_save[i++];
 
-  if (sender_address != NULL) sender_address[0] = save1;
+  sender_address = save_sender;
   }
 
 return OK;

@@ -3,6 +3,8 @@
  * Tim Martin
  * $Id: checkpw.c,v 1.49 2002/03/07 19:14:04 ken3 Exp $
  */
+/* Copyright (c) The Exim Maintainers 2021 - 2022 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (c) 2001 Carnegie Mellon University.  All rights reserved.
  *
@@ -86,8 +88,6 @@ int pwcheck_verify_password(const char *userid,
                             const char *passwd,
                             const char **reply)
 {
-userid = userid;  /* Keep picky compilers happy */
-passwd = passwd;
 *reply = "pwcheck support is not included in this Exim binary";
 return PWCHECK_FAIL;
 }
@@ -163,10 +163,6 @@ int saslauthd_verify_password(const uschar *userid,
                 const uschar *realm,
                 const uschar **reply)
 {
-userid = userid;  /* Keep picky compilers happy */
-passwd = passwd;
-service = service;
-realm = realm;
 *reply = US"saslauthd support is not included in this Exim binary";
 return PWCHECK_FAIL;
 }
@@ -296,7 +292,8 @@ static int read_string(int fd, uschar **retval) {
         if (count > MAX_REQ_LEN) {
             return -1;
         } else {
-            *retval = store_get(count + 1);
+	    /* Assume the file is trusted, so no tainting */
+            *retval = store_get(count + 1, GET_UNTAINTED);
             rc = (retry_read(fd, *retval, count) < (int) count);
             (*retval)[count] = '\0';
             return count;

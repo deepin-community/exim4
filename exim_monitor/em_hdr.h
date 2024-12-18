@@ -2,8 +2,10 @@
 *                 Exim Monitor                   *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2009 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 /* This is the general header file for all the modules that comprise
@@ -85,7 +87,8 @@ anything. */
 
 /* Regular expression include */
 
-#include <pcre.h>
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
 
 /* Includes from the main source of Exim.  One of these days I should tidy up
 this interface so that this kind of kludge isn't needed. */
@@ -93,20 +96,18 @@ this interface so that this kind of kludge isn't needed. */
 #ifndef NS_MAXMSG
 # define NS_MAXMSG 65535
 #endif
-typedef void hctx;
-
-#include "config.h"
-#include "mytypes.h"
-#include "macros.h"
+typedef void * hctx;
 
 #include "local_scan.h"
+#include "path_max.h"
+#include "macros.h"
 #include "structs.h"
 #include "blob.h"
 #include "globals.h"
-#include "dbstuff.h"
+#include "hintsdb.h"
+#include "hintsdb_structs.h"
 #include "functions.h"
 #include "osfunctions.h"
-#include "store.h"
 
 /* The sys/resource.h header on SunOS 4 causes trouble with the gcc
 compiler. Just stuff the bit we want in here; pragmatic easy way out. */
@@ -190,7 +191,7 @@ typedef struct queue_item {
   int  update_time;
   int  size;
   uschar *sender;
-  uschar name[17];
+  uschar name[MESSAGE_ID_LENGTH + 1];
   uschar seen;
   uschar frozen;
   uschar dir_char;
@@ -277,7 +278,7 @@ extern uschar *queue_stripchart_name; /* sic */
 extern int     queue_update;        /* update interval */
 extern int     queue_width;         /* width of queue window */
 
-extern pcre   *yyyymmdd_regex;    /* for matching yyyy-mm-dd */
+extern pcre2_code   *yyyymmdd_regex;    /* for matching yyyy-mm-dd */
 
 extern uschar *size_stripchart;     /* path for size monitoring */
 extern uschar *size_stripchart_name; /* name for size stripchart */
@@ -286,7 +287,7 @@ extern int     spool_is_split;      /* True if detected split spool */
 extern int     start_small;         /* True to start with small window */
 extern int     stripchart_height;   /* height of stripcharts */
 extern int     stripchart_number;   /* number of stripcharts */
-extern pcre  **stripchart_regex;  /* vector of regexps */
+extern pcre2_code  **stripchart_regex;  /* vector of regexps */
 extern uschar **stripchart_title;    /* vector of titles */
 extern int    *stripchart_total;    /* vector of accumulating values */
 extern int     stripchart_update;   /* update interval */
@@ -309,7 +310,7 @@ extern uschar *copystring(uschar *);
 extern void    create_dialog(uschar *, uschar *);
 extern void    create_stripchart(Widget, uschar *);
 extern void    debug(char *, ...);
-extern dest_item *find_dest(queue_item *, uschar *, int, BOOL);
+extern dest_item *find_dest(queue_item *, const uschar *, int, BOOL);
 extern queue_item *find_queue(uschar *, int, int);
 extern void    init(int, uschar **);
 extern void    menu_create(Widget, XEvent *, String *, Cardinal *);

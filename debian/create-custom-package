@@ -8,7 +8,7 @@ if [ -n "$EX4DEBUG" ]; then
 fi
 
 dh_testdir
-if [ -z "$(which grep-dctrl)" ] || ! [ -x "$(which grep-dctrl)" ]; then
+if [ -z "$(command -v grep-dctrl)" ] || ! [ -x "$(command -v grep-dctrl)" ]; then
   echo >&2 "ERR: no grep-dctrl binary"
   exit 1
 fi

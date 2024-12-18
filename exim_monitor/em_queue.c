@@ -2,8 +2,10 @@
 *                 Exim Monitor                   *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "em_hdr.h"
@@ -64,18 +66,16 @@ address is lowercased to start with, unless it begins with
 "*", which it does for error messages. */
 
 dest_item *
-find_dest(queue_item *q, uschar *name, int action, BOOL caseless)
+find_dest(queue_item * q, const uschar * name, int action, BOOL caseless)
 {
-dest_item *dd;
-dest_item **d = &(q->destinations);
+dest_item * dd;
+dest_item ** d = &q->destinations;
 
-while (*d != NULL)
+while (*d)
   {
   if ((caseless? strcmpic(name,(*d)->address) : Ustrcmp(name,(*d)->address))
         == 0)
     {
-    dest_item *ddd;
-
     if (action != dest_remove) return *d;
     dd = *d;
     *d = dd->next;
@@ -83,14 +83,12 @@ while (*d != NULL)
 
     /* Unset any parent pointers that were to this address */
 
-    for (ddd = q->destinations; ddd != NULL; ddd = ddd->next)
-      {
+    for (dest_item * ddd = q->destinations; ddd; ddd = ddd->next)
       if (ddd->parent == dd) ddd->parent = NULL;
-      }
 
     return NULL;
     }
-  d = &((*d)->next);
+  d = &(*d)->next;
   }
 
 if (action != dest_add) return NULL;
@@ -137,8 +135,8 @@ tree_node *
 acl_var_create(uschar *name)
 {
 tree_node *node, **root;
-root = (name[0] == 'c')? &acl_var_c : &acl_var_m;
-node = store_get(sizeof(tree_node) + Ustrlen(name));
+root = name[0] == 'c' ? &acl_var_c : &acl_var_m;
+node = store_get(sizeof(tree_node) + Ustrlen(name), GET_UNTAINTED);
 Ustrcpy(node->name, name);
 node->data.ptr = NULL;
 (void)tree_insertnode(root, node);
@@ -152,11 +150,11 @@ return node;
 *************************************************/
 
 static queue_item *
-set_up(uschar *name, int dir_char)
+set_up(uschar * name, int dir_char)
 {
 int i, rc, save_errno;
 struct stat statdata;
-void *reset_point;
+rmark reset_point;
 uschar *p;
 queue_item *q = (queue_item *)store_malloc(sizeof(queue_item));
 uschar buffer[256];
@@ -182,7 +180,7 @@ Before reading the header remember the position in the dynamic store so that
 we can recover the store into which the header is read. All data read by
 spool_read_header that is to be preserved is copied into malloc store. */
 
-reset_point = store_get(0);
+reset_point = store_mark();
 message_size = 0;
 message_subdir[0] = dir_char;
 sprintf(CS buffer, "%s-H", name);
@@ -205,8 +203,9 @@ if it's there. */
 else
   {
   q->update_time = q->input_time = received_time.tv_sec;
-  if ((p = strstric(sender_address+1, qualify_domain, FALSE)) != NULL &&
-    *(--p) == '@') *p = 0;
+  /* deconst ok; strstric is actually safe */
+  if ((p = strstric(US sender_address+1, qualify_domain, FALSE)) != NULL &&
+    *--p == '@') *p = 0;
   }
 
 /* If we didn't read the whole header successfully, generate an error
@@ -222,11 +221,11 @@ if (rc != spool_read_OK)
     struct stat statbuf;
     sprintf(CS big_buffer, "%s/input/%s", spool_directory, buffer);
     if (Ustat(big_buffer, &statbuf) == 0)
-      msg = string_sprintf("*** Format error in spool file: size = %d ***",
+      msg = string_sprintf("*** Format error in spool file: size = " OFF_T_FMT " ***",
         statbuf.st_size);
-    else msg = string_sprintf("*** Format error in spool file ***");
+    else msg = US"*** Format error in spool file ***";
     }
-  else msg = string_sprintf("*** Cannot read spool file ***");
+  else msg = US"*** Cannot read spool file ***";
 
   if (rc == spool_read_hdrerror)
     {
@@ -269,18 +268,19 @@ sender_address = NULL;
 snprintf(CS buffer, sizeof(buffer), "%s/input/%s/%s/%s-D",
   spool_directory, queue_name, message_subdir, name);
 if (Ustat(buffer, &statdata) == 0)
-  q->size = message_size + statdata.st_size - SPOOL_DATA_START_OFFSET + 1;
+  q->size = message_size + statdata.st_size - spool_data_start_offset(name) + 1;
 
 /* Scan and process the recipients list, skipping any that have already
 been delivered, and removing visible names. */
 
-if (recipients_list != NULL)
+if (recipients_list)
   for (i = 0; i < recipients_count; i++)
     {
-    uschar *r = recipients_list[i].address;
+    const uschar * r = recipients_list[i].address;
     if (tree_search(tree_nonrecipients, r) == NULL)
       {
-      if ((p = strstric(r+1, qualify_domain, FALSE)) != NULL &&
+      /* deconst ok; strstric is actually safe */
+      if ((p = strstric(US r+1, qualify_domain, FALSE)) != NULL &&
         *(--p) == '@') *p = 0;
       (void)find_dest(q, r, dest_add, FALSE);
       }
@@ -463,7 +463,8 @@ code knows to look for them. We count the entries to set the value for the
 queue stripchart, and set up data for the queue display window if the "full"
 option is given. */
 
-void scan_spool_input(int full)
+void
+scan_spool_input(int full)
 {
 int i;
 int subptr;
@@ -471,8 +472,6 @@ int subdir_max = 1;
 int count = 0;
 int indexptr = 1;
 queue_item *p;
-struct dirent *ent;
-DIR *dd;
 uschar input_dir[256];
 uschar subdirs[64];
 
@@ -490,16 +489,18 @@ there is progress, output a dot for each one to the standard output. */
 for (i = 0; i < subdir_max; i++)
   {
   int subdirchar = subdirs[i];      /* 0 for main directory */
+  DIR *dd;
+  struct dirent *ent;
+
   if (subdirchar != 0)
     {
     input_dir[subptr] = '/';
     input_dir[subptr+1] = subdirchar;
     }
 
-  dd = opendir(CS input_dir);
-  if (dd == NULL) continue;
+  if (!(dd = exim_opendir(input_dir))) continue;
 
-  while ((ent = readdir(dd)) != NULL)
+  while ((ent = readdir(dd)))
     {
     uschar *name = US ent->d_name;
     int len = Ustrlen(name);
@@ -543,22 +544,23 @@ removing items, the total that we are comparing against isn't actually correct,
 but in a long queue it won't make much difference, and in a short queue it
 doesn't matter anyway!*/
 
-p = queue_index[0];
-while (p != NULL)
-  {
+for (p = queue_index[0]; p; )
   if (!p->seen)
     {
-    queue_item *next = p->next;
-    if (p->prev == NULL) queue_index[0] = next;
-      else p->prev->next = next;
-    if (next == NULL)
+    queue_item * next = p->next;
+    if (p->prev)
+      p->prev->next = next;
+    else
+      queue_index[0] = next;
+    if (next)
+      next->prev = p->prev;
+    else
       {
       int i;
-      queue_item *q = queue_index[queue_index_size-1];
+      queue_item * q = queue_index[queue_index_size-1];
       for (i = queue_index_size - 1; i >= 0; i--)
         if (queue_index[i] == q) queue_index[i] = p->prev;
       }
-    else next->prev = p->prev;
     clean_up(p);
     queue_total--;
     p = next;
@@ -566,22 +568,17 @@ while (p != NULL)
   else
     {
     if (++count > (queue_total * indexptr)/(queue_index_size-1))
-      {
       queue_index[indexptr++] = p;
-      }
     p->seen = FALSE;  /* for next time */
     p = p->next;
     }
-  }
 
 /* If a lot of messages have been removed at the bottom, we may not
 have got the index all filled in yet. Make sure all the pointers
 are legal. */
 
 while (indexptr < queue_index_size - 1)
-  {
   queue_index[indexptr++] = queue_index[queue_index_size-1];
-  }
 }
 
 
@@ -614,7 +611,7 @@ static void update_recipients(queue_item *p)
 {
 int i;
 FILE *jread;
-void *reset_point;
+rmark reset_point;
 struct stat statdata;
 uschar buffer[1024];
 
@@ -634,7 +631,7 @@ if (!(jread = fopen(CS buffer, "r")))
 /* Get the contents of the header file; if any problem, just give up.
 Arrange to recover the dynamic store afterwards. */
 
-reset_point = store_get(0);
+reset_point = store_mark();
 sprintf(CS buffer, "%s-H", p->name);
 if (spool_read_header(buffer, FALSE, TRUE) != spool_read_OK)
   {
@@ -664,13 +661,14 @@ if (recipients_list)
   for (i = 0; i < recipients_count; i++)
     {
     uschar * pp;
-    uschar * r = recipients_list[i].address;
+    const uschar * r = recipients_list[i].address;
     tree_node * node;
 
     if (!(node = tree_search(tree_nonrecipients, r)))
       node = tree_search(tree_nonrecipients, string_copylc(r));
 
-    if ((pp = strstric(r+1, qualify_domain, FALSE)) && *(--pp) == '@')
+    /* deconst ok; strstric is actually safe */
+    if ((pp = strstric(US r+1, qualify_domain, FALSE)) && *(--pp) == '@')
        *pp = 0;
     if (!node)
       (void)find_dest(p, r, dest_add, FALSE);

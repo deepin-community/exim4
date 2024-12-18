@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2022 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "../exim.h"
@@ -35,9 +37,9 @@ void
 rf_change_domain(address_item *addr, const uschar *domain, BOOL rewrite,
   address_item **addr_new)
 {
-address_item *parent = store_get(sizeof(address_item));
-uschar *at = Ustrrchr(addr->address, '@');
-uschar *address = string_sprintf("%.*s@%s",
+address_item * parent = store_get(sizeof(address_item), GET_UNTAINTED);
+uschar * at = Ustrrchr(addr->address, '@');
+uschar * address = string_sprintf("%.*s@%s",
   (int)(at - addr->address), addr->address, domain);
 
 DEBUG(D_route) debug_printf("domain changed to %s\n", domain);
@@ -66,14 +68,13 @@ addr->next = *addr_new;
 
 if (rewrite)
   {
-  header_line *h;
   DEBUG(D_route|D_rewrite) debug_printf("rewriting header lines\n");
-  for (h = header_list; h != NULL; h = h->next)
+  for (header_line * h = header_list; h != NULL; h = h->next)
     {
     header_line *newh =
       rewrite_header(h, parent->domain, domain,
         global_rewrite_rules, rewrite_existflags, TRUE);
-    if (newh != NULL)
+    if (newh)
       {
       h = newh;
       f.header_rewritten = TRUE;

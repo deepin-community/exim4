@@ -5,16 +5,26 @@
 # Uncomment this to turn on verbose mode.
 # export DH_VERBOSE=1
 
-buildname := $(shell scripts/os-type)-$(shell scripts/arch-type)
-DEBIAN := $(shell pwd)/debian
+# avoid uname -m detection
+ifdef DEB_TARGET_GNU_CPU
+export EXIM_ARCHTYPE = $(DEB_TARGET_GNU_CPU)
+else
+export EXIM_ARCHTYPE = $(shell dpkg-architecture -qDEB_TARGET_GNU_CPU)
+endif
+
+buildname = $(shell scripts/os-type)-$(shell scripts/arch-type)
+DEBIAN =    $(CURDIR)/debian
 
 export DEB_BUILD_MAINT_OPTIONS := hardening=+all
 include /usr/share/dpkg/buildflags.mk
 include /usr/share/dpkg/pkg-info.mk
-# SOURCE_DATE_EPOCH is exported by pkg-info.mk since dpkg 1.18.8/July 2016
-# fall back to current date otherwise.
-SOURCE_DATE_EPOCH ?= $(shell date '+%s')
 
+EXIM4VERSIONLOCALSCAN = \
+	$(shell sed -rn \
+	's/^\s*.define LOCAL_SCAN_ABI_VERSION_(MAJOR|MINOR)\s*([0-9]+).*/\2/p' \
+	src/local_scan.h | \
+	{ read MAJOR; read MINOR; echo $${MAJOR}.$${MINOR} ; }\
+	)
 
 # The build system ignores CPPFLAGS, append them to CFLAGS
 CFLAGS += $(shell getconf LFS_CFLAGS) -D_LARGEFILE_SOURCE \
@@ -47,7 +57,7 @@ daemons = exim4-daemon-light exim4-daemon-heavy $(customdaemon)
 # Please note that building exim4-daemon-heavy with OpenSSL is a GPL
 # violation.
 
-PROVIDE_DEFAULT_MTA := $(shell if dpkg-vendor --is Ubuntu || \
+PROVIDE_DEFAULT_MTA = $(shell if dpkg-vendor --is Ubuntu || \
 	dpkg-vendor --derives-from Ubuntu ; then : ; else \
 	echo "default-mta" ; fi)
 # for reproducible build. If set exim would use $TZ as default value for
@@ -108,7 +118,7 @@ override_dh_auto_configure: unpack-configs-stamp bdir-stamp
 		done
 
 override_dh_auto_build:
-	for i in $(daemons) ; do \
+	set -e ; for i in $(daemons) ; do \
 		echo building $$i; \
 		cd $(CURDIR)/b-$$i && \
 		$(MAKE) FULLECHO='' ; \
@@ -130,6 +140,8 @@ override_dh_auto_build:
 			"$(DEBIAN)/$$i.prerm" ; \
 		ln -sfv exim4-daemon-light.postinst \
 			"$(DEBIAN)/$$i.postinst" ; \
+		ln -sfv exim4-daemon-light.exim4.service \
+			"$(DEBIAN)/$$i.exim4.service" ; \
 	done
 
 override_dh_auto_install-arch: debian/README.Debian
@@ -161,7 +173,12 @@ override_dh_auto_install-arch: debian/README.Debian
 	mv $(DEBIAN)/exim4-base/usr/sbin/eximon \
 		$(DEBIAN)/eximon4/usr/sbin
 	mv $(DEBIAN)/exim4-base/usr/sbin/eximon.bin \
-		$(DEBIAN)/eximon4/usr/lib/exim4
+		$(DEBIAN)/eximon4/usr/libexec/exim4
+	install -m755 b-exim4-daemon-light/util/mailtest \
+		$(DEBIAN)/exim4-base/usr/bin/
+	pod2man --center=EXIM4 --section=1 \
+		$(DEBIAN)/exim4-base/usr/bin/mailtest \
+		$(DEBIAN)/exim4-base/usr/share/man/man1/mailtest.1
 	pod2man --center=EXIM4 --section=8 \
 		$(DEBIAN)/exim4-base/usr/sbin/exipick \
 		$(DEBIAN)/exim4-base/usr/share/man/man8/exipick.8
@@ -172,6 +189,9 @@ override_dh_auto_install-arch: debian/README.Debian
 	pod2man --center=EXIM4 --section=8 \
 		$(DEBIAN)/syslog2eximlog \
 		$(DEBIAN)/exim4-base/usr/share/man/man8/syslog2eximlog.8
+	pod2man --center=EXIM4 --section=8 \
+		$(DEBIAN)/exim4-base/usr/sbin/exim_msgdate \
+		$(DEBIAN)/exim4-base/usr/share/man/man8/exim_msgdate.8
 	for i in b-exim4-daemon-*/build-$(buildname)/exim ; do \
 		install -m4755 -oroot -groot $$i \
 		$(DEBIAN)/`echo $$i | sed -e 's/^b-//' -e 's_/.*__'`/usr/sbin/exim4 ; \
@@ -185,8 +205,6 @@ override_dh_auto_install-indep: debian/README.Debian
 	< $(DEBIAN)/debconf/update-exim4.conf \
 	> $(DEBIAN)/exim4-config/usr/sbin/update-exim4.conf
 	chmod 755 $(DEBIAN)/exim4-config/usr/sbin/update-exim4.conf
-	install -m 755 $(DEBIAN)/update-exim4defaults \
-		$(DEBIAN)/exim4-config/usr/sbin
 
 	cd $(DEBIAN)/debconf/conf.d && \
 		tar cf - `find \( -path '*/.svn/*' -prune \) -or \
@@ -203,7 +221,7 @@ override_dh_auto_install-indep: debian/README.Debian
 
 # only called manually by maintainer before upload.
 update-mtaconflicts:
-	which grep-aptavail > /dev/null && \
+	command -v grep-aptavail > /dev/null && \
 		grep-aptavail --show-field=Package --field=Provides \
 		mail-transport-agent --no-field-names \
 		| grep -v exim | sort -u | \
@@ -254,7 +272,7 @@ override_dh_auto_clean:
 	#pwd
 	chmod 755 $(DEBIAN)/exim-gencert \
 		$(DEBIAN)/lynx-dump-postprocess $(DEBIAN)/script \
-		$(DEBIAN)/exim-adduser $(DEBIAN)/exim4_refresh_gnutls-params
+		$(DEBIAN)/exim-adduser
 
 override_dh_installchangelogs:
 	dh_installchangelogs -pexim4-base doc/ChangeLog
@@ -264,6 +282,21 @@ override_dh_installchangelogs:
 override_dh_installppp:
 	dh_installppp --name=exim4
 
+override_dh_installsystemd:
+	for i in $(daemons) ; do \
+		dh_installsystemd --package=$$i --name=exim4 ; \
+	done
+	dh_installsystemd --remaining-packages
+	# move service file to real (post usrmerge) location,
+	for i in $(daemons) ; do \
+		if test -d debian/$${i}/lib/systemd ; then \
+			mv -v debian/$${i}/lib/systemd/ \
+				debian/$${i}/usr/lib/; \
+			rmdir debian/$${i}/lib ; \
+		fi ; \
+	done
+
+
 override_dh_fixperms:
 	dh_fixperms -X/etc/exim4/passwd.client -Xusr/sbin/exim4
 
@@ -271,7 +304,8 @@ override_dh_gencontrol:
 	dh_gencontrol -- \
 		-VUpstream-Version=$(DEB_VERSION_EPOCH_UPSTREAM) \
 		-VMTA-Conflicts="$(shell cat $(DEBIAN)/mtalist)" \
-		-Vdist:Provides:exim4-daemon-light="$(PROVIDE_DEFAULT_MTA)"
+		-Vdist:Provides:exim4-daemon-light="$(PROVIDE_DEFAULT_MTA)" \
+		-Vlocalscanabiversion="exim4-localscanapi-$(EXIM4VERSIONLOCALSCAN)"
 
 override_dh_installlogrotate:
 	dh_installlogrotate

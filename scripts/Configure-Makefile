@@ -1,13 +1,15 @@
 #! /bin/sh
-LC_ALL=C
-export LC_ALL
-
 # Shell script to build Makefile in a build directory. It must be called
 # from inside the directory. It does its own checking of when to rebuild; it
 # just got too horrendous to get it right in "make", because of the optionally
 # existing configuration files.
 #
-# Copyright (c) The Exim Maintainers 1995 - 2018
+# Copyright (c) The Exim Maintainers 1995 - 2021
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+
+LC_ALL=C
+export LC_ALL
 
 
 # First off, get the OS type, and check that there is a make file for it.
@@ -150,7 +152,7 @@ rm -f ./$mftepcp ./$mftepcp2
 egrep "^[$st]*(AUTH|LOOKUP)_[A-Z0-9_]*[$st]*=[$st]*" $mft | \
   sed "s/[$st]*=/='/" | \
   sed "s/\$/'/" > $mftt
-egrep "^[$st]*((USE_(OPENSSL|GNUTLS)_PC)|SUPPORT_TLS|USE_GNUTLS|PCRE_CONFIG|AVOID_GNUTLS_PKCS11)[$st]*=[$st]*" $mft | \
+egrep "^[$st]*((USE_(OPENSSL|GNUTLS)_PC)|SUPPORT_TLS|USE_GNUTLS|PCRE2?_CONFIG|AVOID_GNUTLS_PKCS11)[$st]*=[$st]*" $mft | \
   sed "s/[$st]*=/='/" | \
   sed "s/\$/'/" >> $mftt
 if test -s $mftt
@@ -165,7 +167,7 @@ then
         eval "pc_value=\"\$$var\""
         need_this=''
         need_core=''
-        if [ ".$SUPPORT_TLS" = "." ]; then
+        if [ ".$DISABLE_TLS" = .yes ]; then
           # no TLS, not referencing
           true
         elif [ ".$var" = ".USE_GNUTLS_PC" ] && [ ".$USE_GNUTLS" != "." ]; then
@@ -233,12 +235,32 @@ then
       PCRE_CONFIG)
         case $PCRE_CONFIG in
           yes|YES|y|Y)
-            cflags=`pcre-config --cflags`
+	     echo >&2 "pcre is no longer supported; migrate to pcre2"
+	     exit 1
+
+#            cflags=`pcre-config --cflags`
+#            if [ $? -ne 0 ]; then
+#              echo >&2 "*** Missing pcre-config for regular expression support"
+#              exit 1
+#            fi
+#            libs=`pcre-config --libs`
+#            if [ ".$cflags" != "." ]; then
+#              echo "INCLUDE += $cflags"
+#            fi
+#            echo "PCRE_LIBS=$libs"
+            ;;
+        esac
+        ;;
+
+      PCRE2_CONFIG)
+        case $PCRE2_CONFIG in
+          yes|YES|y|Y)
+            cflags=`pcre2-config --cflags`
             if [ $? -ne 0 ]; then
-              echo >&2 "*** Missing pcre-config for regular expression support"
+              echo >&2 "*** Missing pcre2-config for regular expression support"
               exit 1
             fi
-            libs=`pcre-config --libs`
+            libs=`pcre2-config --libs8`
             if [ ".$cflags" != "." ]; then
               echo "INCLUDE += $cflags"
             fi

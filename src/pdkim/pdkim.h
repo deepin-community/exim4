@@ -2,7 +2,8 @@
  *  PDKIM - a RFC4871 (DKIM) implementation
  *
  *  Copyright (C) 2009 - 2012  Tom Kistner <tom@duncanthrax.net>
- *  Copyright (c) 2016 - 2018  Jeremy Harris
+ *  Copyright (c) 2016 - 2020  Jeremy Harris
+ *  SPDX-License-Identifier: GPL-2.0-or-later
  *
  *  http://duncanthrax.net/pdkim/
  *
@@ -34,6 +35,15 @@
                              "Resent-Message-ID:In-Reply-To:References:"\
                              "List-Id:List-Help:List-Unsubscribe:"\
                              "List-Subscribe:List-Post:List-Owner:List-Archive"
+
+#define PDKIM_OVERSIGN_HEADERS "+From:+Sender:+Reply-To:+Subject:+Date:"\
+                             "+Message-ID:+To:+Cc:+MIME-Version:+Content-Type:"\
+                             "+Content-Transfer-Encoding:+Content-ID:"\
+                             "+Content-Description:+Resent-Date:+Resent-From:"\
+                             "+Resent-Sender:+Resent-To:+Resent-Cc:"\
+                             "+Resent-Message-ID:+In-Reply-To:+References:"\
+                             "+List-Id:+List-Help:+List-Unsubscribe:"\
+                             "+List-Subscribe:+List-Post:+List-Owner:+List-Archive"
 
 /* -------------------------------------------------------------------------- */
 /* Length of the preallocated buffer for the "answer" from the dns/txt
@@ -67,15 +77,13 @@
 #define PDKIM_VERIFY_INVALID_BUFFER_SIZE          5
 #define PDKIM_VERIFY_INVALID_PUBKEY_DNSRECORD     6
 #define PDKIM_VERIFY_INVALID_PUBKEY_IMPORT        7
-#define PDKIM_VERIFY_INVALID_SIGNATURE_ERROR      8
-#define PDKIM_VERIFY_INVALID_DKIM_VERSION         9
+#define PDKIM_VERIFY_INVALID_PUBKEY_KEYSIZE       8
+#define PDKIM_VERIFY_INVALID_SIGNATURE_ERROR      9
+#define PDKIM_VERIFY_INVALID_DKIM_VERSION         10
 
 /* -------------------------------------------------------------------------- */
 /* Some parameter values */
 #define PDKIM_QUERYMETHOD_DNS_TXT 0
-
-/*#define PDKIM_ALGO_RSA_SHA256     0 */
-/*#define PDKIM_ALGO_RSA_SHA1       1 */
 
 #define PDKIM_CANON_SIMPLE        0
 #define PDKIM_CANON_RELAXED       1
@@ -142,9 +150,10 @@ typedef struct pdkim_signature {
   /* (v=) The version, as an integer. Currently, always "1" */
   int version;
 
-  /* (a=) The signature algorithm. Either PDKIM_ALGO_RSA_SHA256 */
-  int keytype;	/* pdkim_keytypes index */
-  int hashtype;	/* pdkim_hashes index */
+  /* (a=) The signature algorithm. */
+  int		keytype;	/* pdkim_keytypes index */
+  unsigned	keybits;	/* size of the key */
+  int		hashtype;	/* pdkim_hashes index */
 
   /* (c=x/) Header canonicalization method. Either PDKIM_CANON_SIMPLE
      or PDKIM_CANON_RELAXED */
@@ -280,7 +289,7 @@ typedef struct pdkim_ctx {
   pdkim_bodyhash *bodyhash;
 
   /* Callback for dns/txt query method (verification only) */
-  uschar * (*dns_txt_callback)(uschar *);
+  uschar * (*dns_txt_callback)(const uschar *);
 
   /* Coder's little helpers */
   gstring   *cur_header;
@@ -313,7 +322,7 @@ extern "C" {
 
 void	   pdkim_init         (void);
 
-void	   pdkim_init_context (pdkim_ctx *, BOOL, uschar * (*)(uschar *));
+void	   pdkim_init_context (pdkim_ctx *, BOOL, uschar * (*)(const uschar *));
 
 DLLEXPORT
 pdkim_signature *pdkim_init_sign    (pdkim_ctx *,
@@ -321,7 +330,7 @@ pdkim_signature *pdkim_init_sign    (pdkim_ctx *,
 			       const uschar **);
 
 DLLEXPORT
-pdkim_ctx *pdkim_init_verify  (uschar * (*)(uschar *), BOOL);
+pdkim_ctx *pdkim_init_verify  (uschar * (*)(const uschar *), BOOL);
 
 DLLEXPORT
 void       pdkim_set_optional (pdkim_signature *, char *, char *,int, int,

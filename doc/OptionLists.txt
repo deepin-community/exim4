@@ -1,7 +1,7 @@
 LISTS OF EXIM OPTIONS
 ---------------------
 
-This file contains complete lists of four kinds of Exim option:
+This file contains an almost complete lists of four kinds of Exim option:
 
   1. Those that can appear in the run time configuration file;
   2. Those that can be used on the command line;
@@ -9,7 +9,7 @@ This file contains complete lists of four kinds of Exim option:
   4. Those that can appear in the build time configuration for the Exim monitor
      (Local/eximon.conf).
 
-This file was last updated for Exim release 4.72.
+This file was last updated for Exim release 4.95.
 
 
 1. RUN TIME OPTIONS
@@ -78,6 +78,7 @@ allow_fail                           boolean         false         redirect     
 allow_filter                         boolean         false         redirect          4.00
 allow_freeze                         boolean         false         redirect          4.00
 allow_fifo                           boolean         false         appendfile        3.13
+allow_insecure_tainted_data          boolean         true          main              4.95 support will drop ~4.97ٍ
 allow_localhost                      boolean         false         smtp              1.73
 allow_mx_to_ip                       boolean         false         main              3.14
 allow_symlink                        boolean         false         appendfile
@@ -98,7 +99,7 @@ batch_max                            integer         100           appendfile
 bcc                                  string*         unset         autoreply
 bi_command                           string          unset         main
 body_only                            boolean         false         transports        2.05
-bounce_message_file                  string          unset         main              4.00
+bounce_message_file                  string*         unset         main              4.00 expanded from 4.94
 bounce_message_text                  string          unset         main              4.00
 bounce_return_body                   boolean         true          main              4.23
 bounce_return_message                boolean         true          main              4.00
@@ -127,11 +128,15 @@ check_spool_space                    integer         0             main
 check_string                         string          "From "       appendfile        3.03
                                                      unset         pipe              3.03
 check_srv                            string*         unset         dnslookup         4.31
+client_authz                         string*         unset         gsasl             4.94
 client_condition                     string*         unset         authenticators    4.68
 client_ignore_invalid_base64         boolean         false         plaintext         4.61
 client_name                          string*         +             cram_md5          3.10
+client_password                      string*         unset         gsasl             4.94
 client_secret                        string*         unset         cram_md5          3.10
 client_send                          string*         unset         plaintext         3.10
+                                                     unset         external (auth)   4.93
+client_username                      string*         unset         gsasl             4.94
 command                              string*         unset         lmtp              3.20
                                                      unset         pipe
                                                      unset         queryprogram      4.00
@@ -170,6 +175,10 @@ dkim_selector                        string*         unset         smtp         
 dkim_sign_headers                    string*         (RFC4871)     smtp              4.70
 dkim_strict                          string*         unset         smtp              4.70
 dkim_timestamps                      integer*        unset         smtp              4.92
+dkim_verify_hashes                   string          sha256:sha512:sha1 main         4.93
+dkim_verify_keytypes                 string          ed25519:rsa        main         4.93
+dkim_verify_min_keysizes             string list     "rsa=1024 ed25519=250"  main    4.94
+dkim_verify_minimal                  boolean         false              main         4.93
 dkim_verify_signers                  string*         $dkim_signers main              4.70
 directory                            string*         unset         appendfile
 directory_file                       string*         +             appendfile
@@ -178,9 +187,9 @@ directory_transport                  string*         unset         redirect     
 disable_ipv6                         boolean         false         main              4.61
 disable_logging                      boolean         false         routers           4.11
                                                      false         transports        4.11
-dmarc_forensic_sender                string          unset         main              4.82 if experimental_dmarc
-dmarc_history_file                   string          unset         main              4.82 if experimental_dmarc
-dmarc_tld_file                       string          unset         main              4.82 if experimental_dmarc
+dmarc_forensic_sender                string          unset         main              4.82 if experimental_dmarc, 4.93 mainline
+dmarc_history_file                   string          unset         main              4.82 if experimental_dmarc, 4.93 mainline
+dmarc_tld_file                       string          unset         main              4.82 if experimental_dmarc, 4.93 mainline
 dns_again_means_nonexist             domain list     unset         main              1.89
 dns_check_names_pattern              string          +             main              2.11
 dns_cname_loops                      integer         0             main              4.92 Set to 9 for older behaviour
@@ -212,6 +221,7 @@ escape_string                        string          ">From "      appendfile   
 exim_group                           string          ++            main
 exim_path                            string          ++            main
 exim_user                            string          ++            main
+exim_version                         string          ++            main              4.93
 expn                                 boolean         true          routers
 extra_local_interfaces               string          unset         main              4.21
 extract_addresses_remove_arguments   boolean         true          main              1.92
@@ -286,6 +296,9 @@ hold_domains                         domain list     unset         main         
 home_directory                       string*         unset         transports        4.00 replaces individual options
 host_all_ignored                     string          "defer"       manualroute       4.67
 host_find_failed                     string          "freeze"      manualroute       4.00
+host_name_extract                    string
+	"${if and {{match{.outlook.com\\$}{$host}} {match{$item}{\\N^250-([\\w.]+)\\s\\N}}} {$1}}"
+								   smtp		     4.96
 host_lookup                          host list       unset         main              3.00
 host_lookup_order                    string list  "bydns:byaddr"   main              4.30
 host_reject_connection               host list       unset         main              4.00
@@ -304,7 +317,10 @@ hosts_pipe_connect		     host_list	     unset	   smtp		     4.93 if experimental
 hosts_randomize                      boolean         false         manualroute       4.00
                                                      false         smtp              3.14
 hosts_require_auth                   host list       unset         smtp              4.00
+hosts_require_alpn                   host list       unset         main              4.95
+								   smtp              4.95
 hosts_require_dane                   host list       unset         smtp              4.91 (4.85 experimental)
+hosts_require_helo		     host list	     "*"	   main		     4.95
 hosts_require_ocsp                   host list       unset         smtp              4.82 if experimental_ocsp
 hosts_require_tls                    host list       unset         smtp              3.20
 hosts_treat_as_local                 domain list     unset         main              1.95
@@ -327,6 +343,7 @@ keep_malformed                       time            4d            main
 keepalive                            boolean         true          smtp              2.05
 ldap_default_servers                 string list     unset         main              3.02
 ldap_version                         int             2 or 3        main              4.14
+limits_advertise_hosts		     host list	     *		   main		     4.98
 local_from_check                     boolean         true          main              3.14
 local_from_prefix                    string          unset         main              3.14
 local_from_suffix                    string          unset         main              3.14
@@ -373,6 +390,7 @@ message_body_newlines                boolean         false         main         
 message_body_visible                 integer         500           main
 message_id_header_domain             string*         unset         main              4.11
 message_id_header_text               string*         unset         main
+message_linelength_limit             integer         998           smtp              4.94
 message_logs                         boolean         true          main              4.10
 message_prefix                       string*         +             appendfile        4.00 replaces prefix
                                      string*         unset         pipe              4.00 replaces prefix
@@ -391,6 +409,8 @@ mx_domains                           domain list     unset         dnslookup    
 mx_fail_domains                      domain list     unset         dnslookup         4.43
 mysql_servers                        string list     unset         main              3.03
 never_users                          string list     unset         main
+notifier_socket			     string	     "$spool_directory/exim_daemon_notify"
+								   main		     4.94
 notify_comsat                        boolean         false         appendfile
 once                                 string*         unset         autoreply
 once_file_size                       integer         0             autoreply         3.20
@@ -401,6 +421,7 @@ optional                             boolean         false         iplookup     
 oracle_servers                       string          unset         main              4.00
 owners                               string list     unset         redirect          4.00
 owngroups                            string list     unset         redirect          4.00
+panic_coredump			     boolean	     false	   main		     4.96
 pass_on_timeout                      boolean         false         routers           4.00
 pass_router                          string          unset         routers           4.00
 path                                 string          "/usr/bin"    pipe
@@ -432,6 +453,7 @@ qualify_recipient                    string          +             main
 qualify_single                       boolean         true          dnslookup         4.00
 query                                string*         +             iplookup          4.00
 queue_domains                        domain list     unset         main              4.00
+queue_fast_ramp                      boolean         false         main              4.95
 queue_list_requires_admin            boolean         true          main              1.95
 queue_only                           boolean         false         main
 queue_only_file                      string          unset         main              2.05
@@ -453,7 +475,7 @@ receive_timeout                      time            0s            main         
 received_header_text                 string*         +             main
 received_headers_max                 integer         30            main
 recipient_unqualified_hosts          host list       unset         main              4.00 replacing receiver_unqualified_hosts
-recipients_max                       integer         0             main              1.60
+recipients_max                       integer*        50000         main              1.60 default changed in 4.95 (was 0)
 recipients_max_reject                boolean         false         main              1.70
 redirect_router                      string          unset         routers           4.00
 remote_max_parallel                  integer         1             main
@@ -501,6 +523,8 @@ server_password                      string          unset         gsasl        
 server_param1			     string*	     unset	   tls (auth)	     4.86
 server_param2			     string*	     unset	   tls (auth)	     4.86
 server_param3			     string*	     unset	   tls (auth)	     4.86
+server_param2			     string*	     unset	   tls (auth)	     4.86 (tls-only) 4.93 (external)
+server_param3			     string*	     unset	   tls (auth)	     4.86 (tls-only) 4.93 (external)
 server_prompts                       string*         unset         plaintext         3.10
 server_realm                         string          unset         cyrus_sasl,gsasl  4.43 (cyrus-only) 4.80 (others)
 server_scram_iter                    string*         unset         gsasl             4.80
@@ -508,6 +532,7 @@ server_scram_salt                    string*         unset         gsasl        
 server_secret                        string*         unset         cram_md5          3.10
 server_service                       string          "smtp"  cyrus_sasl,gsasl,heimdal_gssapi  (cyrus-only) 4.80 (others)
 server_set_id                        string*         unset         authenticators    3.10
+set				     string*	     unset	   routers	     4.93
 shadow_condition                     string*         unset         transports
 shadow_transport                     string          unset         transports
 size_addition                        integer         1024          smtp              1.91
@@ -522,6 +547,7 @@ smtp_accept_queue                    integer         0             main
 smtp_accept_queue_per_connection     integer         10            main              2.03
 smtp_accept_reserve                  integer         0             main
 smtp_active_hostname                 string*         unset         main              4.33
+smtp_backlog_monitor                 integer         0             main              4.95
 smtp_banner                          string*         +             main
 smtp_check_spool_space               boolean         true          main              2.10
 smtp_connect_backlog                 integer         5             main
@@ -539,9 +565,14 @@ smtp_reserve_hosts                   host list       unset         main
 smtp_return_error_details            boolean         false         main              4.11
 socket                               string*         unset         lmtp              4.11
 spamd_address                        string*         +             main              4.50 with content scan
+spf_guess			     string          "v=spf1 a/24 mx/24 ptr ?all"
+								   main		     4.91 with SUPPORT_SPF
+spf_smtp_comment_template	     string*	     "Please see http://www.open-spf.org/Why"
+								   main		     4.94 with SUPPORT_SPF
 split_spool_directory                boolean         false         main              1.70
 spool_directory                      string          ++            main
 spool_wireformat                     boolean         false         main              4.90
+sqlite_dbfile                        string*         unset         main              4.94 with LOOKUP_SQLITE
 sqlite_lock_timeout                  time            5s            main              4.53
 strict_acl_vars                      boolean         false         main              4.64
 srv_fail_domains                     domain list     unset         dnslookup         4.43
@@ -574,7 +605,8 @@ timeout_defer                        boolean         false         pipe         
 timeout_frozen_after                 time            0s            main              3.20
 timezone                             string          +             main              3.15
 tls_advertise_hosts                  host list       *             main              3.20
-tls_advertise_requiretls             host list       *             main              4.92 if experimental_requiretls
+tls_alpn			     string*	     unset	   main		     4.95
+								   smtp		     4.95
 tls_certificate                      string*         unset         main              3.20
                                                      unset         smtp              3.20
 tls_dh_max_bits                      integer         2236          main              4.80
@@ -587,6 +619,8 @@ tls_privatekey                       string*         unset         main         
 tls_remember_emstp                   boolean         false         main              4.21
 tls_require_ciphers                  string*         unset         smtp              4.00 replaces tls_verify_ciphers
                                      string*         unset         main              4.33
+tls_resumption_hosts                 host list*      unset         main              4.95
+                                     host list*      unset         smtp              4.95
 tls_sni                              string*         unset         main              4.80
 tls_tempfail_tryclear                boolean         true          smtp              4.05
 tls_try_verify_hosts                 host list       unset         main              4.00
@@ -625,7 +659,7 @@ verify                               boolean         true          routers      
 verify_only                          boolean         false         routers           4.00
 verify_recipient                     boolean         true          routers           4.00
 verify_sender                        boolean         true          routers           4.00
-warn_message_file                    string          unset         main              4.00
+warn_message_file                    string*         unset         main              4.00 expanded from 4.94
 widen_domains                        string list     unset         dnslookup         4.00
 write_rejectlog                      boolean         true          main              4.31
 

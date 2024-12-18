@@ -3,7 +3,9 @@
 *************************************************/
 
 /* Copyright (c) University of Cambridge 1995 - 2015 */
+/* Copyright (c) The Exim Maintainers 2021 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Functions concerned with serialization. */
 
@@ -47,13 +49,13 @@ deliberate; the dbfn_open() function - which is an Exim function - always tries
 to create if it can't open a read/write file. It expects only O_RDWR or
 O_RDONLY as its argument. */
 
-if (!(dbm_file = dbfn_open(US"misc", O_RDWR, &dbblock, TRUE)))
+if (!(dbm_file = dbfn_open(US"misc", O_RDWR, &dbblock, TRUE, TRUE)))
   return FALSE;
 
 /* See if there is a record for this host or queue run; if there is, we cannot
 proceed with the connection unless the record is very old. */
 
-serial_record = dbfn_read(dbm_file, key);
+serial_record = dbfn_read_enforce_length(dbm_file, key, sizeof(dbdata_serialize));
 if (serial_record && time(NULL) - serial_record->time_stamp < 6*60*60)
   {
   if (serial_record->count >= lim)
@@ -101,8 +103,8 @@ dbdata_serialize *serial_record;
 
 DEBUG(D_transport) debug_printf("end serialized: %s\n", key);
 
-if (  !(dbm_file = dbfn_open(US"misc", O_RDWR, &dbblock, TRUE))
-   || !(serial_record = dbfn_read(dbm_file, key))
+if (  !(dbm_file = dbfn_open(US"misc", O_RDWR, &dbblock, TRUE, TRUE))
+   || !(serial_record = dbfn_read_enforce_length(dbm_file, key, sizeof(dbdata_serialize)))
    )
   return;
 if (--serial_record->count > 0)

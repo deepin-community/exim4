@@ -4,6 +4,7 @@
 
 /* Copyright (c) Jeremy Harris 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* SHA routine selection */
 
@@ -16,7 +17,7 @@
  * and not massaging CFLAGS in Local/Makefile is fully supported.
  */
 
-#ifdef SUPPORT_TLS
+#ifndef DISABLE_TLS
 
 # define EXIM_HAVE_SHA2
 
@@ -31,8 +32,9 @@
 #  else
 #   define SHA_GCRYPT
 #  endif
+# endif
 
-# else
+# ifdef USE_OPENSSL
 #  define SHA_OPENSSL
 #  include <openssl/ssl.h>
 #  if (OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)

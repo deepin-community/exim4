@@ -1,3 +1,115 @@
+exim4 (4.97-1) unstable; urgency=medium
+
+  exiqgrep now requires that at least one selection option or -c is
+  specified therefore "exiqgrep -i" to list all messages-ids
+  does not work anymore. Exim now offers a commandline switch (-bpi) to
+  accomplish this.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 04 Nov 2023 18:28:43 +0100
+
+exim4 (4.97~RC0-2) unstable; urgency=low
+
+  Changed format of the internal ID used for message identification.
+  - Upgrading should work seamlessly.
+  - Downgrading to 4.96 requires stopping the daemon and running
+    exim_id_update -d
+    before running the older daemon.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 10 Sep 2023 14:04:49 +0200
+
+exim4 (4.96-20) experimental; urgency=low
+
+  Drop support for configuring daemon startup by setting QUEUERUNNER in
+  /etc/default/exim4.
+  Also replace QFLAGS, QUEUEINTERVAL, COMMONOPTIONS, QUEUERUNNEROPTIONS and
+  SMTPLISTENEROPTIONS settings for init script/service file in
+  etc/default/exim4 with a combined EXIMSERVICE (for systemd) or
+  EXIMDAEMONOPTS (init script) directive.
+
+  Most of the previous functionality is available by different
+  means:
+  + Disable running an exim daemon this way ('nodaemon'):
+    -> Use the native functionality of the init system you are using, e.g.
+    for systemd mask the service.
+  + Start two separate daemon processes, one for listening on port 25 and
+    another for queue running ('separate')
+    -> Not supported anymore.
+  + Run a daemon that both listens on port 25 and runs the queue.
+    -> default behavior ('-bdf -q30m' / '-bd -q30m')
+  + Run a daemon that either listens on port 25 and runs the queue.
+    -> set to -bdf/-bd without -q30m or vice versa.
+  + Only run queue when a ppp connection is made ('ppp'):
+    -> Disable queuerunner like noted above and remove the 'exit 0' from
+    the start of /etc/ppp/ip-up.d/exim4
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 16 Aug 2023 17:44:59 +0200
+
+exim4 (4.96-1) unstable; urgency=low
+
+  The allow_insecure_tainted_data main config option and the "taint"
+  log_selector were removed. (See previous entry for exim4 4.94-18.)
+
+  Taint-check exec arguments for transport-initiated external processes.
+  Previously, tainted values could be used.  This affects "pipe", "lmtp"
+  and "queryprogram" transport, transport-filter, and ETRN commands.  The
+  ${run} expansion is also affected: in "preexpand" mode no part of the
+  command line may be tainted, in default mode the executable name may not
+  be tainted.
+
+  Query-style lookups are now checked for quoting, if the query string is
+  built using untrusted data ("tainted").  For now lack of quoting is
+  merely logged; a future release will upgrade this to an error.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 26 Jun 2022 14:11:00 +0200
+
+exim4 (4.94-18) experimental; urgency=medium
+
+  Please consider exim 4.93/4.94 a *major* exim upgrade. It introduces the
+  concept of tainted data read from untrusted sources, like e.g. message
+  sender or recipient. This tainted data (e.g. $local_part or $domain)
+  cannot be used among other things as a file or directory name or command
+  name.
+
+  This WILL BREAK configurations which are not updated accordingly.
+  Old Debian exim configuration files also will not work unmodified, the new
+  configuration needs to be installed with local modifications merged in.
+
+  Typical nonworking examples include:
+  * Delivery to /var/mail/$local_part. Use $local_part_data in combination
+    with check_local_user.
+  * Using
+    data = ${lookup{$local_part}lsearch{/some/path/$domain/aliases}}
+    instead of
+    data = ${lookup{$local_part}lsearch{/some/path/$domain_data/aliases}}
+    for a virtual domain alias file.
+
+  The basic strategy for dealing with this change is to use the result of a
+  lookup in further processing instead of the original (remote provided)
+  value.
+
+  To ease upgrading there is a new main configuration option to temporarily
+  downgrade taint errors to warnings, letting the old configuration work with
+  the newer exim. To make use of this feature add
+  .ifdef _OPT_MAIN_ALLOW_INSECURE_TAINTED_DATA
+   allow_insecure_tainted_data = yes
+  .endif
+  to the exim configuration (e.g. to /etc/exim4/exim4.conf.localmacros)
+  *before* upgrading to exim 4.93/4.94 and check the logfile for taint
+  warnings. This is a temporary workaround which is already marked for
+  removal on introduction.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 25 Apr 2021 07:42:26 +0200
+
+exim4 (4.94-16) unstable; urgency=medium
+
+  The configuration now enforces certificate verification against the
+  system trust store on encrypted connections using the
+  remote_smtp_smarthost transport (smarthost and satellite setups).
+  Delivery will therefore fail if the host certificates are not verifyable
+  and non TLS delivery is not available (e.g. because AUTH PLAIN is used).
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 17 Mar 2021 13:50:44 +0100
+
 exim4 (4.87-3) unstable; urgency=medium
 
   Starting with 4.87~RC1-1 exim will not accept or send out messages with

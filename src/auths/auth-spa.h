@@ -9,6 +9,8 @@
  * All the code used here was torn by Marc Prud'hommeaux out of the
  * Samba project (by Andrew Tridgell, Jeremy Allison, and others).
  */
+/* Copyright (c) The Exim Maintainers 2023 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* December 2004: The spa_base64_to_bits() function has no length checking in
 it. I have added a check. PH */
@@ -79,10 +81,10 @@ typedef struct
 
 void spa_bits_to_base64 (unsigned char *, const unsigned char *, int);
 int spa_base64_to_bits(char *, int, const char *);
-void spa_build_auth_response (SPAAuthChallenge *challenge,
-       SPAAuthResponse *response, char *user, char *password);
-void spa_build_auth_request (SPAAuthRequest *request, char *user,
-       char *domain);
+void spa_build_auth_response (SPAAuthChallenge * challenge,
+       SPAAuthResponse * response, uschar * user, uschar * password);
+void spa_build_auth_request (SPAAuthRequest * request, uschar * user,
+       uschar * domain);
 extern void spa_smb_encrypt (unsigned char * passwd, unsigned char * c8,
                              unsigned char * p24);
 extern void spa_smb_nt_encrypt (unsigned char * passwd, unsigned char * c8,

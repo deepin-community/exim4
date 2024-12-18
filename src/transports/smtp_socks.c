@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2024 */
 /* Copyright (c) Jeremy Harris 2015 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* SOCKS version 5 proxy, client-mode */
 
@@ -119,9 +121,8 @@ switch(method)
     len = i + j + 3;
     HDEBUG(D_transport|D_acl|D_v)
       {
-      int i;
       debug_printf_indent("  SOCKS>>");
-      for (i = 0; i<len; i++) debug_printf(" %02x", s[i]);
+      for (int i = 0; i<len; i++) debug_printf(" %02x", s[i]);
       debug_printf("\n");
       }
     if (send(fd, s, len, 0) < 0)
@@ -161,19 +162,9 @@ socks_opts * sd;
 socks_opts * lim = &proxies[nproxies];
 long rnd, weights;
 unsigned pri;
-static BOOL srandomed = FALSE;
 
 if (nproxies == 1)		/* shortcut, if we have only 1 server */
   return (proxies[0].is_failed ? -1 : 0);
-
-/* init random */
-if (!srandomed)
-  {
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  srandom((unsigned int)(tv.tv_usec/1000));
-  srandomed = TRUE;
-  }
 
 /* scan for highest pri */
 for (pri = 0, sd = proxies; sd < lim; sd++)
@@ -187,11 +178,11 @@ for (weights = 0, sd = proxies; sd < lim; sd++)
 if (weights == 0)       /* all servers failed */
   return -1;
 
-for (rnd = random() % weights, i = 0; i < nproxies; i++)
+for (rnd = random_number(weights), i = 0; i < nproxies; i++)
   {
   sd = &proxies[i];
   if (!sd->is_failed && sd->priority == pri)
-    if ((rnd -= sd->weight) <= 0)
+    if ((rnd -= sd->weight) < 0)
       return i;
   }
 
@@ -231,13 +222,14 @@ const uschar * state;
 uschar buf[24];
 socks_opts proxies[32];			/* max #proxies handled */
 unsigned nproxies;
-socks_opts * sob;
+socks_opts * sob = NULL;
 unsigned size;
 blob early_data;
 
 if (!timeout) timeout = 24*60*60;	/* use 1 day for "indefinite" */
 tmo = time(NULL) + timeout;
 
+GET_OPTION("socks_proxy");
 if (!(proxy_list = expand_string(ob->socks_proxy)))
   {
   log_write(0, LOG_MAIN|LOG_PANIC, "Bad expansion for socks_proxy in %s",
@@ -268,6 +260,7 @@ for (nproxies = 0;
   while ((option = string_nextinlist(&proxy_spec, &subsep, NULL, 0)))
     socks_option(sob, option);
   }
+if (!sob) return -1;
 
 /* Set up the socks protocol method-selection message,
 for sending on connection */
@@ -283,7 +276,7 @@ for(;;)
   {
   int idx;
   host_item proxy;
-  int proxy_af;
+  smtp_connect_args sc = {.sock = -1};
 
   if ((idx = socks_get_proxy(proxies, nproxies)) < 0)
     {
@@ -295,11 +288,16 @@ for(;;)
 
   /* bodge up a host struct for the proxy */
   proxy.address = proxy.name = sob->proxy_host;
-  proxy_af = Ustrchr(sob->proxy_host, ':') ? AF_INET6 : AF_INET;
+  proxy.port = sob->port;
+
+  sc.tblock = tb;
+  sc.ob = ob;
+  sc.host = &proxy;
+  sc.host_af = Ustrchr(sob->proxy_host, ':') ? AF_INET6 : AF_INET;
+  sc.interface = interface;
 
   /*XXX we trust that the method-select command is idempotent */
-  if ((fd = smtp_sock_connect(&proxy, proxy_af, sob->port,
-	      interface, tb, sob->timeout, &early_data)) >= 0)
+  if ((fd = smtp_sock_connect(&sc, sob->timeout, &early_data)) >= 0)
     {
     proxy_local_address = string_copy(proxy.address);
     proxy_local_port = sob->port;
@@ -331,7 +329,7 @@ if (  buf[0] != 5
    )
   goto proxy_err;
 
-  {
+ {
   union sockaddr_46 sin;
   (void) ip_addr(&sin, host_af, host->address, port);
 
@@ -354,14 +352,13 @@ if (  buf[0] != 5
       &sin.v4.sin_port, sizeof(sin.v4.sin_port));
     size = 4+sizeof(sin.v4.sin_addr.s_addr)+sizeof(sin.v4.sin_port);
     }
-  }
+ }
 
 state = US"connect";
 HDEBUG(D_transport|D_acl|D_v)
   {
-  int i;
   debug_printf_indent("  SOCKS>>");
-  for (i = 0; i<size; i++) debug_printf(" %02x", buf[i]);
+  for (int i = 0; i<size; i++) debug_printf(" %02x", buf[i]);
   debug_printf("\n");
   }
 if (send(fd, buf, size, 0) < 0)
@@ -376,9 +373,8 @@ if (  !fd_ready(fd, tmo)
   goto rcv_err;
 HDEBUG(D_transport|D_acl|D_v)
   {
-  int i;
   debug_printf_indent("  SOCKS>>");
-  for (i = 0; i<size; i++) debug_printf(" %02x", buf[i]);
+  for (int i = 0; i<size; i++) debug_printf(" %02x", buf[i]);
   debug_printf("\n");
   }
 if (  buf[0] != 5

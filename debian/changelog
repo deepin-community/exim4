@@ -1,85 +1,1440 @@
-exim4 (4.92-8+deb10u7) buster-security; urgency=high
+exim4 (4.98-2) unstable; urgency=low
 
-  * Non-maintainer upload by the LTS Security Team.
-  * CVE-2022-37452: heap-based buffer overflow for the alias list in
-    host_name_lookup in host.c when sender_host_name is set.
+  * Also run update-exim4.conf on systemd daemon reload. Closes: #1077034
+  * Use --allow-bad-names instead of --force-badname when invoking adduser.
+  * Cherry-pick patches from upstream git master / bugzilla:
+    + 73_Fix-SPA-authenticator.-Bug-3106.patch
+      https://bugs.exim.org/show_bug.cgi?id=3106
+    + 74_DKIM-fix-parsing-of-pubkey-RR.patch
+      https://bugs.exim.org/show_bug.cgi?id=3120
+    + 75_dkim_sign.patch https://bugs.exim.org/show_bug.cgi?id=3116
+      Closes: #1082905
 
- -- Sylvain Beucler <beuc@debian.org>  Wed, 24 Aug 2022 18:23:44 +0200
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 19 Oct 2024 11:54:30 +0200
 
-exim4 (4.92-8+deb10u6) buster-security; urgency=high
+exim4 (4.98-1) unstable; urgency=medium
 
-  * Fix several security vulnerabilities reported by Qualys and add related
-    robustness improvements. (Originally fixed in upstream release 4.94.3 and
-    in upstream GIT branch exim-4.92.3+fixes. (Special thanks to Heiko)
-    + CVE-2020-28025: Heap out-of-bounds read in pdkim_finish_bodyhash()
-    + CVE-2020-28018: Use-after-free in tls-openssl.c
-    + CVE-2020-28023: Out-of-bounds read in smtp_setup_msg()
-    + CVE-2020-28010: Heap out-of-bounds write in main()
-    + CVE-2020-28011: Heap buffer overflow in queue_run()
-    + CVE-2020-28013: Heap buffer overflow in parse_fix_phrase()
-    + CVE-2020-28017: Integer overflow in receive_add_recipient()
-    + CVE-2020-28022: Heap out-of-bounds read and write in extract_option()
-    + CVE-2020-28026: Line truncation and injection in spool_read_header()
-    + CVE-2020-28015 and CVE-2020-28021: New-line injection into spool header
-      file.
-    + CVE-2020-28009: Integer overflow in get_stdinput()
-    + CVE-2020-28024: Heap buffer underflow in smtp_ungetc()
-    + CVE-2020-28012: Missing close-on-exec flag for privileged pipe
-    + CVE-2020-28019: Failure to reset function pointer after BDAT error
-    + CVE-2020-28007: Link attack in Exim's log directory
-    + CVE-2020-28008: Assorted attacks in Exim's spool directory
-    + CVE-2020-28014, CVE-2021-27216: Arbitrary PID file creation, clobbering,
-      and deletion.
+  * New stable release, almost identical to RC3.
 
- -- Andreas Metzler <ametzler@debian.org>  Sat, 01 May 2021 11:42:39 +0200
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 11 Jul 2024 07:41:31 +0200
 
-exim4 (4.92-8+deb10u5) buster; urgency=medium
+exim4 (4.98~RC3-2) unstable; urgency=medium
 
-  * Fix use of concurrent TLS connections under GnuTLS:
-    80_01-GnuTLS-fix-hanging-callout-connections.patch
-    80_02-GnuTLS-tls_write-wait-after-uncorking-the-session.patch
-    80_03-GnuTLS-Do-not-care-about-corked-data-when-uncorking.patch
-    (Thanks, Heiko Schlittermann for the backport)
-  * Pull 82_TLS-use-RFC-6125-rules-for-certifucate-name-checks-w.patch from
-    upstream git (already included in 4.94), on TLS connections to a CNAME
-    verify the certificate against the original CNAME instead of against
-    the A record. Closes: #985243
-  * In README.Debian explicitly document the limitation/extent of server
-    certificate checking (authenticity not enforced) in the default
-    configuration (Thanks, Jö Fahlke). This Closes: #985244 (improved
-    documentation and Closes: #985344 (Yes, without required cert
-    checking MitM attacks are possible, but for a stable update documenting
-    this is the best compromise.)
+  * Upload to unstable.
+  * RC3 fixes CVE-2024-39929 Closes: #1075785
 
- -- Andreas Metzler <ametzler@debian.org>  Thu, 18 Mar 2021 09:10:15 +0100
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 05 Jul 2024 18:06:31 +0200
 
-exim4 (4.92-8+deb10u4) buster-security; urgency=high
+exim4 (4.98~RC3-1) experimental; urgency=low
 
-  * Fix authentication bypass in SPA authenticator due to out-of-bound buffer
-    read. https://bugs.exim.org/show_bug.cgi?id=2571 CVE-2020-12783
+  * New upstream release candidate.
 
- -- Andreas Metzler <ametzler@debian.org>  Wed, 13 May 2020 18:01:31 +0200
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 03 Jul 2024 18:21:36 +0200
 
-exim4 (4.92-8+deb10u3) buster-security; urgency=high
+exim4 (4.98~RC2-1) experimental; urgency=low
 
-  * 78_02-Fix-buffer-overflow-in-string_vformat.-Bug-2449.patch:
-    Fix buffer overflow in string_vformat.
+  * New upstream release candidate.
 
- -- Andreas Metzler <ametzler@debian.org>  Fri, 27 Sep 2019 18:09:35 +0200
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 23 Jun 2024 18:23:00 +0200
 
-exim4 (4.92-8+deb10u2) buster-security; urgency=high
+exim4 (4.98~RC1-1) experimental; urgency=low
 
-  * 78_01-string.c-do-not-interpret-before-0-CVE-2019-15846.patch Fix SNI
+  * New upstream release candidate.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 15 Jun 2024 11:05:49 +0200
+
+exim4 (4.98~RC0-1) experimental; urgency=low
+
+  * Add minimal gbp.conf.
+  * New upstream release candidate.
+    + Drop cherry-picked patches, unfuzz 90_localscan_dlopen.dpatch.
+    + Fixes hurd FTBFS. Closes: #1070396
+    + Refresh debian/EDITME*
+    + Add lintian-override for bash-term-in-posix-shell false positive in
+      exinext sh/perl script.
+  * Add NEWS entry to 4.97-1 regarding exiqgrep requiring at least one
+    selection option and point to exim's -bpi option. Closes: #1027968
+  * Ship newly available mailtest utility in exim4-base.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 08 Jun 2024 13:40:06 +0200
+
+exim4 (4.97-8) unstable; urgency=medium
+
+  * Pull fixes from upstream GIT master:
+    + 78_35-Fix-encoding-for-AUTH-on-MAIL-FROM.patch
+    + 78_37-Logging-fix-receive-time-crash-with-recipients-loggi.patch
+    + 78_39-SRS-fix-encode-for-local-part-with-zero-length-quote.patch (exim
+      bug #3087)
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 07 Apr 2024 07:50:45 +0200
+
+exim4 (4.97-7) unstable; urgency=medium
+
+  * Pull fixes from upstream GIT master:
+    + 78_30-Rewrites-fix-delivery-crash-from-constant-errors_to..patch (exim
+      bug #3081)
+    + 78_31-Lookups-fix-dbmnz-crash-on-zero-length-datum.-Bug-30.patch (exim
+      bug #3079)
+  * Update lintian overrides.
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 01 Apr 2024 10:45:05 +0200
+
+exim4 (4.97-6) unstable; urgency=high
+
+  * Add b-d on libnsl-dev to fix (temporary) FTBFS. Closes: #1065107
+  * Pull fixes from upstream GIT master:
+    78_10-Use-non-releaseable-memory-for-regex-match-strings.-.patch
+    78_11-use-dynamic-mem-for-regex_match_string.patch
+    78_12-Use-non-releasable-memory-for-regex-line-buffer.patch
+    78_15-regex-avoid-releasing-built-RE-midloop.patch
+    78_21-Lookups-avoid-leaking-user-passwd-from-server-spec-t.patch
+    78_23-Fix-crash-on-empty-oMt-argument.-Bug-3070.patch
+  * 78_06, 78_07, 78_10, 78_11, 78_12 and 78_15 together Closes: #1053447
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 01 Mar 2024 18:09:49 +0100
+
+exim4 (4.97-5) unstable; urgency=low
+
+  * Multiple fixes from upstream GIT master:
+    + 73_Check-for-missing-commandline-arg-after-options-taki.patch (upstream
+      bug #3049)
+    + 76_01-Support-old-format-message_id-spoolfiles-for-mailq-b.patch
+      (upstream bug #3050)
+    + 76_05-Fix-periodic-queue-runs.-Bug-3046.patch (upstream bug #3046)
+    + 78_01-Fix-recipient-or-source-selection-in-combination-wit.patch
+      (upstream bug #3064)
+    + 78_02-Eximon-handle-new-format-message-IDs.patch (upstream bug #)
+    + 78_03-Lookups-log-warning-for-deprecated-syntax.-Bug-3068.patch
+      (upstream bug #3068)
+    + 78_04-Exinext-handle-new-format-message-IDs.patch
+    + 78_05-TLS-fix-startup-after-forced-fail.patch (upstream bug #)
+    + 78_06-Appendfile-release-regex-match-store-every-thousand-.patch
+      (upstream bug #3047)
+    + 78_07-ACL-in-regex-condition-release-store-every-thousand-.patch
+      (upstream bug #3047)
+    + 78_08-Fix-smtp-transport-response-to-close-after-all-rcpt-.patch
+      (upstream bug #3059)
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 28 Jan 2024 14:08:10 +0100
+
+exim4 (4.97-4) unstable; urgency=medium
+
+  * autopkgtest: Stop using previously deprecated swaks feature to autodetect
+    whether the argument for --data was a file. This was dropped in swaks
+    20240102.0.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 06 Jan 2024 07:48:19 +0100
+
+exim4 (4.97-3) unstable; urgency=medium
+
+  * Fixes from upstream GIT master:
+    77_01-Reject-dot-LF-as-ending-data-phase.-Bug-3063.patch
+    77_02-Use-enum-for-body-data-input-state-machine.patch
+    77_03-Reject-dot-LF-as-ending-data-phase-pt.-2-.-Bug-3063.patch
+    + Enforce a data synch check before emitting the 354 "go ahead".
+      Previously this was only done if a pre-data ACL was configured.
+    + Refuse to accept a line "dot, LF" as end-of-DATA unless operating in
+      LF-only mode (as detected from the first header line).  Previously we
+      did accept that in (normal) CRLF mode; this has been raised as a
+      possible attack scenario (under the name "smtp smuggling").
+    Closes: #1059387 CVE-2023-51766
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 25 Dec 2023 07:50:16 +0100
+
+exim4 (4.97-2) unstable; urgency=medium
+
+  * Add 75-04-Lookups-Fix-dnsdb-lookup-of-multi-chunk-TXT.-Bug-305.patch from
+    upstream git master to fix dnsdb lookup regression. (Upstream bug 3054)
+  * Due to being rebuilt with a newer debhelper exim4-base.service
+    and exim4-base.timer move to /usr/lib/systemd/.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 18 Nov 2023 13:02:52 +0100
+
+exim4 (4.97-1) unstable; urgency=medium
+
+  * Drop reference to QUEUEINTERVAL from conf.d/retry/30_exim4-config.
+    (Thanks, Vincent Lefevre!) Closes: #1054492
+  * New upstream version.
+    + Update debian/copyright.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 04 Nov 2023 18:28:43 +0100
+
+exim4 (4.97~RC3-1) unstable; urgency=medium
+
+  * New upstream version, drop patches pulled from master.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 22 Oct 2023 07:31:26 +0200
+
+exim4 (4.97~RC2-2) unstable; urgency=high
+
+  * 76_changesfrom_4.96.2.diff: Pull fixes for CVE-2023-42117 and
+    CVE-2023-42119 from upstream GIT master. Closes: #1053310
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 16 Oct 2023 18:26:40 +0200
+
+exim4 (4.97~RC2-1) unstable; urgency=low
+
+  * Generate /etc/default/exim4 in exim4-config.postinst instead of
+    /etc/default/exim. Closes: #1053788
+  * Also remove the unused file and generate the correct one if missing.
+  * New upstream version.
+    + Drop 75-01-Auths*.diff.
+  * Add two post-release fixes:
+    + 75-01-Fix-crash-in-SPF-DNS-usage.patch
+    + 75-02-SPF-harden-against-crafted-DNS-responses.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 11 Oct 2023 18:56:28 +0200
+
+exim4 (4.97~RC1-2) unstable; urgency=high
+
+  * Address SPA authenticator vulnerabilities (CVE-2023-42114, CVE-2023-42115,
+    CVE-2023-42116)
+    - Auths: fix possible OOB write in external authenticator (CVE-2023-42115)
+    - Auths: use uschar more in spa authenticator
+    - Auths: fix possible OOB write in SPA authenticator (CVE-2023-42116)
+    - Auths: fix possible OOB read in SPA authenticator (CVE-2023-42114)
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 01 Oct 2023 18:04:33 +0200
+
+exim4 (4.97~RC1-1) unstable; urgency=medium
+
+  [ Helmut Grohne ]
+  * Fix FTBFS when dh_installsystemd installs units to /usr.
+    Closes: #1053110
+
+  [ Andreas Metzler ]
+  * New upstream version.
+    + Drop 75_01-Fix-tr.-and-empty-strings.-Bug-3023.patch.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 30 Sep 2023 11:29:26 +0200
+
+exim4 (4.97~RC0-3) unstable; urgency=medium
+
+  * Drop misleading phrase regarding incoming TLS support in README.Debian.
+    Closes: #1051945
+  * Improve on description of group setting for pipe deliveries in
+    README.Debian.
+  * 75_01-Fix-tr.-and-empty-strings.-Bug-3023.patch from upstream GIT master
+    fixing crashes in string expansion.
+    https://bugs.exim.org/show_bug.cgi?id=3023
+
+ -- Andreas Metzler <ametzler@debian.org>  Tue, 19 Sep 2023 18:04:22 +0200
+
+exim4 (4.97~RC0-2) unstable; urgency=low
+
+  * Fix URL of specific upstream exim bugreport in README.Debian.
+  * Upload to unstable.
+  * Add NEWS entry for format change of internal ID used for message
+    identification. (See upstream changelog JH/29!)
+  * Generate manpage for exim_msgdate(8) with pod2man and ship it.
+  * Add manpage for exim_id_update.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 10 Sep 2023 14:04:49 +0200
+
+exim4 (4.97~RC0-1) experimental; urgency=low
+
+  * New upstream version.
+    + Drop cherry-picked patches.
+    + Unfuzz 90_localscan_dlopen.dpatch.
+    + Add b-d and -basde dep on libfile-fcntllock-perl.
+    + Update example conf md5 hash (no changes to merge).
+  * Let -base depend on ${perl:Depends}.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 09 Sep 2023 13:53:15 +0200
+
+exim4 (4.96-22) unstable; urgency=low
+
+  * Fix architecture all build.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 02 Sep 2023 15:41:28 +0200
+
+exim4 (4.96-21) unstable; urgency=low
+
+  * tests/basic: Add isolation-container restriction (needs a running
+    exim daemon).
+  * Add ${run } expansion test to tests/basic.
+  * Replace 75_78-Fix-free-of-value-after-run.patch with
+    75_83-Re-fix-live-variable-value-free.-The-inital-fix-resu.patch fixing
+    $value expansion after ${run ..}.
+  * Upload to unstable.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 02 Sep 2023 13:49:33 +0200
+
+exim4 (4.96-20) experimental; urgency=low
+
+  * Drop support for configuring daemon startup by setting QUEUERUNNER in
+    /etc/default/exim4. Also queue run from /etc/ppp/ip-up.d/exim4 is
+    disabled by default.
+    Also replace QFLAGS, QUEUEINTERVAL, COMMONOPTIONS, QUEUERUNNEROPTIONS and
+    SMTPLISTENEROPTIONS settings for systemd service/init script in
+    etc/default/exim4 with a combined EXIMSERVICE (for systemd) or
+    EXIMDAEMONOPTS (init script) directive.
+  * Drop update-inetd related code from maintainerscripts, update docs.
+  * Drop update-exim4defaults and its manpage It has no users in Debian
+    and with the removal of the queuerunner option functionality does not
+    provide a real benefit over editing /etc/default/exim4.
+  * Ship systemd exim4.service unit in exim4-daemon-* packages. (Mainly
+    inspired by the file from OpenSuse, but using Type=exec and -bdf as in
+    from exim upstream git). Since contrary to the init script
+    /lib/systemd/system/exim4.service is not a conffile we can simply ship it
+    in *both* daemon packages (they have the necessarry conflicts/replaces
+    relation) and let dh_installsystemd handle maintainerscripts.
+  * Ship exim4.service in its real location below /usr (by moving after
+    dh_installsystemd has run.
+  * Add lintian-overrides for omitted-systemd-service-for-init.d-script and
+    package-supports-alternative-init-but-no-init.d-script which are triggered
+    by service file and init script being in different packages.
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 16 Aug 2023 17:44:59 +0200
+
+exim4 (4.96-19) unstable; urgency=medium
+
+  * 77_fix_autogencert_expiry.diff: Fix on-demand TLS cert expiry date.
+    Closes: #1043233
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 12 Aug 2023 14:57:51 +0200
+
+exim4 (4.96-18) unstable; urgency=medium
+
+  *  Fixes from upstream GIT master:
+     + 75_78-Fix-free-of-value-after-run.patch
+     + 75_79-Fix-recipients-expansion-when-used-within-run.-.-Bug.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 05 Aug 2023 13:29:22 +0200
+
+exim4 (4.96-17) unstable; urgency=low
+
+  *  Fixes from upstream GIT master:
+     + 75_74-Cancel-early-pipe-on-an-observed-advertising-change.patch
+     + 75_75-Fix-json-extract-for-strings-carrying-commas.-Bug-30.patch
+     + 75_76-Expansions-disallow-UTF-16-surrogates-from-utf8clean.patch
+     + 75_77-GnuTLS-fix-crash-with-tls_dhparam-none.patch
+     (Upstream bugs 3006, 2998)
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 29 Jul 2023 18:32:55 +0200
+
+exim4 (4.96-16) unstable; urgency=medium
+
+  [ Marc Haber ]
+  * Enforce TLS for dovecot_plain_server example. (Thanks: Dominic Preston)
+    Closes: #1037127
+
+  [ Andreas Metzler ]
+  * 75_42-Fix-run-arg-parsing.patch (From upstream GIT master, backported by
+    Bryce Harrington for Ubuntu):  Fix argument parsing for ${run } expansion.
+    Previously, when an argument included a close-brace character (eg. it
+    itself used an expansion) an error occurred. Closes: #1025420
+  * 75_68-Fix-srs_encode-.-for-mod-1024-day-zero.patch from upstream GIT
+    master:  Fix ${srs_encode ..}. Previously it would give a bad result for
+    one day every 1024 days.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 11 Jun 2023 18:20:21 +0200
+
+exim4 (4.96-15) unstable; urgency=medium
+
+  * Pull from upstream GIT master:
+    + 75_70-Fix-variable-initialisation-in-smtp-transport.-Bug-2.patch
+      Fix a crash in the smtp transport.
+      https://bugs.exim.org/show_bug.cgi?id=2996
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 10 May 2023 18:30:35 +0200
+
+exim4 (4.96-14) unstable; urgency=medium
+
+  * Pull from upstream GIT master:
+    + 75_66-Fix-crash-in-expansions.patch
+  * [lintian]: b-d on libidn-dev instead of libidn11-dev.
+  * [lintian]: Drop dependency on transitional package lsb-base. (Depended on
+    package sysvinit-utils is Esssential: yes)
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 04 Feb 2023 13:33:50 +0100
+
+exim4 (4.96-13) unstable; urgency=low
+
+  * Pull fixes from upstream GIT master:
+    75_58-Close-server-smtp-socket-explicitly-on-connect-ACL-d.patch
+    75_60-OpenSSL-fix-tls_eccurve-setting-explicit-curve-group.patch
+    75_62-OpenSSL-Fix-tls_eccurve-on-earlier-versions-than-3.0.patch
+    75_63-OpenSSL-log-conns-rejected-for-bad-ALPN-with-the-off.patch
+    75_64-DANE-do-not-check-dns_again_means_nonexist-for-TLSA-.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 07 Jan 2023 14:38:13 +0100
+
+exim4 (4.96-12) unstable; urgency=high
+
+  * 75_55-Fix-recursion-on-dns_again_means_nonexist.-Bug-2911.patch from
+    upstream GIT master: Fix unbounded recursion in DNS lookups.
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 30 Dec 2022 07:37:00 +0100
+
+exim4 (4.96-11) unstable; urgency=high
+
+  * 75_50-Fix-logging-of-max-size-log-line.patch: Fix crash on acl logwrite
+    modifier.
+
+ -- Andreas Metzler <ametzler@debian.org>  Tue, 20 Dec 2022 18:06:06 +0100
+
+exim4 (4.96-10) unstable; urgency=medium
+
+  * Pull two OpenSSL related fixes (does not apply to Debian binaries) from
+    upstream git master.
+  * Fix pointer truncation issue in DLOPEN_LOCAL_SCAN patch. Thanks to Florian
+    Weimer for patch and bug report. Closes: #1026045
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 19 Dec 2022 18:23:13 +0100
+
+exim4 (4.96-9) unstable; urgency=medium
+
+  * Cherrypick three fixes from upstream GIT master:
+    + 75_31-Fix-regext-substring-capture-variables-for-null-matc.patch
+    + 75_32-Fix-regex-substring-capture-variables-for-null-match.patch
+    + 75_34-Fix-regex-substring-capture-commentary.-Bug-2933.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 13 Nov 2022 18:43:32 +0100
+
+exim4 (4.96-8) unstable; urgency=medium
+
+  * Cherrypick two fixes from upstream GIT master:
+    + 75_22-Fix-daemon-startup.-Bug-2930.patch
+    + 75_23-Fix-reccipients-after-run.-.-Bug-2929.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 05 Nov 2022 07:42:03 +0100
+
+exim4 (4.96-7) unstable; urgency=high
+
+  * Replace 85_dmarc-api-breakage-workaround.diff with version from upstream
+    GIT master 75_18-Fix-Build-with-libopendmarc-1.4.x-fixes-2728.patch.
+  * 75_19-DMARC-fix-use-after-free-in-dmarc_dns_lookup.patch: Fix
+    use-after-free in dmarc.c. VDB-211919 / CVE-2022-3620.
+    This does not affect Debian *binary* packages since they are not built
+    with DMARC support. Closes: #1022556
+
+ -- Andreas Metzler <ametzler@debian.org>  Tue, 25 Oct 2022 18:38:38 +0200
+
+exim4 (4.96-6) unstable; urgency=low
+
+  * Use a limit of 1G instead of 2G in message_linelength_limit. (Thanks,
+    Frederic Peters) Closes: #1021503
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 10 Oct 2022 07:02:03 +0200
+
+exim4 (4.96-5) unstable; urgency=low
+
+  * Add pointers to /etc/mailname documentation to exim4-config_files.5.
+    Closes: #1019946
+  * Change remote_smtp transports to set message_linelength_limit = 2G if
+    IGNORE_SMTP_LINE_LENGTH_LIMIT was set to avoid accepting messages (due to
+    IGNORE_SMTP_LINE_LENGTH_LIMIT disabling the limit in the ACLs) without
+    being able to pass them on. Closes: #1019959
+  * Pull 75_16-GnuTLS-fix-for-clients-offering-no-TLS-extensions.patch from
+    upstream GIT.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 09 Oct 2022 14:26:52 +0200
+
+exim4 (4.96-4) unstable; urgency=low
+
+  * Cherrypick two fixes from upstream GIT master:
+    + 75_05-SPF-fix-memory-accounting-for-error-case.patch
+    + 75_08-Fix-regex-n-use-after-free.-Bug-2915.patch
+      75_09-Fix-non-WITH_CONTENT_SCAN-build.patch
+      75_10-Fix-non-WITH_CONTENT_SCAN-build-2.patch
+      75_11-Fix-non-WITH_CONTENT_SCAN-build-3.patch
+   * 85_dmarc-api-breakage-workaround.diff: Fix build-error against
+     opendmarc-1.4 which broke API and ABI without soname bump.
+     Closes: #1014945
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 11 Sep 2022 13:38:26 +0200
+
+exim4 (4.96-3) unstable; urgency=medium
+
+  * Fix error messages of test-groff -b -mandoc -dAD=l -rF0 -rHY=0 -t -w w -z
+    on processing update-exim4.conf.8 and exim4-config_files.5. Also make
+    mandoc -lint update-exim4.conf.8 happy. (Thanks, Bjarni Ingi Gislason for
+    patch and report.)
+    Closes: #1014347, #1014349, #1014356
+  * 75_01-Fix-exit-on-attempt-to-rewrite-a-malformed-address.-.patch:
+    Bug 2903: avoid exit on an attempt to rewrite a malformed address.
+  * Add dovecot server-side AUTH example. Closes: #1014235
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 13 Jul 2022 13:22:40 +0200
+
+exim4 (4.96-1) unstable; urgency=low
+
+  * New upstream version, almost identical to RC2.
+  * Upload to unstable.
+  * Extend debian/NEWS.
+  * Update lintian-overrides for new lintian version.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 26 Jun 2022 14:11:00 +0200
+
+exim4 (4.96~RC2-1) experimental; urgency=low
+
+  * New upstream version.
+   + Drop 75_*.patch.
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 16 Jun 2022 10:32:16 +0200
+
+exim4 (4.96~RC1-2) experimental; urgency=low
+
+  * Update from upstream GIT master:
+    + 75_70-Debug-clarify-SMTP-DATA-ops-in-transport.patch
+    + 75_71-Docs-more-info-on-PIPECONNECT.patch
+    + 75_72-TLS-resumption-disable-on-continued-connection.patch
+    + 75_73-Logging-distinguish-mem-allocation-errors.patch
+    + 75_74-typo.patch
+    + 75_75-TLS-resumption-fix-for-PIPECONNECT.patch
+    + 75_76-DEBUG-clarify-multiline-smtp-responses.patch
+    + 75_77-CHUNKING-fix-second-message-on-conn-when-first-rejec.patch
+    + 75_78-CHUNKING-handle-protocol-errors-during-reception.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 28 May 2022 11:41:06 +0200
+
+exim4 (4.96~RC1-1) experimental; urgency=low
+
+  * Merge 4.95-6:
+    75_68-GnuTLS-Do-not-free-the-cached-creds-on-transport-con.patch:
+    Fix segfault on deferred delivery on first MX. Closes: #1004740
+    (Huge thanks to Gedalya for finding/setting up a reproducer and taking
+    this upstream.)
+  * New upstream version.
+  * Pull 75_69-ARC-reset-headers-before-signing-for-secondary-MX.-B.patch to
+    fix a crash when built against libarc.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 21 May 2022 13:09:06 +0200
+
+exim4 (4.96~RC0-1) experimental; urgency=low
+
+  * Drop code for upgrading from ancient (4.80-7 and earlier) versions in
+    maintainer-scripts. Closes: #1000962
+  * New upstream version.
+    + Drop cherrypicked patches.
+    + Unfuzz patches (including EDITME*).
+    + Uses pcre2 (Closes: #1000107), update b-d to libpcre2-dev.
+    + The allow_insecure_tainted_data main config option and the
+      "taint" log_selector were removed, add entry to NEWS.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 24 Apr 2022 18:38:06 +0200
+
+exim4 (4.95-6) unstable; urgency=high
+
+  * Drop code for upgrading from ancient (4.80-7 and earlier) versions in
+    maintainer-scripts. Closes: #1000962
+  * 75_68-GnuTLS-Do-not-free-the-cached-creds-on-transport-con.patch:
+    Fix segfault on deferred delivery on first MX. Closes: #1004740
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 20 May 2022 19:37:43 +0200
+
+exim4 (4.95-5) unstable; urgency=medium
+
+  * More upstream fixes:
+    + 75_60-Utilities-fix-exiqgrep-perl-syntax-add-testcases.-Bu.patch
+      Closes: #1006661
+    + 75_64-Logging-fix-crash-on-local_part-utf8-conversion-fail.patch
+  * Update exiqgrep manpage.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 10 Apr 2022 13:57:43 +0200
+
+exim4 (4.95-4) unstable; urgency=low
+
+  * Fix typo in exiqgrep.8.
+  * Document all options of exiqgrep in manpage. (Patch by Janne Hess).
+    Closes: #1004428
+  * Cherry-pick some patches from upstream GIT master:
+    + 75_32-Fix-PAM-auth.-Bug-2813.patch
+      https://bugs.exim.org/show_bug.cgi?id=2813
+    + 75_35-Exiqgrep-check-arg-parsing.-Bug-2821.patch
+      https://bugs.exim.org/show_bug.cgi?id=2821
+    + 75_45-Fix-bogus-error-message-copy.-Bug-2857.patch
+      https://bugs.exim.org/show_bug.cgi?id=2857
+    + 75_50-Fix-include_directory-in-redirect-routers.-Bug-2715.patch
+      Closes: #988301
+    + 75_55-Specific-check-for-null-pointer.patch
+  * Add lintian override for fp bash-term-in-posix-shell *HOSTNAME.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 19 Feb 2022 14:49:28 +0100
+
+exim4 (4.95-3) unstable; urgency=low
+
+  * Build with support for SASL external authenticator. Closes: #982325
+  * Add lintian overrides for bash-term-in-posix-shell exim4-base
+    usr/sbin/exim_checkaccess and exim4-config:
+    maintainer-script-needs-depends-on-update-inetd.
+  * Run wrap-and-sort -ast.
+  * Pull 75_40-Fix-basic-memory-use-for-SPARC.-Bug-2838.patch from upstream
+    GIT master to fix FTBFS on sparc. (Thanks, John Paul Adrian Glaubitz)
+    Closes: #995679
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 16 Dec 2021 19:26:32 +0100
+
+exim4 (4.95-2) unstable; urgency=medium
+
+  * 75_30-Avoid-calling-gettimeofday-select-per-char-for-cmdli.patch from
+    upstream GIT master, fixes inefficient command line mail submission.
+    Closes: #996282
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 16 Oct 2021 13:14:58 +0200
+
+exim4 (4.95-1) unstable; urgency=medium
+
+  [ Andreas Metzler ]
+  * Use »command -v« instead of »which«. Closes: #993653
+  * New upstream version.
+  * Catch up with changed lintian output, update overrides.
+  * Add macro for setting DKIM_IDENTITY. (Thanks, "RL"). Closes: #993880
+  * Add macro for setting the protocol option on the remote_smtp_smarthost
+    transport. (Thanks, Bill Allombert). Closes: #994597 Also update
+    README.Debian.
+
+  [ Edward Betts ]
+  * Remove debian/TODO. It was just a link to alioth that no longer works.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 03 Oct 2021 13:39:56 +0200
+
+exim4 (4.95~RC2-1) unstable; urgency=low
+
+  * Let exim4-base recommend bsd-mailx|mailx instead of only the virtual
+    package. (Thanks, Daniel Lewart) Closes: #992475
+  * New upstream version.
+    + Update debian/example.conf.md5, no changes needed.
+  * Upload to unstable.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 28 Aug 2021 13:18:59 +0200
+
+exim4 (4.95~RC1-1) experimental; urgency=low
+
+  * New upstream version.
+    + Drop 75_04-Remove-the-must-helo-check-from-the-example-config.patch
+      77_01-Revert-GnuTLS-when-library-too-old-for-system-CA-bun.patch.
+    + Unfuzz 90_localscan_dlopen.dpatch.
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 28 Jul 2021 12:59:22 +0200
+
+exim4 (4.95~RC0-1) experimental; urgency=low
+
+  * New upstream version.
+    + Point watchfile to test subdirectory.
+    + Drop superfluous patches.
+    + Unfuzz 90_localscan_dlopen.dpatch
+    + Unfuzz debian/EDITME.*
+    + Fixup debian/minimaltest for new upstream.
+    + New upstream default configuration does not abuse message_size_limit
+      option to reject overlong lines, there is a new main configuration
+      option - message_linelength_limit - which is set to 998 by default.
+      Mirror this change, now the IGNORE_SMTP_LINE_LENGTH_LIMIT only affects
+      the data ACL.
+    + JH/48 Use a less bogus-looking filename for a temporary used for
+      DH-parameters for GnuTLS.  Previously the name started "%s" which,
+      while not a bug, looked as if it might be one.
+      Closes: #985997
+   * Enable native SRS support. Closes: #702358
+   * Enable external SPF support in -heavy. Closes: #528344
+   * Cherrypick 75_04-Remove-the-must-helo-check-from-the-example-config.patch
+     from upstream git master. Drops checking for EHLO/HELO-received in ACL
+     since the new main config option hosts_require_helo defaults to '*'.
+     Adapt Debian configuration to mirror this.
+   * Drop versioned Breaks added in 4.94.2-6, they are superfluous due to
+     bumped upstream version.
+   * 77_01-Revert-GnuTLS-when-library-too-old-for-system-CA-bun.patch. Fix
+     regression (tls_verify_certificates defaulting to unset instead of
+     "system" for GnuTLS) by reverting respive upstream commit.
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 19 Jul 2021 13:10:00 +0200
+
+exim4 (4.94.2-7) unstable; urgency=medium
+
+  * 73_05-Fix-tainted-message-for-fakereject.patch from upstream +fixes
+    branch: Fix re-expansion of custom message with control=fakereject.
+
+ -- Andreas Metzler <ametzler@debian.org>  Tue, 13 Jul 2021 18:04:57 +0200
+
+exim4 (4.94.2-6) unstable; urgency=medium
+
+  * Cherrypick
+    78_01-Command-line-option-for-no-notifier-socket.-Bug-2616.patch from
+    upstream GIT master. This allows one to disable creation of a
+    daemon notifier socket by either setting notifier_socket to a empty value
+    or specifying -oY commandline option.
+  * Init script: For QUEUERUNNER='separate' start daemons with -oY commandline
+    option to disable daemon notifier socket. Enforce lockstep ugrade of -base
+    and *daemon* by temporarily adding a versioned Breaks to exim4-base on
+    older *daemon*. Closes: #988844
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 26 May 2021 18:49:44 +0200
+
+exim4 (4.94.2-5) unstable; urgency=high
+
+  * 73_04-Fix-host_name_lookup-Close-2747.patch from exim-4.94.2+fixes.
+    Fix regression in 4.94.2.
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 17 May 2021 17:45:00 +0200
+
+exim4 (4.94.2-4) unstable; urgency=high
+
+  * 75_27_Fix-logging-with-empty-element-in-log_file_path-Bug-.patch /
+    75_28_Fix-logging-with-build-time-config-and-empty-element.patch replacing
+    75_27_open_logs_2744.patch from upstream exim-4.94.2+taintwarn branch:
+    Fix null-pointer dereference when logging to syslog (Closes: #988086) and
+    also fix loging to syslog at all (Closes: #988304)
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 15 May 2021 18:16:08 +0200
+
+exim4 (4.94.2-3) unstable; urgency=medium
+
+  * Updates from exim-4.94.2+fixes:
+    + 73_03-Named-Queues-fix-immediate-delivery.-Bug-2743.patch
+      Fix false positive taint error when using named queues.
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 13 May 2021 18:53:53 +0200
+
+exim4 (4.94.2-2) unstable; urgency=medium
+
+  * Updates from exim-4.94.2+fixes:
+    + 73_01-Fix-DANE-SNI-handling-Bug-2265.patch (from +fixes).
+      Fix broken SNI/DANE handling.
+    + 73_02-Fix-ipv6norm.patch: Fix ${ip6norm:} operator.  Previously, any
+      trailing line text was dropped, making it unusable in complex
+      expressions.
+  * 75_27_open_logs_2744.patch Partial fix for nullpointer dereference with
+      logging to syslog. See 988086.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 09 May 2021 18:03:15 +0200
+
+exim4 (4.94.2-1) unstable; urgency=high
+
+  * New upstream security release.
+    + Release based on +fixes branch, drop 74_*diff.
+    + Unfuzz 75_04-acl.patch.
+    + Merge in upstream configuration change rejecting all RCPT commands after
+      too many (more than five out of the initial ten) bad recipients. Can be
+      disabled by setting CHECK_RCPT_NO_FAIL_TOO_MANY_BAD_RCPT.
+    + Fixes multiple security vulnerabilities reported by Qualys and adds
+      related robustness improvements. (Special thanks to Heiko)
+      CVE-2020-28023: Out-of-bounds read in smtp_setup_msg()
+      CVE-2020-28007: Link attack in Exim's log directory
+      CVE-2020-28016: Heap out-of-bounds write in parse_fix_phrase()
+      CVE-2020-28012: Missing close-on-exec flag for privileged pipe
+      CVE-2020-28024: Heap buffer underflow in smtp_ungetc()
+      CVE-2020-28009: Integer overflow in get_stdinput()
+      CVE-2020-28015, CVE-28021: New-line injection into spool header file
+      CVE-2020-28026: Line truncation and injection in spool_read_header()
+      CVE-2020-28022: Heap out-of-bounds read and write in extract_option()
+      CVE-2020-28017: Integer overflow in receive_add_recipient()
+      CVE-2020-28013: Heap buffer overflow in parse_fix_phrase()
+      CVE-2020-28011: Heap buffer overflow in queue_run()
+      CVE-2020-28010: Heap out-of-bounds write in main()
+      CVE-2020-28018: Use-after-free in tls-openssl.c
+      CVE-2020-28025: Heap out-of-bounds read in pdkim_finish_bodyhash()
+      CVE-2020-28014, CVE-2021-27216: PID file handling
+      CVE-2020-28008: Assorted attacks in Exim's spool directory
+      CVE-2020-28019: Failure to reset function pointer after BDAT error
+  * Update debian/upstream/signing-key.asc from
+    <https://downloads.exim.org/Exim-Maintainers-Keyring.asc>.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 02 May 2021 07:22:06 +0200
+
+exim4 (4.94-19) unstable; urgency=medium
+
+  * Further updates from heiko/exim-4.94+fixes+taintwarn:
+    + 75_24-Silence-the-compiler.patch
+    + 75_26-Disable-taintchecks-for-mkdir-this-isn-t-part-of-4.9.patch
+  * Upload to unstable.
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 26 Apr 2021 18:35:43 +0200
+
+exim4 (4.94-18) experimental; urgency=medium
+
+  * Pull patches to temporarily add an option to turn taint errors into
+    warnings. (See #987133)
+    + 75_01-Introduce-main-config-option-allow_insecure_tainted_.patch
+    + 75_02-search.patch
+    + 75_03-dbstuff.patch
+    + 75_04-acl.patch
+    + 75_05-parse.patch
+    + 75_06-rda.patch
+    + 75_07-appendfile.patch
+    + 75_08-autoreply.patch
+    + 75_09-pipe.patch
+    + 75_10-deliver.patch
+    + 75_11-directory.patch
+    + 75_12-expand.patch
+    + 75_13-lf_sqlperform.patch
+    + 75_14-rf_get_transport.patch
+    + 75_15-deliver.patch
+    + 75_16-smtp_out.patch
+    + 75_17-smtp.patch
+    + 75_18-update-doc.patch
+    + 75_20-Set-mainlog_name-and-rejectlog_name-unconditionally.patch
+    + 75_21-tidy-log.c.patch
+    + 75_22-Silence-compiler.patch
+    + 75_23-Do-not-close-the-main-_log-if-we-do-not-see-a-chance.patch
+  * Update NEWS.Debian to describe the feature.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 25 Apr 2021 07:42:26 +0200
+
+exim4 (4.94-17) unstable; urgency=medium
+
+  * Let exim4-config Recommend ca-certificates, needed for certificate
+    verification.
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 18 Mar 2021 13:54:47 +0100
+
+exim4 (4.94-16) unstable; urgency=medium
+
+  * README.Debian: Fix typo "tls_verify_certificate" instead of
+    "tls_verify_certificates".
+  * General doc improvements in this area. (Thanks, Jö Fahlke) Closes: #985244
+  * Intensify upgrade warning in NEWS file.
+  * Enforce certificate verification against the system trust store in the
+    remote SMTP transport by default by setting
+    REMOTE_SMTP_SMARTHOST_TLS_VERIFY_HOSTS = *. Closes: #985344
+  * Update from exim-4.94+fixes:
+    + 74_56-Fix-FreeBSD-13-build.patch
+    + 74_57-Fix-weight-calculation-for-spamd_address.-Bug-2694.patch
+    + 74_58-Fix-weight-calculation-for-socks_proxy.-Bug-2694.patch
+    + 74_59-Fix-build-for-platforms-not-having-ulong.patch
+    + 74_60-Fix-list-expansion-for-various-domainlists-having-in.patch
+    + 74_61-Bulid-fix-DISABLE_PIPE_CONNECT-build.-Bug-2703.patch
+    + 74_62-Docs-fix-description-of-hosts_try_dane.-Bug-2704.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 17 Mar 2021 13:50:44 +0100
+
+exim4 (4.94-15) unstable; urgency=medium
+
+  * Update from exim-4.94+fixes:
+   + 74_54-Fix-daemon-SIGHUP-on-FreeBSD.patch
+   + 74_55-Fix-handling-of-server-which-follows-a-RCPT-452-with.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 07 Feb 2021 08:13:29 +0100
+
+exim4 (4.94-14) unstable; urgency=high
+
+  * As was done for -heavy in 963251 also automatically version localscanapi
+    provides for -light and -custom. (Thanks, Adam Borowski) Closes: #981399
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 30 Jan 2021 18:12:49 +0100
+
+exim4 (4.94-13) unstable; urgency=medium
+
+  * Add DKIM_TIMESTAMPS macro to set the dkim_timestamps option on remote_smtp
+    transport. (Thanks, Simon Josefsson) Closes: #980886
+  * Update from exim-4.94+fixes:
+    + 74_52-Lookups-fix-local_part_data-for-a-match-on-a-filenam.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 30 Jan 2021 14:50:50 +0100
+
+exim4 (4.94-12) unstable; urgency=medium
+
+  * Update from exim-4.94+fixes:
+    + 74_48-Fix-build-warning-on-32-bit-int-platfowms.-Bug-2678.patch
+    + 74_49-Fix-build-on-GNU-Hurd-supports-openat-.-Bug-2608.patch
+    + 74_50-Utilities-harden-exim_tidydb-against-corrupt-wait-re.patch
+    + 74_51-Auths-in-plaintext-authenticator-fix-parsing-of-cons.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 16 Jan 2021 16:02:51 +0100
+
+exim4 (4.94-11) unstable; urgency=medium
+
+  * Update from exim-4.94+fixes:
+    + 74_46-Fix-local-delivery-delay-when-combined-with-remote-c.patch
+    + 74_47-Fix-listextract-from-a-tainted-list.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 25 Dec 2020 13:35:10 +0100
+
+exim4 (4.94-10) unstable; urgency=low
+
+  * Update from exim-4.94+fixes:
+    + 74_43-Fix-matching-of-long-addresses.-Bug-2677.patch
+    + 74_44-Remove-the-X_-prefix-from-the-PIPE_CONNECT-SMTP-serv.patch
+    + 74_45-Fix-the-PIPE_CONNECT-feature-control-in-the-template.patch
+  * Add lintian overrides for debian-changelog-file-is-a-symlink.
+  * [lintian] Bump watchfile version to v4.
+  * Use debhelper v13 compat.
+  * Stop setting SOURCE_DATE_EPOCH in debian/rules. While the build
+    dependencies do not (transitively) guarantee that dpkg-dev >= 1.18.8 is
+    installed even oldstable, i.e. Debian 9 stretch features a new enough
+    dpkg (1.18.25).
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 19 Dec 2020 12:03:56 +0100
+
+exim4 (4.94-9) unstable; urgency=low
+
+  * Update from exim-4.94+fixes:
+    + 74_38-GnuTLS-clear-errno-before-any-data-i-o-op-so-error-l.patch
+    + 74_39-Fix-non-TLS-build.patch
+    + 74_40-eximon-fix-FreeBSD-build.patch
+    + 74_41-LDAP-fix-taint-check-in-server-list-walk.-Bug-2646.patch
+    + 74_42-Pass-authenticator-pubname-through-spool.-Bug-2648.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 04 Nov 2020 17:50:43 +0100
+
+exim4 (4.94-8) unstable; urgency=low
+
+  * Reorder ACL using a "require" verb, move message-statement to the
+    beginning. (Thanks, Slavko!) Closes: #968089
+  * Update from exim-4.94+fixes:
+    + 74_27-Fix-spelling-of-local_part_data-in-docs-and-debug-ou.patch
+    + 74_28-Fix-readsocket-eol-replacement.-Bug-2630.patch
+    + 74_29-Taint-fix-off-by-one-in-is_tainted-.-Bug-2634.patch
+    + 74_30-Build-ifdef-guard-for-EXPERIMENTAL_QUEUEFILE.patch
+    + 74_31-Taint-fix-off-by-one-in-is_tainted-.-Bug-2634.patch
+    + 74_32-DANE-force-SNI-to-use-domain.-Bug-2265.patch
+    + 74_33-DANE-Fix-2-rcpt-message-diff-domins-case.-Bug-2265.patch
+    + 74_34-Fix-non-DANE-build.patch
+    + 74_35-DANE-Fix-2-messages-from-queue-case.patch
+    + 74_36-Fix-non-DANE-build.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 17 Sep 2020 06:54:00 +0200
+
+exim4 (4.94-7) unstable; urgency=low
+
+  * Update from exim-4.94+fixes:
+   + 74_24-Taint-fix-ACL-spam-condition-to-permit-tainted-name-.patch
+   + 74_25-Fix-debug_print_socket.patch
+   + 74_26-debug_print_socket-output-formatting.patch
+  * [lintian] Mark some patches with "Forwarded: not-needed".
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 24 Jul 2020 13:31:47 +0200
+
+exim4 (4.94-6) unstable; urgency=medium
+
+  * Fix typo (missing "S") in REMOTE_SMTP_SMARTHOST_TLS_VERIFY_HOSTS macro.
+    (Thanks, Slavko!)  Closes: #964394
+  * Update from exim-4.94+fixes:
+    + 74_21-typoes.patch (replaces 75_typo_in_74_20.diff)
+    + 74_22-Fix-DKIM-signing-to-always-terminate.-Bug-2295.patch
+    + 74_23-Fix-taint-trap-in-parse_fix_phrase-.-Bug-2617.patch
+  * Add lintian overrides for usr/lib/sendmail symlink and for not forwarding
+    Debian-specific manpages (maintainer-manual-page).
+  * [lintian] Use UTF-8 encoding in es.po.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 11 Jul 2020 14:27:31 +0200
+
+exim4 (4.94-5) unstable; urgency=medium
+
+  [ Justin Aplin ]
+  * Fix build with GNU Make (<4.3), broken in -3.
+
+  [ Andreas Metzler ]
+  * Update from exim-4.94+fixes:
+    + 74_15-Cutthrough-handle-request-when-a-callout-hold-is-act.patch
+    + 74_16-Lookups-Fix-subdir-filter-on-a-dsearch.patch
+    + 74_17-Docs-list-further-ways-domain_data-c-may-be-filled-i.patch
+    + 74_18-Sqlite-fix-segfault-on-bad-missing-sqlite_dbfile.-Bu.patch
+    + 74_19-Taint-fix-ACL-spam-condition-to-permit-tainted-name-.patch
+    + 74_20-Fix-message-reception-clock-usage.-Bug-2615.patch Closes: #962847
+  * 75_typo_in_74_20.diff: Fix a typo in
+    74_20-Fix-message-reception-clock-usage.-Bug-2615.patch.
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 03 Jul 2020 08:20:07 +0200
+
+exim4 (4.94-4) unstable; urgency=medium
+
+  * Automatically version localscanapi provides. Closes: #963251
+  * Update from exim-4.94+fixes:
+    + 74_14-Fix-string_copy-macro-to-not-multiple-eval-args.-Bug.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 21 Jun 2020 18:10:04 +0200
+
+exim4 (4.94-3) unstable; urgency=medium
+
+  * Update from exim-4.94+fixes:
+    + 74_09-Filters-fix-vacation-in-Exim-filter.-Bug-2593.patch
+    + 74_10-TLS-use-RFC-6125-rules-for-certifucate-name-checks-w.patch
+    + 74_11-Taint-fix-radius-expansion-condition.patch
+    + 74_12-smtp_accept_map_per_host-call-search_tidyup-in-fail-.patch
+    + 74_13-Taint-fix-verify.-Bug-2598.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 19 Jun 2020 10:31:26 +0200
+
+exim4 (4.94-2) unstable; urgency=low
+
+  * Tighten package interdependencies.  With 4.94's daemon avoiding of
+    tainting requires usage of $local_part_data instead of $local_part_data
+    in mail_spool transport, but this variable is only filled by the
+    check_local_user router option in 4.94.
+  * Update from exim-4.94+fixes:
+    + 74_01-Docs-listitem.patch
+    + 74_02-Taint-fix-pam-expansion-condition.-Bug-2587.patch
+    + 74_03-Taint-fix-listcount-expansion-operator.-Bug-2586.patch
+    + 74_04-Docs-fix-mistaken-variable-name.patch
+    + 74_05-Docs-fix-layout.patch
+    + 74_06-Docs-typoes.patch
+    + 74_07-Taint-fix-multiple-ACL-actions-to-properly-manage-ta.patch
+    + 74_08-Fix-bi.-Bug-2590.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 07 Jun 2020 09:55:58 +0200
+
+exim4 (4.94-1) unstable; urgency=low
+
+  * New upstream version.
+  * Use mktemp(1) instead of tempfile(1), avoid deprecation warning.
+  * Upload to unstable.
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 01 Jun 2020 18:45:54 +0200
+
+exim4 (4.94~RC2-1) experimental; urgency=low
+
+  * New upstream version.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 23 May 2020 18:07:01 +0200
+
+exim4 (4.94~RC1-1) experimental; urgency=low
+
+  * Fix broken cross-reference in exim_lock.8 (Closes: #960356) and sync from
+    spec.txt.
+  * New upstream version.
+    + Drop 75*patch.
+    + In ACLs always specify "message" or "log_message" after conditions.
+    + Use $local_part_data instead of $local_part in require_files statements.
+    + Update example.conf.md5.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 16 May 2020 11:13:48 +0200
+
+exim4 (4.94~RC0-2) experimental; urgency=low
+
+  * Update from upstream GIT master.
+    + 75_06-Debug-socket-details.patch
+    + 75_08-Fix-build-on-platforms-not-supporting-sockopt-SO_PRO.patch
+    + 75_09-Build-fix-parallelism-problem.-Bug-2566.patch
+    + 75_11-Make-bounce-warn-_message_file-expanded.-Bug-2522.patch
+    + 75_12-Taint-When-a-non-wildcarded-localpart-affix-is-match.patch
+    + 75_14-Consolidate-local_part_verified-into-local_part_data.patch
+    + 75_17-Ensure-lookup-result-variables-are-dropped-between-m.patch
+    + 75_18-tidying.patch
+    + 75_19-Fix-SPA-authenticator-checking-client-supplied-data-.patch
+    + 75_20-wip-see-failed-summary.log.list_match_value.-Pretty-.patch
+    + 75_21-value-return.patch
+    + 75_22-docs-more-debug.patch
+    + 75_23-testcases-for-value-return.patch
+    + 75_24-Numeric-variable-returns.patch
+    + 75_25-Rework-SPA-fix-to-avoid-overflows.-Bug-2571.patch
+    + 75_28-I18N-change-default-on-smtp-transport-to-downconvert.patch
+    + 75_29-Lookups-ret-key-option.patch
+    + 75_32-Performance-workaround-Linux-kernel-bug.patch
+    + 75_33-Fix-build-with-Radius-auth-expansion-condition-suppo.patch
+  * $local_part_verified gone again, use $local_part_data. - Update NEWS and
+    configuration.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 10 May 2020 10:27:04 +0200
+
+exim4 (4.94~RC0-1) experimental; urgency=low
+
+  * Point watchfile to test subdirectory.
+  * New upstream version.
+    + Drop 74_*.diff (fixes branch) and
+      75_01-Build-Enable-GNU-Hurd-Bug-2476.patch (from GIT master).
+    + Unfuzz 90_localscan_dlopen.dpatch.
+    + Update debian/minimaltest, stop using tainted $local_part variable as
+      local filename for delivery.
+    + Sync from upstream default configuration: Use
+      "file = /var/mail/$local_part_verified" in mail_spool transport
+      instead of [...]/$local_part.
+  * Add NEWS entry for tainting change.
+  * Patches from upstream GIT master:
+    + 75_02-Fix-local_part_verified-for-remote-delivery-routing-.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 01 May 2020 18:57:32 +0200
+
+exim4 (4.93-16) unstable; urgency=medium
+
+  * Update from exim-4.93+fixes:
+    + 74_40-DKIM-fix-dkim_key_length-in-verify.patch
+    + 74_41-Build-fix-parallelism-problem.-Bug-2566.patch
+    + 74_42-tidying.patch
+    + 74_43-Ensure-lookup-result-variables-are-dropped-between-m.patch
+    + 74_44-Fix-SPA-authenticator-checking-client-supplied-data-.patch
+    + 74_45-Rework-SPA-fix-to-avoid-overflows.-Bug-2571.patch
+    + 74_46-Fix-build-with-Radius-auth-expansion-condition-suppo.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 09 May 2020 19:10:34 +0200
+
+exim4 (4.93-15) unstable; urgency=low
+
+  * Update from exim-4.93+fixes:
+    + 74_37-Taint-fix-parsing-of-ACL-ratelimit-condition.patch
+    + 74_38-Fix-spool-space-check-to-account-for-SIZE.-Bug-2552.patch
+  * Add macro REMOTE_SMTP_INTERFACE for setting the interface option on the
+    remote_smtp transport. Closes: #761925
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 25 Apr 2020 14:10:47 +0200
+
+exim4 (4.93-14) unstable; urgency=low
+
+  * Update from exim-4.93+fixes:
+    + 74_34-Taint-fix-dsearch-result-to-be-untainted.patch
+    + 74_35-Fix-argument-checking-for-readsocket.patch
+    + 74_36-OpenSSL-avoid-loading-server-s-CA-list-for-client-no.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 10 Apr 2020 13:53:34 +0200
+
+exim4 (4.93-13) unstable; urgency=medium
+
+  * Update from exim-4.93+fixes:
+    + 74_29-Fix-mime_part_count-for-non-mime-message-on-multi-me.patch
+    + 74_31-Taint-track-in-utf8clean-operator.patch
+    + 74_32-Fix-spurious-detection-of-timeout-while-writing-to-t.patch
+    + 74_33-Fix-segfault-on-bad-cmdline-f-sender-argument.-Bug-2.patch
+  * [lintian] Move eximon.bin from /usr/lib/exim4 to /usr/libexec/exim4.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 21 Mar 2020 11:39:19 +0100
+
+exim4 (4.93-12) unstable; urgency=low
+
+  * Update from exim-4.93+fixes:
+    + 74_28-Fix-tr-expansion-item.-Bug-2533.patch
+  * Recover more gracefull from half installed state after trying to install
+    without util-linux (essential) installed. Closes: #952451 (Thanks, James
+    Le Cuirot for the patch)
+  * Use macro ("ROUTER_DNSLOOKUP_IGNORE_TARGET_HOSTS") for ignore_target_hosts
+    list setting on dnslookup router. Extend list by corresponding IPv6
+    entries (Thanks, C Snover) Closes: #950973
+  * Add REMOTE_SMTP_TRANSPORTS_HEADERS_REMOVE to allow setting headers_remove
+    on both remote_smtp and remote_smtp_smarthost transports. Closes: #927741
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 29 Feb 2020 15:53:44 +0100
+
+exim4 (4.93-11) unstable; urgency=medium
+
+  * Update from exim-4.93+fixes:
+    + 74_26-Auths-fix-cyrus-sasl-driver-for-gssapi-use.-Bug-2524.patch
+    + 74_27-GnuTLS-fix-hanging-callout-connections.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 14 Feb 2020 16:02:05 +0100
+
+exim4 (4.93-10) unstable; urgency=medium
+
+  * Refresh debian/upstream/signing-key.asc from
+    https://downloads.exim.org/Exim-Maintainers-Keyring.asc.
+  * Update from exim-4.93+fixes:
+    + 74_23-Fix-taint-hybrid-checking-on-BSD.patch
+    + 74_24-TFO-even-in-binary-built-for-modern-Linux-handle-err.patch
+    + 74_25-Taint-slow-mode-checking-only.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 01 Feb 2020 11:06:29 +0100
+
+exim4 (4.93-9) unstable; urgency=medium
+
+  * Add 74_22-Taint-hybrid-checking-mode.patch.
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 16 Jan 2020 18:15:36 +0100
+
+exim4 (4.93-8) unstable; urgency=medium
+
+  * Refresh debian/upstream/signing-key.asc from
+    https://downloads.exim.org/Exim-Maintainers-Keyring.asc.
+  * More updates from exim-4.93+fixes:
+    + 74_19-SPF-fix-result-for-case-of-only-non-spf-TXT-RRs.-Bug.patch
+    + 74_20-Fix-error-logging-for-dynamically-loaded-modules.-Bu.patch
+    + 74_21-heimdal-auth-fix-the-increase-of-big_buffer-size.-Bu.patch
+      Closes: #949034
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 16 Jan 2020 14:38:21 +0100
+
+exim4 (4.93-7) unstable; urgency=medium
+
+  * README.Debian: Expand a little bit on how macros work. (See #948308)
+  * Upload to unstable.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 11 Jan 2020 11:12:35 +0100
+
+exim4 (4.93-6) experimental; urgency=low
+
+  * Improve on reproducible build, set EXIM_ARCHTYPE=DEB_TARGET_GNU_CPU to
+    override/avoid CPU detection with uname -m.
+  * More updates from exim-4.93+fixes:
+    74_18-SPF-fix-handling-mix-of-spf-and-other-txt-records.-B.patch
+  * Polish debian/rules. (Use CURDIR instead of executing `pwd`, avoid :=
+    assignments with $(shell).
+  * Build with SMTPUTF8 support. (SUPPORT_I18N_2008 and SUPPORT_I18N)
+    Closes: #885149
+    In configuration set smtputf8_advertise_hosts to '' instead of '*'.
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 06 Jan 2020 13:58:44 +0100
+
+exim4 (4.93-5) unstable; urgency=medium
+
+  * More updates from exim-4.93+fixes:
+    74_14-SPF-only-require-v-spf1-on-TXT-DNS-records-during-lo.patch
+    74_15-Eximon-fix-string-handling.-Bug-2500.patch
+    74_16-Fix-build-with-heimdal-gssapi.-Bug-2501.patch
+    74_17-Fix-the-variables-set-by-gsasl-authenticator.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 03 Jan 2020 19:02:33 +0100
+
+exim4 (4.93-4) unstable; urgency=medium
+
+  * Improve on TLS info in README.Debian.
+  * More updates  from exim-4.93+fixes:
+    74_10-DMARC-default-dmarc_tld_file-to-unset.-Bug-2494.patch
+    74_11-Zero-smtp-context-structure-after-allocation.patch
+    74_13-ARC-Reset-received-ARC-instance-counter-before-next-.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 26 Dec 2019 15:13:40 +0100
+
+exim4 (4.93-3) unstable; urgency=medium
+
+  * More updates (4.93.0.3) from exim-4.93+fixes:
+    74_08-ARC-fix-crash-induced-by-misordered-headers.-Bug-249.patch
+    74_09-Fix-taint-issue-with-retry-records.-Bug-2492.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 13 Dec 2019 18:56:18 +0100
+
+exim4 (4.93-2) unstable; urgency=medium
+
+  * Update to exim-4.93+fixes branch
+    74_01-PAM-fix-crash-in-the-pam-expansion-condition.-Bug-24.patch
+    74_02-Regard-command-line-recipients-as-tainted.patch
+    74_03-TFO-disable-for-FreeBSD.patch
+    74_04-Hurd-errno-really-uses-more-than-a-short-sized-value.patch
+    74_06-local_scan-align-local_scan.h-and-docs-re.-store_get.patch
+    74_07-Fix-taint-issue-in-transport-with-DSN.-Bug-2491.patch
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 12 Dec 2019 18:25:44 +0100
+
+exim4 (4.93-1) unstable; urgency=low
+
+  * Point watchfile to release directory again.
+  * New upstream version.
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 09 Dec 2019 19:05:17 +0100
+
+exim4 (4.93~RC7-1) unstable; urgency=low
+
+  * New upstream version.
+    + Update md5 hash for upstream example configuration. (Change not relevant
+      for Debian)
+  * 75_01-Build-Enable-GNU-Hurd-Bug-2476.patch and
+    75_02-TFO-disable-for-FreeBSD.patch from upstream 4.next branch: Re-enable
+    build on GNU/hurd. (Thanks. Samuel Thibault) Closes: #945943
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 05 Dec 2019 17:50:20 +0100
+
+exim4 (4.93~RC5-1) unstable; urgency=low
+
+  * New upstream version.
+    + Bump exim4-localscanap Provides.
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 27 Nov 2019 19:25:06 +0100
+
+exim4 (4.93~RC4-1) unstable; urgency=low
+
+  * New upstream version.
+
+ -- Andreas Metzler <ametzler@debian.org>  Tue, 19 Nov 2019 19:39:37 +0100
+
+exim4 (4.93~RC3-1) unstable; urgency=low
+
+  * Drop (dead) link to openspf.org in rcpt ACL message string.
+    Closes: #944786
+  * New upstream version.
+    + Unfuzz 90_localscan_dlopen.dpatch.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 17 Nov 2019 11:37:15 +0100
+
+exim4 (4.93~RC2-1) unstable; urgency=low
+
+  * New upstream beta version.
+    + Drop patches/75*.
+  * Allow overriding cron.daily paniclog report recipient. Closes: #611085
+  * Add REMOTE_SMTP_SMARTHOST_TLS_VERIFY_CERTIFICATES and
+    REMOTE_SMTP_SMARTHOST_TLS_VERIFY_HOSTS to set tls_verify_certificates and
+    tls_verify_hosts respectively on the remote_smtp_smarthost transport.
+    Closes: #823831
+    In addition to that add REMOTE_SMTP_HOSTS_REQUIRE_TLS to set
+    hosts_require_tls for the remote_smtp transport. Closes: #780033
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 10 Nov 2019 13:30:37 +0100
+
+exim4 (4.93~RC1-4) unstable; urgency=low
+
+  * Add libnet-ssleay-perl dependency to "basic" autopkg test. We do not need
+    it yet but will forget for sure to add it when we do.
+  * Following upstream defaults do not disable incoming TLS by default - i.e.
+    if MAIN_TLS_ENABLE is not set - but use a self-signed certificate.
+    (Relevant upstream changes: tls_advertise_hosts defaults to * for TLS
+    builds since 4.87_JH/18, on-demand generation of self-signed certificate
+    for inbound SMTP since 4.88_JH/05, 4.93_JH/23 TLS enabled build by
+    default.)
+  * 75_02-Revert-preallocate-store-for-config-which-appears-to.patch: Fix
+    mismerge which triggered a test error on mipsel. Closes: #944060
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 09 Nov 2019 19:25:10 +0100
+
+exim4 (4.93~RC1-3) unstable; urgency=low
+
+  * 75_01-Dsearch-Fix-taint-handling-in-lookup.-Bug-2465.patch: Untaint
+    dsearch lookup. Closes: #944199
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 09 Nov 2019 15:10:27 +0100
+
+exim4 (4.93~RC1-2) unstable; urgency=low
+
+  * autopkg test: Drop (python2) test for ancient vulnerability and do some
+    basic testing with swaks instead. Closes: #943006
+  * Upload to unstable.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 03 Nov 2019 14:39:28 +0100
+
+exim4 (4.93~RC1-1) experimental; urgency=low
+
+  * New upstream beta version.
+    + Drop 75_01-Fix-HAVE_LOCAL_SCAN-build.-Bug-2457.patch,
+      75_02-CHUNKING-fix-all-RCPTs-rejected-non-pipelined.-Bug-2.patch and
+      75_03_Fix-local-scan-ABI.-Bug-2458.patch.
+    + Update debian/example.conf.md5 (Removal of dnssec_request_domains was
+      already implemented in 4.93~RC0-1.)
+  * exigrep does case sensitive *option* processing (as it did for all
+    versions <4.90). Notably -M, -m, --invert, -I may be affected.
+    Closes: #927280
+    (This change was already present in RC0.)
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 31 Oct 2019 18:22:11 +0100
+
+exim4 (4.93~RC0-2) experimental; urgency=low
+
+  * 75_03_Fix-local-scan-ABI.-Bug-2458.patch: Fix function prototypes in
+    local_scan.h.
+  * 90_localscan_dlopen.dpatch: Unfuzz, mark
+    string_copy_function/string_copy_taint_function/string_copyn_function in
+    string.c as visible.
+  * Provide exim4-localscanapi-2.1.
+  * Drop sa-exim Breaks, the localscanapi version bump makes this superfluous.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 27 Oct 2019 13:48:27 +0100
+
+exim4 (4.93~RC0-1) experimental; urgency=low
+
+  * Point watchfile to test-subdirectory.
+  * New upstream beta version.
+    + Drop debian/patches/7[56]*.
+    + Unfuzz 90_localscan_dlopen.dpatch.
+    + Unfuzz/update (explicit -lnsl) debian/EDITME*
+    + Update configuration, mirorring upstream changes.
+      Both dnssec_request_domains and hosts_try_dane now default to '*', drop
+      these settings. REMOTE_SMTP_DISABLE_DANE is a noop, now.
+    + Exim DH param configuration (tls_dhparam) now makes use of the current
+      GnuTLS (> 3.6) functionality, which implements rfc 7919. Drop
+      unnecessary packaging bits.
+    + Pull post release fix from upstream GIT
+      (75_01-Fix-HAVE_LOCAL_SCAN-build.-Bug-2457.patch) to fix build error
+      with HAVE_LOCAL_SCAN=yes.
+    + Update 90_localscan_dlopen.dpatch to #include documented interface
+      (local_scan.h) instead of exim.h.
+  * debian/rules: Do not try to build -heavy if -light failed.
+  * 75_02-CHUNKING-fix-all-RCPTs-rejected-non-pipelined.-Bug-2.patch:
+    Post-release hix from upstream GIT.
+    https://bugs.exim.org/show_bug.cgi?id=2454
+  * The localscan dlopen functionality is broken, (temporarily) drop
+    exim4-localscanapi-2.0 from Provides.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 20 Oct 2019 13:46:49 +0200
+
+exim4 (4.92.3-1) unstable; urgency=medium
+
+  * Fix (commented) examples in configuration for clamd and courier authdaemon
+    to refer to /run instead of /var/run. Closes: #942292
+  * While we are at it also fix exim pid file path in exim(8).
+  * New upstream version (identical to 4.92.2 +
+    75_36-Fix-buffer-overflow-in-string_vformat.-Bug-2449.patch, i.e.
+    4.92.2-3).
+  * Use patches from exim-4.92.3+fixes, add
+    75_36-Fix-errorcheck-in-smtp-transport.patch.
+  * [lintian] Set Rules-Requires-Root: binary-targets.
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 18 Oct 2019 18:44:35 +0200
+
+exim4 (4.92.2-3) unstable; urgency=critical
+
+  * 75_36-Fix-buffer-overflow-in-string_vformat.-Bug-2449.patch: Fix buffer
+    overflow in string_vformat. CVE-2019-16928
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 28 Sep 2019 06:41:18 +0200
+
+exim4 (4.92.2-2) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 08 Sep 2019 15:10:46 +0200
+
+exim4 (4.92.2-1) experimental; urgency=medium
+
+  * New upstream security release (identical except for the version number to
+    4.92.1 + 77_01-string.c-do-not-interpret-before-0-CVE-2019-15846.patch).
+    + Drop 77_01-string.c-do-not-interpret-before-0-CVE-2019-15846.patch.
+  * Refresh from exim-4.92.2+fixes branch:
+    + 75_32-Fix-domain-for-a-bare-local-part-input.-Bug-2375.patch
+    + 75_33-exim_dbmbuild-handle-0-sequence.patch
+    + 75_34-fixup-exim_dbmbuild-handle-0-sequence.patch
+
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 07 Sep 2019 11:00:29 +0200
+
+exim4 (4.92.1-3) unstable; urgency=high
+
+  * 77_01-string.c-do-not-interpret-before-0-CVE-2019-15846.patch - Fix SNI
     related buffer overflow. CVE-2019-15846
 
- -- Andreas Metzler <ametzler@debian.org>  Tue, 03 Sep 2019 19:51:11 +0200
+ -- Andreas Metzler <ametzler@debian.org>  Tue, 03 Sep 2019 19:35:34 +0200
 
-exim4 (4.92-8+deb10u1) buster-security; urgency=high
+exim4 (4.92.1-2) unstable; urgency=medium
+
+  * Pulled from exim-4.92+fixes branch:
+    + 75_30-Fix-crash-after-TLS-channel-shutdown.patch
+    + 75_31-Auth-handle-socket-read-errors-in-Dovecot-authentica.patch
+  * Add Breaks: sa-exim (<< 4.2.1-17) to -heavy, see #930648.
+  * Change *.logrotate to nocreate to work around #400198.
+    Closes: #399930
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 14 Aug 2019 09:25:28 +0200
+
+exim4 (4.92.1-1) unstable; urgency=low
+
+  * New upstream bugfix release. (4.92.1 is 4.92 + the fix for CVE-2019-13917,
+    so there are no source changes to the previous upload.)
+    + Drop 77_Avoid-re-expansion-in-sort-CVE-2019-13917-OVE-201907.patch.
+    + Use patches from exim-4.92.1+fixes branch.
+  * In cron.daily use '/usr/sbin/exim4 -be '${primary_hostname}' instead of
+    hostname --fqdn to get local hostname (for information purposes).
+    Closes: #933231
+  * Run exim4-base daily job via systemd.timer to guarantee execution before
+    logrotate. Closes: #932328 (Thanks to Sven Hartge for bug-report and
+    patch)
+  * Add systemd-sysv as alternative for fulfilling the cron dependency.
+  * Use debhelper 12 compat.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sun, 04 Aug 2019 14:28:22 +0200
+
+exim4 (4.92-10) unstable; urgency=high
 
   * Fix remote command execution vulnerability related to
     "${sort}"-expansion. CVE-2019-13917 OVE-20190718-0006
 
- -- Andreas Metzler <ametzler@debian.org>  Sat, 20 Jul 2019 13:35:58 +0200
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 20 Jul 2019 19:01:57 +0200
+
+exim4 (4.92-9) unstable; urgency=low
+
+  * exim4-base.cron.daily, paniclog warning mail:
+    + Improve on wording. ${E4BCD_PANICLOG_LINES} only sets an upper limit
+      of reported lines, there might be less lines than that in the mail.
+      Closes: #929626
+    + Instead of quoting the last ${E4BCD_PANICLOG_LINES} send out the last
+      lines not filtered out by "$E4BCD_PANICLOG_NOISE". Closes: #929798
+  * Add missing patches from exim-4.92+fixes branch, other patches renamed for
+    proper order.
+    + 75_11-Fix-bP-smtp_receive_timeout-.-Bug-2384.patch
+    + 75_12-Fix-build-with-recent-LibreSSL-when-including-DANE.-.patch
+    + 75_13-SPF-better-buld-compatibility-with-OpenBSD.patch
+    + 75_15-GnuTLS-3.6.7-cipher-strings.patch
+    + 75_17-Fix-listing-a-named-queue-by-a-non-admin-user.-Bug-2.patch
+    + 75_21-Unbreak-heimdal_gssapi-auth-driver.patch
+    + 75_22-Fix-DSN-Final-Recipient-field.patch
+    + 75_23-Fix-bounce-generation-under-RFC-3461-request.-Bug-24.patch
+  * 75_20-Fix-detection-of-32b-platform-at-build-time.-Bug-240.patch is now
+    also from + fixes branch.
+  * Tighten dependency of exim4 on daemon packages. Closes: #930519 Add
+    lintian override for version-substvar-for-external-package.
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 05 Jul 2019 19:23:53 +0200
 
 exim4 (4.92-8) unstable; urgency=low
 

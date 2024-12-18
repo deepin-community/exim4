@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2022 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 /*************************************************
@@ -51,7 +53,7 @@ typedef struct {
   char *data;
 } save_item;
 
-static const char *db_opts[] = { "", "USE_DB", "USE_GDBM", "USE_TDB" };
+static const char *db_opts[] = { "", "USE_DB", "USE_GDBM", "USE_TDB", "USE_NDBM", "USE_SQLITE" };
 
 static int have_ipv6 = 0;
 static int have_iconv = 0;
@@ -221,8 +223,7 @@ else
 
 /* Now search the makefile for certain settings */
 
-base = fopen("Makefile", "rb");
-if (base == NULL)
+if (!(base = fopen("Makefile", "rb")))
   {
   printf("*** Buildconfig: failed to open Makefile\n");
   (void)fclose(new);
@@ -265,7 +266,7 @@ while (fgets(buffer, sizeof(buffer), base) != NULL)
         {
         if (use_which_db_in_local_makefile)
           {
-          printf("*** Only one of USE_DB, USE_GDBM, or USE_TDB should be "
+          printf("*** Only one of USE_DB, USE_GDBM, USE_SQLITE or USE_TDB should be "
             "defined in Local/Makefile\n");
           exit(1);
           }
@@ -387,7 +388,6 @@ while (fgets(buffer, sizeof(buffer), base) != NULL)
   encountered. */
 
   for (i = 1; i < sizeof(db_opts)/sizeof(char *); i++)
-    {
     if (strcmp(name, db_opts[i]) == 0)
       {
       if (use_which_db == i)
@@ -397,7 +397,6 @@ while (fgets(buffer, sizeof(buffer), base) != NULL)
         fprintf(new, "/* %s not set */\n", name);
       break;
       }
-    }
   if (i < sizeof(db_opts)/sizeof(char *)) continue;
 
   /* EXIM_USER is a special case. We look in the environment for EXIM_USER or
@@ -742,28 +741,15 @@ else if (isgroup)
     continue;
     }
 
-  /* WITH_CONTENT_SCAN is another special case: it must be set if it or
-  EXPERIMENTAL_DCC is set. */
-
-  if (strcmp(name, "WITH_CONTENT_SCAN") == 0)
-    {
-    char *wcs = getenv("WITH_CONTENT_SCAN");
-    char *dcc = getenv("EXPERIMENTAL_DCC");
-    fprintf(new, wcs || dcc
-      ? "#define WITH_CONTENT_SCAN     yes\n"
-      : "/* WITH_CONTENT_SCAN not set */\n");
-    continue;
-    }
-
-  /* DISABLE_DKIM is special; must be forced if no SUPPORT_TLS */
+  /* DISABLE_DKIM is special; must be forced if DISABLE_TLS */
   if (strcmp(name, "DISABLE_DKIM") == 0)
     {
     char *d_dkim = getenv("DISABLE_DKIM");
-    char *tls = getenv("SUPPORT_TLS");
+    char *notls = getenv("DISABLE_TLS");
 
     if (d_dkim)
       fprintf(new, "#define DISABLE_DKIM          yes\n");
-    else if (!tls)
+    else if (notls)
       fprintf(new, "#define DISABLE_DKIM          yes /* forced by lack of TLS */\n");
     else
       fprintf(new, "/* DISABLE_DKIM not set */\n");
@@ -955,21 +941,18 @@ else if (isgroup)
 defined. */
 
 if (have_auth)
-  {
   if (!support_crypteq) fprintf(new, "/* Force SUPPORT_CRYPTEQ for AUTH */\n"
     "#define SUPPORT_CRYPTEQ\n");
-  }
 
 /* Check poll() for timer functionality.
 Some OS' have released with it broken. */
 
   {
   struct timeval before, after;
-  int rc;
   size_t us;
 
   gettimeofday(&before, NULL);
-  rc = poll(NULL, 0, 500);
+  (void) poll(NULL, 0, 500);
   gettimeofday(&after, NULL);
 
   us = (after.tv_sec - before.tv_sec) * 1000000 +

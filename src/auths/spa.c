@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* This file, which provides support for Microsoft's Secure Password
 Authentication, was contributed by Marc Prud'hommeaux. Tom Kistner added SPA
@@ -32,6 +34,8 @@ References:
 
 
 #include "../exim.h"
+
+#ifdef AUTH_SPA		/* Remainder of file */
 #include "spa.h"
 
 /* #define DEBUG_SPA */
@@ -46,13 +50,13 @@ References:
 
 optionlist auth_spa_options[] = {
   { "client_domain",             opt_stringptr,
-      (void *)(offsetof(auth_spa_options_block, spa_domain)) },
+      OPT_OFF(auth_spa_options_block, spa_domain) },
   { "client_password",           opt_stringptr,
-      (void *)(offsetof(auth_spa_options_block, spa_password)) },
+      OPT_OFF(auth_spa_options_block, spa_password) },
   { "client_username",           opt_stringptr,
-      (void *)(offsetof(auth_spa_options_block, spa_username)) },
+      OPT_OFF(auth_spa_options_block, spa_username) },
   { "server_password",           opt_stringptr,
-      (void *)(offsetof(auth_spa_options_block, spa_serverpassword)) }
+      OPT_OFF(auth_spa_options_block, spa_serverpassword) }
 };
 
 /* Size of the options list. An extern variable has to be used so that its
@@ -145,37 +149,29 @@ unsigned off;
 /* send a 334, MS Exchange style, and grab the client's request,
 unless we already have it via an initial response. */
 
-if ((*data == '\0') &&
-    (auth_get_no64_data(&data, US"NTLM supported") != OK))
-  {
-  /* something borked */
+if (!*data && auth_get_no64_data(&data, US"NTLM supported") != OK)
   return FAIL;
-  }
 
-if (spa_base64_to_bits(CS (&request), sizeof(request), CCS (data)) < 0)
+if (spa_base64_to_bits(CS &request, sizeof(request), CCS data) < 0)
   {
   DEBUG(D_auth) debug_printf("auth_spa_server(): bad base64 data in "
-  "request: %s\n", data);
+    "request: %s\n", data);
   return FAIL;
   }
 
 /* create a challenge and send it back */
 
-spa_build_auth_challenge(&request,&challenge);
-spa_bits_to_base64 (msgbuf, (unsigned char*)&challenge,
-    spa_request_length(&challenge));
+spa_build_auth_challenge(&request, &challenge);
+spa_bits_to_base64(msgbuf, US &challenge, spa_request_length(&challenge));
 
 if (auth_get_no64_data(&data, msgbuf) != OK)
-  {
-  /* something borked */
   return FAIL;
-  }
 
 /* dump client response */
-if (spa_base64_to_bits(CS (&response), sizeof(response), CCS (data)) < 0)
+if (spa_base64_to_bits(CS &response, sizeof(response), CCS data) < 0)
   {
   DEBUG(D_auth) debug_printf("auth_spa_server(): bad base64 data in "
-  "response: %s\n", data);
+    "response: %s\n", data);
   return FAIL;
   }
 
@@ -232,9 +228,7 @@ debug_print_string(ablock->server_debug_string);    /* customized debug */
 
 /* look up password */
 
-clearpass = expand_string(ob->spa_serverpassword);
-if (clearpass == NULL)
-  {
+if (!(clearpass = expand_string(ob->spa_serverpassword)))
   if (f.expand_string_forcedfail)
     {
     DEBUG(D_auth) debug_printf("auth_spa_server(): forced failure while "
@@ -247,12 +241,11 @@ if (clearpass == NULL)
       "spa_serverpassword: %s\n", expand_string_message);
     return DEFER;
     }
-  }
 
 /* create local hash copy */
 
-spa_smb_encrypt (clearpass, challenge.challengeData, lmRespData);
-spa_smb_nt_encrypt (clearpass, challenge.challengeData, ntRespData);
+spa_smb_encrypt(clearpass, challenge.challengeData, lmRespData);
+spa_smb_nt_encrypt(clearpass, challenge.challengeData, ntRespData);
 
 /* compare NT hash (LM may not be available) */
 
@@ -294,14 +287,13 @@ SPAAuthRequest   request;
 SPAAuthChallenge challenge;
 SPAAuthResponse  response;
 char msgbuf[2048];
-char *domain = NULL;
-char *username, *password;
+uschar * domain = NULL, * username, * password;
 
 /* Code added by PH to expand the options */
 
 *buffer = 0;    /* Default no message when cancelled */
 
-if (!(username = CS expand_string(ob->spa_username)))
+if (!(username = expand_string(ob->spa_username)))
   {
   if (f.expand_string_forcedfail) return CANCELLED;
   string_format(buffer, buffsize, "expansion of \"%s\" failed in %s "
@@ -310,7 +302,7 @@ if (!(username = CS expand_string(ob->spa_username)))
   return ERROR;
   }
 
-if (!(password = CS expand_string(ob->spa_password)))
+if (!(password = expand_string(ob->spa_password)))
   {
   if (f.expand_string_forcedfail) return CANCELLED;
   string_format(buffer, buffsize, "expansion of \"%s\" failed in %s "
@@ -320,7 +312,7 @@ if (!(password = CS expand_string(ob->spa_password)))
   }
 
 if (ob->spa_domain)
-  if (!(domain = CS expand_string(ob->spa_domain)))
+  if (!(domain = expand_string(ob->spa_domain)))
     {
     if (f.expand_string_forcedfail) return CANCELLED;
     string_format(buffer, buffsize, "expansion of \"%s\" failed in %s "
@@ -340,9 +332,8 @@ if (!smtp_read_response(sx, US buffer, buffsize, '3', timeout))
 
 DSPA("\n\n%s authenticator: using domain %s\n\n", ablock->name, domain);
 
-spa_build_auth_request (&request, CS username, domain);
-spa_bits_to_base64 (US msgbuf, (unsigned char*)&request,
-       spa_request_length(&request));
+spa_build_auth_request(&request, username, domain);
+spa_bits_to_base64(US msgbuf, US &request, spa_request_length(&request));
 
 DSPA("\n\n%s authenticator: sending request (%s)\n\n", ablock->name, msgbuf);
 
@@ -356,11 +347,10 @@ if (!smtp_read_response(sx, US buffer, buffsize, '3', timeout))
 
 /* convert the challenge into the challenge struct */
 DSPA("\n\n%s authenticator: challenge (%s)\n\n", ablock->name, buffer + 4);
-spa_base64_to_bits (CS (&challenge), sizeof(challenge), CCS (buffer + 4));
+spa_base64_to_bits(CS (&challenge), sizeof(challenge), CCS (buffer + 4));
 
-spa_build_auth_response (&challenge, &response, CS username, CS password);
-spa_bits_to_base64 (US msgbuf, (unsigned char*)&response,
-       spa_request_length(&response));
+spa_build_auth_response(&challenge, &response, username, password);
+spa_bits_to_base64(US msgbuf, US &response, spa_request_length(&response));
 DSPA("\n\n%s authenticator: challenge response (%s)\n\n", ablock->name, msgbuf);
 
 /* send the challenge response */
@@ -384,5 +374,6 @@ if (errno != 0 || buffer[0] != '3')
 return FAIL;
 }
 
-#endif   /*!MACRO_PREDEF*/
+#endif	/*!MACRO_PREDEF*/
+#endif	/*AUTH_SPA*/
 /* End of spa.c */

@@ -1,9 +1,9 @@
-.TH EXIM4 8
+.TH EXIM 8
 .SH NAME
-exim4 \- a Mail Transfer Agent
+exim \- a Mail Transfer Agent
 .SH SYNOPSIS
 .nf
-.B exim4 [options] arguments ...
+.B exim [options] arguments ...
 .B mailq [options] arguments ...
 .B rsmtp [options] arguments ...
 .B rmail [options] arguments ...
@@ -40,7 +40,7 @@ local message on the standard input, with the arguments specifying the
 recipients) is assumed. Thus, for example, if Exim is installed in
 \fI/usr/sbin\fP, you can send a message from the command line like this:
 .sp
-  /usr/sbin/exim4 -i <recipient-address(es)>
+  /usr/sbin/exim -i <recipient-address(es)>
   <message content, including all the header lines>
   CTRL-D
 .sp
@@ -86,7 +86,7 @@ configured to run a specified command if called with the \fB\-bi\fP option.
 .SH "OPTIONS"
 .rs
 .TP 10
-\fB\-\-\fP
+\fB\-\-\fP \-\-
 This is a pseudo\-option whose only purpose is to terminate the options and
 therefore to cause subsequent command line items to be treated as arguments
 rather than options, even if they begin with hyphens.
@@ -105,7 +105,7 @@ displayed.
 These options are used by Sendmail for selecting configuration files and are
 ignored by Exim.
 .TP 10
-\fB\-B\fP<\fItype\fP>
+\fB\-B\fP <\fItype\fP>
 This is a Sendmail option for selecting 7 or 8 bit processing. Exim is 8\-bit
 clean; it ignores this option.
 .TP 10
@@ -125,8 +125,8 @@ ports, on multiple ports, and only on specific interfaces.
 .sp
 When a listening daemon
 is started without the use of \fB\-oX\fP (that is, without overriding the normal
-configuration), it writes its process id to a file called
-/var/run/exim4/exim.pid. This location can be overridden by setting
+configuration), it writes its process id to a file called exim\-daemon.pid
+in Exim's spool directory. This location can be overridden by setting
 PID_FILE_PATH in Local/Makefile. The file is written while Exim is still
 running as root.
 .sp
@@ -141,6 +141,12 @@ means of the \fB.include\fP facility, is changed, and also whenever a new versio
 of Exim is installed. It is not necessary to do this when other files that are
 referenced from the configuration (for example, alias files) are changed,
 because these are reread each time they are used.
+.sp
+Either a SIGTERM or a SIGINT signal should be used to cause the daemon
+to cleanly shut down.
+Subprocesses handling recceiving or delivering messages,
+or for scanning the queue,
+will not be affected by the termination of the daemon process.
 .TP 10
 \fB\-bdf\fP
 This option has the same effect as \fB\-bd\fP except that it never disconnects
@@ -175,12 +181,19 @@ Macro processing is done on lines before string\-expansion: new macros can be
 defined and macros will be expanded.
 Because macros in the config file are often used for secrets, those are only
 available to admin users.
+.sp
+The word "set" at the start of a line, followed by a single space,
+is recognised specially as defining a value for a variable.
+If the sequence ",t" is inserted before the space,
+the value is marked as tainted.
+.sp
+The syntax is otherwise the same as the ACL modifier "set =".
 .TP 10
 \fB\-bem\fP <\fIfilename\fP>
 This option operates like \fB\-be\fP except that it must be followed by the name
 of a file. For example:
 .sp
-  exim4 \-bem /tmp/testmessage
+  exim \-bem /tmp/testmessage
 .sp
 The file is read as a message (as if receiving a locally\-submitted non\-SMTP
 message) before any of the test expansions are done. Thus, message\-specific
@@ -206,7 +219,7 @@ If you want to test a system filter file, use \fB\-bF\fP instead of \fB\-bf\fP. 
 can use both \fB\-bF\fP and \fB\-bf\fP on the same command, in order to test a system
 filter and a user filter in the same run. For example:
 .sp
-  exim4 \-bF /system/filter \-bf /user/filter </test/message
+  exim \-bF /system/filter \-bf /user/filter </test/message
 .sp
 This is helpful when the system filter adds header lines or sets filter
 variables that are used by the user filter.
@@ -258,8 +271,8 @@ This option runs a fake SMTP session as if from the given IP address, using the
 standard input and output. The IP address may include a port number at the end,
 after a full stop. For example:
 .sp
-  exim4 \-bh 10.9.8.7.1234
-  exim4 \-bh fe80::a00:20ff:fe86:a061.5678
+  exim \-bh 10.9.8.7.1234
+  exim \-bh fe80::a00:20ff:fe86:a061.5678
 .sp
 When an IPv6 address is given, it is converted into canonical form. In the case
 of the second example above, the value of \fI$sender_host_address\fP after
@@ -417,7 +430,7 @@ main configuration options to be written to the standard output. The values
 of one or more specific options can be requested by giving their names as
 arguments, for example:
 .sp
-  exim4 \-bP qualify_domain hold_domains
+  exim \-bP qualify_domain hold_domains
 .sp
 However, any option setting that is preceded by the word "hide" in the
 configuration file is not shown in full, except to an admin user. For other
@@ -445,7 +458,7 @@ written directly into the spool directory.
 .sp
 If \fB\-bP\fP is followed by a name preceded by +, for example,
 .sp
-  exim4 \-bP +local_domains
+  exim \-bP +local_domains
 .sp
 it searches for a matching named list of any type (domain, host, address, or
 local part) and outputs what it finds.
@@ -454,7 +467,7 @@ If one of the words \fBrouter\fP, \fBtransport\fP, or \fBauthenticator\fP is giv
 followed by the name of an appropriate driver instance, the option settings for
 that driver are output. For example:
 .sp
-  exim4 \-bP transport local_delivery
+  exim \-bP transport local_delivery
 .sp
 The generic driver options are output first, followed by the driver's private
 options. A list of the names of drivers of a particular type can be obtained by
@@ -516,6 +529,10 @@ This option counts the number of messages in the queue, and writes the total
 to the standard output. It is restricted to admin users, unless
 \fBqueue_list_requires_admin\fP is set false.
 .TP 10
+\fB\-bpi\fP
+This option operates like \fB\-bp\fP, but only outputs message ids
+(one per line).
+.TP 10
 \fB\-bpr\fP
 This option operates like \fB\-bp\fP, but the output is not sorted into
 chronological order of message arrival. This can speed it up when there are
@@ -524,6 +541,9 @@ going to be post\-processed in a way that doesn't need the sorting.
 .TP 10
 \fB\-bpra\fP
 This option is a combination of \fB\-bpr\fP and \fB\-bpa\fP.
+.TP 10
+\fB\-bpri\fP
+This option is a combination of \fB\-bpr\fP and \fB\-bpi\fP.
 .TP 10
 \fB\-bpru\fP
 This option is a combination of \fB\-bpr\fP and \fB\-bpu\fP.
@@ -539,7 +559,7 @@ This option is for testing retry rules, and it must be followed by up to three
 arguments. It causes Exim to look for a retry rule that matches the values
 and to write it to the standard output. For example:
 .sp
-  exim4 \-brt bach.comp.mus.example
+  exim \-brt bach.comp.mus.example
   Retry rule: *.comp.mus.example  F,2h,15m; F,4d,30m;
 .sp
  The first
@@ -552,7 +572,7 @@ rule is found that matches the host, one that matches the mail domain is
 sought. Finally, an argument that is the name of a specific delivery error, as
 used in setting up retry rules, can be given. For example:
 .sp
-  exim4 \-brt haydn.comp.mus.example quota_3d
+  exim \-brt haydn.comp.mus.example quota_3d
   Retry rule: *@haydn.comp.mus.example quota_3d  F,1h,15m
 .TP 10
 \fB\-brw\fP
@@ -655,7 +675,7 @@ doing such tests.
 .TP 10
 \fB\-bV\fP
 This option causes Exim to write the current version number, compilation
-number, and compilation date of the \fIexim4\fP binary to the standard output.
+number, and compilation date of the \fIexim\fP binary to the standard output.
 It also lists the DBM library that is being used, the optional modules (such as
 specific lookup types), the drivers that are included in the binary, and the
 name of the runtime configuration file that is in use.
@@ -683,7 +703,7 @@ If no arguments are given, Exim runs in an interactive manner, prompting with a
 right angle bracket for addresses to be verified.
 .sp
 Unlike the \fB\-be\fP test option, you cannot arrange for Exim to use the
-readline() function, because it is running as \fIexim4\fP and there are
+readline() function, because it is running as \fIexim\fP and there are
 security issues.
 .sp
 Verification differs from address testing (the \fB\-bt\fP option) in that routers
@@ -796,14 +816,14 @@ command line item. \fB\-D\fP can be used to set the value of a macro to the empt
 string, in which case the equals sign is optional. These two commands are
 synonymous:
 .sp
-  exim4 \-DABC  ...
-  exim4 \-DABC= ...
+  exim \-DABC  ...
+  exim \-DABC= ...
 .sp
 To include spaces in a macro definition item, quotes must be used. If you use
 quotes, spaces are permitted around the macro name and the equals sign. For
 example:
 .sp
-  exim4 '\-D ABC = something' ...
+  exim '\-D ABC = something' ...
 .sp
 \fB\-D\fP may be repeated up to 10 times on a command line.
 Only macro names up to 22 letters long can be set.
@@ -824,39 +844,70 @@ of debugging data, respectively. For example, \fB\-d+filter\fP adds filter
 debugging, whereas \fB\-d\-all+filter\fP selects only filter debugging. Note that
 no spaces are allowed in the debug setting. The available debugging categories
 are:
-.sp
-  acl             ACL interpretation
-  auth            authenticators
-  deliver         general delivery logic
-  dns             DNS lookups (see also resolver)
-  dnsbl           DNS black list (aka RBL) code
-  exec            arguments for execv() calls
-  expand          detailed debugging for string expansions
-  filter          filter handling
-  hints_lookup    hints data lookups
-  host_lookup     all types of name\-to\-IP address handling
-  ident           ident lookup
-  interface       lists of local interfaces
-  lists           matching things in lists
-  load            system load checks
-  local_scan      can be used by local_scan()
-  lookup          general lookup code and all lookups
-  memory          memory handling
-  noutf8          modifier: avoid UTF\-8 line\-drawing
-  pid             modifier: add pid to debug output lines
-  process_info    setting info for the process log
-  queue_run       queue runs
-  receive         general message reception logic
-  resolver        turn on the DNS resolver's debugging output
-  retry           retry handling
-  rewrite         address rewriting
-  route           address routing
-  timestamp       modifier: add timestamp to debug output lines
-  tls             TLS logic
-  transport       transports
-  uid             changes of uid/gid and looking up uid/gid
-  verify          address verification logic
-  all             almost all of the above (see below), and also \fB\-v\fP
+    acl
+ACL interpretation
+    auth
+authenticators
+    deliver
+general delivery logic
+    dns
+DNS lookups (see also resolver)
+    dnsbl
+DNS black list (aka RBL) code
+    exec
+arguments for execv() calls
+    expand
+detailed debugging for string expansions
+    filter
+filter handling
+    hints_lookup
+hints data lookups
+    host_lookup
+all types of name\-to\-IP address handling
+    ident
+ident lookup
+    interface
+lists of local interfaces
+    lists
+matching things in lists
+    load
+system load checks
+    local_scan
+can be used by local_scan()
+    lookup
+general lookup code and all lookups
+    memory
+memory handling
+    noutf8
+modifier: avoid UTF\-8 line\-drawing
+    pid
+modifier: add pid to debug output lines
+    process_info
+setting info for the process log
+    queue_run
+queue runs
+    receive
+general message reception logic
+    resolver
+turn on the DNS resolver's debugging output
+    retry
+retry handling
+    rewrite
+address rewriting"
+    route
+address routing
+    timestamp
+modifier: add timestamp to debug output lines
+    tls
+TLS logic
+    transport
+transports
+    uid
+changes of uid/gid and looking up uid/gid
+    verify
+address verification logic
+    all
+almost all of the above (see below), and also \fB\-v\fP
 .sp
 The all option excludes memory when used as +all, but includes it
 for \-all. The reason for this is that +all is something that people
@@ -880,6 +931,7 @@ run in parallel.
 The timestamp selector causes the current time to be inserted at the start
 of all debug output lines. This can be useful when trying to track down delays
 in processing.
+.sp
 The noutf8 selector disables the use of
 UTF\-8 line\-drawing characters to group related information.
 When disabled. ascii\-art is used instead.
@@ -938,8 +990,8 @@ never provoke a bounce. An empty sender can be specified either as an empty
 string, or as a pair of angle brackets with nothing between them, as in these
 examples of shell commands:
 .sp
-  exim4 \-f '<>' user@domain
-  exim4 \-f "" user@domain
+  exim \-f '<>' user@domain
+  exim \-f "" user@domain
 .sp
 In addition, the use of \fB\-f\fP is not restricted when testing a filter file
 with \fB\-bf\fP or when testing or verifying addresses using the \fB\-bt\fP or
@@ -976,9 +1028,11 @@ headers.)
 .TP 10
 \fB\-i\fP
 This option, which has the same effect as \fB\-oi\fP, specifies that a dot on a
-line by itself should not terminate an incoming, non\-SMTP message. I can find
-no documentation for this option in Solaris 2.4 Sendmail, but the \fImailx\fP
-command in Solaris 2.4 uses it. See also \fB\-ti\fP.
+line by itself should not terminate an incoming, non\-SMTP message.
+Solaris 2.4 (SunOS 5.4) Sendmail has a similar \fB\-i\fP processing option
+\fBhttps://docs.oracle.com/cd/E19457\-01/801\-6680\-1M/801\-6680\-1M.pdf\fP,
+p. 1M\-529), and therefore a \fB\-oi\fP command line option, which both are used
+by its \fImailx\fP command.
 .TP 10
 \fB\-L\fP <\fItag\fP>
 This option is equivalent to setting \fBsyslog_processname\fP in the config
@@ -1014,7 +1068,7 @@ id, and the remaining ones must be email addresses. However, if the message is
 active (in the middle of a delivery attempt), it is not altered. This option
 can be used only by an admin user.
 .TP 10
-\fB\-MC\fP <\fItransport\fP> <\fIhostname\fP> <\fIsequence number\fP> <\fImessage id\fP>
+\fB\-MC\fP <\fItransport\fP> <\fIhostname\fP> <\fIhost IP\fP> <\fIsequence number\fP> <\fImessage id\fP>
 This option is not intended for use by external callers. It is used internally
 by Exim to invoke another instance of itself to deliver a waiting message using
 an existing SMTP connection, which is passed as the standard input. This must be the final option, and the caller
@@ -1030,6 +1084,11 @@ This option is not intended for use by external callers. It is used internally
 by Exim in conjunction with the \fB\-MC\fP option. It signifies that the
 remote host supports the ESMTP DSN extension.
 .TP 10
+\fB\-MCd\fP
+This option is not intended for use by external callers. It is used internally
+by Exim in conjunction with the \fB\-d\fP option
+to pass on an information string on the purpose of the process.
+.TP 10
 \fB\-MCG\fP <\fIqueue name\fP>
 This option is not intended for use by external callers. It is used internally
 by Exim in conjunction with the \fB\-MC\fP option. It signifies that an
@@ -1040,10 +1099,23 @@ This option is not intended for use by external callers. It is used internally
 by Exim in conjunction with the \fB\-MC\fP option. It signifies that a
 remote host supports the ESMTP CHUNKING extension.
 .TP 10
+\fB\-MCL\fP
+This option is not intended for use by external callers. It is used internally
+by Exim in conjunction with the \fB\-MC\fP option. It signifies that the server to
+which Exim is connected advertised limits on numbers of mails, recipients or
+recipient domains.
+The limits are given by the following three arguments.
+.TP 10
 \fB\-MCP\fP
 This option is not intended for use by external callers. It is used internally
 by Exim in conjunction with the \fB\-MC\fP option. It signifies that the server to
 which Exim is connected supports pipelining.
+.TP 10
+\fB\-MCp\fP
+This option is not intended for use by external callers. It is used internally
+by Exim in conjunction with the \fB\-MC\fP option. It signifies that the connection
+t a remote server is via a SOCKS proxy, using addresses and ports given by
+the following four arguments.
 .TP 10
 \fB\-MCQ\fP <\fIprocess id\fP> <\fIpipe fd\fP>
 This option is not intended for use by external callers. It is used internally
@@ -1053,16 +1125,28 @@ together with the file descriptor number of an open pipe. Closure of the pipe
 signals the final completion of the sequence of processes that are passing
 messages through the same SMTP connection.
 .TP 10
+\fB\-MCq\fP <\fIrecipient address\fP> <\fIsize\fP>
+This option is not intended for use by external callers. It is used internally
+by Exim to implement quota checking for local users.
+.TP 10
 \fB\-MCS\fP
 This option is not intended for use by external callers. It is used internally
 by Exim in conjunction with the \fB\-MC\fP option, and passes on the fact that the
-SMTP SIZE option should be used on messages delivered down the existing
+ESMTP SIZE option should be used on messages delivered down the existing
 connection.
 .TP 10
 \fB\-MCT\fP
 This option is not intended for use by external callers. It is used internally
 by Exim in conjunction with the \fB\-MC\fP option, and passes on the fact that the
 host to which Exim is connected supports TLS encryption.
+.TP 10
+\fB\-MCr\fP <\fISNI\fP>
+\fB\-MCs\fP <\fISNI\fP>
+These options are not intended for use by external callers. It is used internally
+by Exim in conjunction with the \fB\-MCt\fP option, and passes on the fact that
+a TLS Server Name Indication was sent as part of the channel establishment.
+The argument gives the SNI string.
+The "r" variant indicates a DANE\-verified connection.
 .TP 10
 \fB\-MCt\fP <\fIIP address\fP> <\fIport\fP> <\fIcipher\fP>
 This option is not intended for use by external callers. It is used internally
@@ -1103,9 +1187,17 @@ user.
 This option requests Exim to give up trying to deliver the listed messages,
 including any that are frozen. However, if any of the messages are active,
 their status is not altered. For non\-bounce messages, a delivery error message
-is sent to the sender, containing the text "cancelled by administrator".
+is sent to the sender.
 Bounce messages are just discarded. This option can be used only by an admin
 user.
+.TP 10
+\fB\-MG\fP <\fIqueue name\fP> <\fImessage id\fP> <\fImessage id\fP> ...
+This option requests that each listed message be moved from its current
+queue to the given named queue.
+The destination queue name argument is required, but can be an empty
+string to define the default queue.
+If the messages are not currently located in the default queue,
+a \fB\-qG<name>\fP option will be required to define the source queue.
 .TP 10
 \fB\-Mmad\fP <\fImessage id\fP> <\fImessage id\fP> ...
 This option requests Exim to mark all the recipient addresses in the messages
@@ -1161,8 +1253,9 @@ This option causes the contents of the message log spool file to be written to
 the standard output. This option can be used only by an admin user.
 .TP 10
 \fB\-m\fP
-This is apparently a synonym for \fB\-om\fP that is accepted by Sendmail, so Exim
-treats it that way too.
+This is a synonym for \fB\-om\fP that is accepted by Sendmail
+(\fBhttps://docs.oracle.com/cd/E19457\-01/801\-6680\-1M/801\-6680\-1M.pdf\fP
+p. 1M\-258), so Exim treats it that way too.
 .TP 10
 \fB\-N\fP
 This is a debugging option that inhibits delivery of a message at the transport
@@ -1315,12 +1408,12 @@ other circumstances, they are ignored unless the caller is trusted.
 The \fB\-oMa\fP option sets the sender host address. This may include a port
 number at the end, after a full stop (period). For example:
 .sp
-  exim4 \-bs \-oMa 10.9.8.7.1234
+  exim \-bs \-oMa 10.9.8.7.1234
 .sp
 An alternative syntax is to enclose the IP address in square brackets,
 followed by a colon and the port number:
 .sp
-  exim4 \-bs \-oMa [10.9.8.7]:1234
+  exim \-bs \-oMa [10.9.8.7]:1234
 .sp
 The IP address is placed in the \fI$sender_host_address\fP variable, and the
 port, if present, in \fI$sender_host_port\fP. If both \fB\-oMa\fP and \fB\-bh\fP
@@ -1403,6 +1496,12 @@ written. When \fB\-oX\fP is used with \fB\-bd\fP, or when \fB\-q\fP with a time 
 without \fB\-bd\fP, this is the only way of causing Exim to write a pid file,
 because in those cases, the normal pid file is not used.
 .TP 10
+\fB\-oPX\fP
+This option is not intended for general use.
+The daemon uses it when terminating due to a SIGTEM, possibly in
+combination with \fB\-oP\fP <\fIpath\fP>.
+It causes the pid file to be removed.
+.TP 10
 \fB\-or\fP <\fItime\fP>
 This option sets a timeout value for incoming non\-SMTP messages. If it is not
 set, Exim will wait forever for the standard input. The value can also be set
@@ -1420,6 +1519,26 @@ This option has exactly the same effect as \fB\-v\fP.
 This option is relevant only when the \fB\-bd\fP (start listening daemon) option
 is also given. It controls which ports and interfaces the daemon uses. When \fB\-oX\fP is used to start a daemon, no pid
 file is written unless \fB\-oP\fP is also present to specify a pid filename.
+.TP 10
+\fB\-oY\fP
+This option controls the creation of an inter\-process communications endpoint
+by the Exim daemon.
+It is only relevant when the \fB\-bd\fP (start listening daemon) option is also
+given.
+Normally the daemon creates this socket, unless a \fB\-oX\fP and \fBno\fP \fB\-oP\fP
+option is also present.
+If this option is given then the socket will not be created.  This is required
+if the system is running multiple daemons, in which case it should
+be used on all.
+The features supported by the socket will not be available in such cases.
+.sp
+The socket is currently used for
+.sp
+fast ramp\-up of queue runner processes
+.sp
+caching compiled regexes
+.sp
+obtaining a current queue size
 .TP 10
 \fB\-pd\fP
 This option applies when an embedded Perl interpreter is linked with Exim. It overrides the setting of the \fBperl_at_start\fP
@@ -1486,13 +1605,27 @@ stage, the queue is scanned as if the \fBqueue_smtp_domains\fP option matched
 every domain. Addresses are routed, local deliveries happen, but no remote
 transports are run.
 .sp
+Performance will be best if the \fBqueue_run_in_order\fP option is false.
+If that is so and
+the \fBqueue_fast_ramp\fP option is true
+and a daemon\-notifier socket is available
+then in the first phase of the run,
+once a threshold number of messages are routed for a given host,
+a delivery process is forked in parallel with the rest of the scan.
+.sp
 The hints database that remembers which messages are waiting for specific hosts
-is updated, as if delivery to those hosts had been deferred. After this is
-complete, a second, normal queue scan happens, with routing and delivery taking
-place as normal. Messages that are routed to the same host should mostly be
+is updated, as if delivery to those hosts had been deferred.
+.sp
+After the first queue scan complete,
+a second, normal queue scan is done, with routing and delivery taking
+place as normal.
+Messages that are routed to the same host should mostly be
 delivered down a single SMTP
 connection because of the hints that were set up during the first queue scan.
-This option may be useful for hosts that are connected to the Internet
+.sp
+Two\-phase queue runs should be used on systems which, even intermittently,
+have a large queue (such as mailing\-list operators).
+They may also be useful for hosts that are connected to the Internet
 intermittently.
 .TP 10
 \fB\-q[q]i...\fP
@@ -1526,22 +1659,22 @@ If other commandline options specify an action, a \fI\-qG<name>\fP option
 will specify a queue to operate on.
 For example:
 .sp
-  exim4 \-bp \-qGquarantine
+  exim \-bp \-qGquarantine
   mailq \-qGquarantine
-  exim4 \-qGoffpeak \-Rf @special.domain.example
+  exim \-qGoffpeak \-Rf @special.domain.example
 .TP 10
 \fB\-q\fP<\fIqflags\fP> <\fIstart id\fP> <\fIend id\fP>
 When scanning the queue, Exim can be made to skip over messages whose ids are
 lexically less than a given value by following the \fB\-q\fP option with a
 starting message id. For example:
 .sp
-  exim4 \-q 0t5C6f\-0000c8\-00
+  exim \-q 0t5C6f\-0000c8\-00
 .sp
 Messages that arrived earlier than 0t5C6f\-0000c8\-00 are not inspected. If a
 second message id is given, messages whose ids are lexically greater than it
 are also skipped. If the same id is given twice, for example,
 .sp
-  exim4 \-q 0t5C6f\-0000c8\-00 0t5C6f\-0000c8\-00
+  exim \-q 0t5C6f\-0000c8\-00 0t5C6f\-0000c8\-00
 .sp
 just one delivery process is started, for that message. This differs from
 \fB\-M\fP in that retry data is respected, and it also differs from \fB\-Mc\fP in
@@ -1557,10 +1690,15 @@ starting a queue runner process at intervals specified by the given time value. 
 single daemon process handles both functions. A common way of starting up a
 combined daemon at system boot time is to use a command such as
 .sp
-  /usr/sbin/exim4 \-bd \-q30m
+  /usr/exim/bin/exim \-bd \-q30m
 .sp
 Such a daemon listens for incoming SMTP calls, and also starts a queue runner
 process every 30 minutes.
+.sp
+It is possible to set up runners for multiple named queues within one daemon,
+For example:
+.sp
+  exim \-qGhipri/2m \-q10m \-qqGmailinglist/1h
 .sp
 When a daemon is started by \fB\-q\fP with a time value, but without \fB\-bd\fP, no
 pid file is written unless one is explicitly requested by the \fB\-oP\fP option.
@@ -1588,7 +1726,7 @@ regular expression; otherwise it is a literal string.
 If you want to do periodic queue runs for messages with specific recipients,
 you can combine \fB\-R\fP with \fB\-q\fP and a time value. For example:
 .sp
-  exim4 \-q25m \-R @special.domain.example
+  exim \-q25m \-R @special.domain.example
 .sp
 This example does a queue run for messages with recipients in the given domain
 every 25 minutes. Any additional flags that are specified with \fB\-q\fP are
@@ -1704,26 +1842,6 @@ under most shells.
 .sp
 .
 .SH "SEE ALSO"
-.BR exicyclog (8),
-.BR exigrep (8),
-.BR exim_checkaccess (8),
-.BR exim_convert4r4 (8),
-.BR exim_db (8),
-.BR exim_dbmbuild (8),
-.BR exim_lock (8),
-.BR eximon (8),
-.BR exinext (8),
-.BR exiqgrep (8),
-.BR exiqsumm (8),
-.BR exiwhat (8),
-.BR update\-exim4.conf (8),
-.BR update\-exim4defaults (8),
-/usr/share/doc/exim4\-base/,
-/usr/share/doc/exim4\-base/README.Debian.[gz|html].
 .rs
 .sp
 The full Exim specification, the Exim book, and the Exim wiki.
-
-.SH AUTHOR
-This manual page was provided with the upstream Exim source package.
-It was enhanced for the Debian GNU/Linux system.

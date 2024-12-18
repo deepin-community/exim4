@@ -42,7 +42,6 @@ install-stamp: build
 	dh_installdirs
 
 	install -m 755 debian/debconf/update-exim4.conf debian/exim4-config/usr/sbin
-	install -m 755 $(DEBIAN)/update-exim4defaults $(DEBIAN)/exim4-config/usr/sbin
 	# install -m644 debian/debconf/exim4.conf.template debian/exim4-config/etc/exim4
 
 	# ship a copy in examples

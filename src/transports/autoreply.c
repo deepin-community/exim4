@@ -2,11 +2,15 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "../exim.h"
+
+#ifdef TRANSPORT_AUTOREPLY	/* Remainder of file */
 #include "autoreply.h"
 
 
@@ -16,44 +20,27 @@ order (note that "_" comes before the lower case letters). Those starting
 with "*" are not settable by the user but are used by the option-reading
 software for alternative value types. Some options are publicly visible and so
 are stored in the driver instance block. These are flagged with opt_public. */
+#define LOFF(field) OPT_OFF(autoreply_transport_options_block, field)
 
 optionlist autoreply_transport_options[] = {
-  { "bcc",               opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, bcc) },
-  { "cc",                opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, cc) },
-  { "file",              opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, file) },
-  { "file_expand",     opt_bool,
-      (void *)offsetof(autoreply_transport_options_block, file_expand) },
-  { "file_optional",     opt_bool,
-      (void *)offsetof(autoreply_transport_options_block, file_optional) },
-  { "from",              opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, from) },
-  { "headers",           opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, headers) },
-  { "log",               opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, logfile) },
-  { "mode",              opt_octint,
-      (void *)offsetof(autoreply_transport_options_block, mode) },
-  { "never_mail",        opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, never_mail) },
-  { "once",              opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, oncelog) },
-  { "once_file_size",    opt_int,
-      (void *)offsetof(autoreply_transport_options_block, once_file_size) },
-  { "once_repeat",       opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, once_repeat) },
-  { "reply_to",          opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, reply_to) },
-  { "return_message",    opt_bool,
-      (void *)offsetof(autoreply_transport_options_block, return_message) },
-  { "subject",           opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, subject) },
-  { "text",              opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, text) },
-  { "to",                opt_stringptr,
-      (void *)offsetof(autoreply_transport_options_block, to) },
+  { "bcc",               opt_stringptr,	LOFF(bcc) },
+  { "cc",                opt_stringptr,	LOFF(cc) },
+  { "file",              opt_stringptr,	LOFF(file) },
+  { "file_expand",     opt_bool,	LOFF(file_expand) },
+  { "file_optional",     opt_bool,	LOFF(file_optional) },
+  { "from",              opt_stringptr,	LOFF(from) },
+  { "headers",           opt_stringptr,	LOFF(headers) },
+  { "log",               opt_stringptr,	LOFF(logfile) },
+  { "mode",              opt_octint,	LOFF(mode) },
+  { "never_mail",        opt_stringptr,	LOFF(never_mail) },
+  { "once",              opt_stringptr,	LOFF(oncelog) },
+  { "once_file_size",    opt_int,	LOFF(once_file_size) },
+  { "once_repeat",       opt_stringptr,	LOFF(once_repeat) },
+  { "reply_to",          opt_stringptr,	LOFF(reply_to) },
+  { "return_message",    opt_bool,	LOFF(return_message) },
+  { "subject",           opt_stringptr,	LOFF(subject) },
+  { "text",              opt_stringptr,	LOFF(text) },
+  { "to",                opt_stringptr,	LOFF(to) },
 };
 
 /* Size of the options list. An extern variable has to be used so that its
@@ -73,27 +60,11 @@ BOOL autoreply_transport_entry(transport_instance *tblock, address_item *addr) {
 #else   /*!MACRO_PREDEF*/
 
 
-/* Default private options block for the autoreply transport. */
+/* Default private options block for the autoreply transport.
+All non-mentioned lements zero/null/false. */
 
 autoreply_transport_options_block autoreply_transport_option_defaults = {
-  NULL,           /* from */
-  NULL,           /* reply_to */
-  NULL,           /* to */
-  NULL,           /* cc */
-  NULL,           /* bcc */
-  NULL,           /* subject */
-  NULL,           /* headers */
-  NULL,           /* text */
-  NULL,           /* file */
-  NULL,           /* logfile */
-  NULL,           /* oncelog */
-  NULL,           /* once_repeat */
-  NULL,           /* never_mail */
-  0600,           /* mode */
-  0,              /* once_file_size */
-  FALSE,          /* file_expand */
-  FALSE,          /* file_optional */
-  FALSE           /* return message */
+  .mode = 0600,
 };
 
 
@@ -154,10 +125,9 @@ Returns:     expanded string if expansion succeeds;
 static uschar *
 checkexpand(uschar *s, address_item *addr, uschar *name, int type)
 {
-uschar *t;
 uschar *ss = expand_string(s);
 
-if (ss == NULL)
+if (!ss)
   {
   addr->transport_return = FAIL;
   addr->message = string_sprintf("Expansion of \"%s\" failed in %s transport: "
@@ -165,7 +135,7 @@ if (ss == NULL)
   return NULL;
   }
 
-if (type != cke_text) for (t = ss; *t != 0; t++)
+if (type != cke_text) for (uschar * t = ss; *t != 0; t++)
   {
   int c = *t;
   const uschar * sp;
@@ -192,18 +162,21 @@ return ss;
 list. Any that are found are removed.
 
 Arguments:
-  listptr     points to the list of addresses
+  list        list of addresses to be checked
   never_mail  an address list, already expanded
 
-Returns:      nothing
+Returns:      edited replacement address list, or NULL, or original
 */
 
-static void
-check_never_mail(uschar **listptr, const uschar *never_mail)
+static uschar *
+check_never_mail(uschar * list, const uschar * never_mail)
 {
-uschar *s = *listptr;
+rmark reset_point = store_mark();
+uschar * newlist = string_copy(list);
+uschar * s = newlist;
+BOOL hit = FALSE;
 
-while (*s != 0)
+while (*s)
   {
   uschar *error, *next;
   uschar *e = parse_find_address_end(s, FALSE);
@@ -220,7 +193,7 @@ while (*s != 0)
   /* If there is some kind of syntax error, just give up on this header
   line. */
 
-  if (next == NULL) break;
+  if (!next) break;
 
   /* See if the address is on the never_mail list */
 
@@ -237,6 +210,7 @@ while (*s != 0)
     {
     DEBUG(D_transport)
       debug_printf("discarding recipient %s (matched never_mail)\n", next);
+    hit = TRUE;
     if (terminator == ',') e++;
     memmove(s, e, Ustrlen(e) + 1);
     }
@@ -247,18 +221,30 @@ while (*s != 0)
     }
   }
 
+/* If no addresses were removed, retrieve the memory used and return
+the original. */
+
+if (!hit)
+  {
+  store_reset(reset_point);
+  return list;
+  }
+
 /* Check to see if we removed the last address, leaving a terminating comma
 that needs to be removed */
 
-s = *listptr + Ustrlen(*listptr);
-while (s > *listptr && (isspace(s[-1]) || s[-1] == ',')) s--;
-*s = 0;
+s = newlist + Ustrlen(newlist);
+while (s > newlist && (isspace(s[-1]) || s[-1] == ',')) s--;
+*s = '\0';
 
-/* Check to see if there any addresses left; if not, set NULL */
+/* Check to see if there any addresses left; if not, return NULL */
 
-s = *listptr;
-while (s != 0 && isspace(*s)) s++;
-if (*s == 0) *listptr = NULL;
+s = newlist;
+if (Uskip_whitespace(&s))
+  return newlist;
+
+store_reset(reset_point);
+return NULL;
 }
 
 
@@ -280,7 +266,7 @@ int fd, pid, rc;
 int cache_fd = -1;
 int cache_size = 0;
 int add_size = 0;
-EXIM_DB *dbm_file = NULL;
+EXIM_DB * dbm_file = NULL;
 BOOL file_expand, return_message;
 uschar *from, *reply_to, *to, *cc, *bcc, *subject, *headers, *text, *file;
 uschar *logfile, *oncelog;
@@ -308,7 +294,7 @@ from that block. It has typically been set up by a mail filter processing
 router. Otherwise, the data must be supplied by this transport, and
 it has to be expanded here. */
 
-if (addr->reply != NULL)
+if (addr->reply)
   {
   DEBUG(D_transport) debug_printf("taking data from address\n");
   from = addr->reply->from;
@@ -329,20 +315,21 @@ if (addr->reply != NULL)
   }
 else
   {
-  uschar *oncerepeat = ob->once_repeat;
+  uschar * oncerepeat;
 
   DEBUG(D_transport) debug_printf("taking data from transport\n");
-  from = ob->from;
-  reply_to = ob->reply_to;
-  to = ob->to;
-  cc = ob->cc;
-  bcc = ob->bcc;
-  subject = ob->subject;
-  headers = ob->headers;
-  text = ob->text;
-  file = ob->file;
-  logfile = ob->logfile;
-  oncelog = ob->oncelog;
+  GET_OPTION("once_repeat");	oncerepeat = ob->once_repeat;
+  GET_OPTION("from"); 		from = ob->from;
+  GET_OPTION("reply_to");	reply_to = ob->reply_to;
+  GET_OPTION("to");		to = ob->to;
+  GET_OPTION("cc");		cc = ob->cc;
+  GET_OPTION("bcc");		bcc = ob->bcc;
+  GET_OPTION("subject");	subject = ob->subject;
+  GET_OPTION("headers"); 	headers = ob->headers;
+  GET_OPTION("text");		text = ob->text;
+  GET_OPTION("file");		file = ob->file;
+  GET_OPTION("log");		logfile = ob->logfile;
+  GET_OPTION("once");		oncelog = ob->oncelog;
   file_expand = ob->file_expand;
   return_message = ob->return_message;
 
@@ -362,16 +349,13 @@ else
     return FALSE;
 
   if (oncerepeat)
-    {
-    once_repeat_sec = readconf_readtime(oncerepeat, 0, FALSE);
-    if (once_repeat_sec < 0)
+    if ((once_repeat_sec = readconf_readtime(oncerepeat, 0, FALSE)) < 0)
       {
       addr->transport_return = FAIL;
       addr->message = string_sprintf("Invalid time value \"%s\" for "
         "\"once_repeat\" in %s transport", oncerepeat, tblock->name);
       return FALSE;
       }
-    }
   }
 
 /* If the never_mail option is set, we have to scan all the recipients and
@@ -389,9 +373,9 @@ if (ob->never_mail)
     return FALSE;
     }
 
-  if (to) check_never_mail(&to, never_mail);
-  if (cc) check_never_mail(&cc, never_mail);
-  if (bcc) check_never_mail(&bcc, never_mail);
+  if (to) to = check_never_mail(to, never_mail);
+  if (cc) cc = check_never_mail(cc, never_mail);
+  if (bcc) bcc = check_never_mail(bcc, never_mail);
 
   if (!to && !cc && !bcc)
     {
@@ -419,25 +403,34 @@ recipient, the effect might not be quite as envisaged. If once_file_size is
 set, instead of a dbm file, we use a regular file containing a circular buffer
 recipient cache. */
 
-if (oncelog && *oncelog != 0 && to)
+if (oncelog && *oncelog && to)
   {
   time_t then = 0;
+
+  if (is_tainted(oncelog))
+    {
+    addr->transport_return = DEFER;
+    addr->basic_errno = EACCES;
+    addr->message = string_sprintf("Tainted '%s' (once file for %s transport)"
+      " not permitted", oncelog, tblock->name);
+    goto END_OFF;
+    }
 
   /* Handle fixed-size cache file. */
 
   if (ob->once_file_size > 0)
     {
-    uschar * p, * nextp;
+    uschar * nextp;
     struct stat statbuf;
-    cache_fd = Uopen(oncelog, O_CREAT|O_RDWR, ob->mode);
 
+    cache_fd = Uopen(oncelog, O_CREAT|O_RDWR, ob->mode);
     if (cache_fd < 0 || fstat(cache_fd, &statbuf) != 0)
       {
       addr->transport_return = DEFER;
+      addr->basic_errno = errno;
       addr->message = string_sprintf("Failed to %s \"once\" file %s when "
         "sending message from %s transport: %s",
-        (cache_fd < 0)? "open" : "stat", oncelog, tblock->name,
-          strerror(errno));
+        cache_fd < 0 ? "open" : "stat", oncelog, tblock->name, strerror(errno));
       goto END_OFF;
       }
 
@@ -447,7 +440,7 @@ if (oncelog && *oncelog != 0 && to)
 
     cache_size = statbuf.st_size;
     add_size = sizeof(time_t) + Ustrlen(to) + 1;
-    cache_buff = store_get(cache_size + add_size);
+    cache_buff = store_get(cache_size + add_size, oncelog);
 
     if (read(cache_fd, cache_buff, cache_size) != cache_size)
       {
@@ -464,7 +457,7 @@ if (oncelog && *oncelog != 0 && to)
     zero. If we find a match, put the time into "then", and the place where it
     was found into "cache_time". Otherwise, "then" is left at zero. */
 
-    for (p = cache_buff; p < cache_buff + cache_size; p = nextp)
+    for (uschar * p = cache_buff; p < cache_buff + cache_size; p = nextp)
       {
       uschar *s = p + sizeof(time_t);
       nextp = s + Ustrlen(s) + 1;
@@ -482,39 +475,26 @@ if (oncelog && *oncelog != 0 && to)
   else
     {
     EXIM_DATUM key_datum, result_datum;
-    uschar * dirname = string_copy(oncelog);
-    uschar * s;
+    uschar * s = Ustrrchr(oncelog, '/');
+    uschar * dirname = s ? string_copyn(oncelog, s - oncelog) : NULL;
 
-    if ((s = Ustrrchr(dirname, '/'))) *s = '\0';
-    EXIM_DBOPEN(oncelog, dirname, O_RDWR|O_CREAT, ob->mode, &dbm_file);
-    if (!dbm_file)
+    if (!(dbm_file = exim_dbopen(oncelog, dirname, O_RDWR|O_CREAT, ob->mode)))
       {
       addr->transport_return = DEFER;
+      addr->basic_errno = errno;
       addr->message = string_sprintf("Failed to open %s file %s when sending "
         "message from %s transport: %s", EXIM_DBTYPE, oncelog, tblock->name,
         strerror(errno));
       goto END_OFF;
       }
 
-    EXIM_DATUM_INIT(key_datum);        /* Some DBM libraries need datums */
-    EXIM_DATUM_INIT(result_datum);     /* to be cleared */
-    EXIM_DATUM_DATA(key_datum) = CS to;
-    EXIM_DATUM_SIZE(key_datum) = Ustrlen(to) + 1;
+    exim_datum_init(&key_datum);        /* Some DBM libraries need datums */
+    exim_datum_init(&result_datum);     /* to be cleared */
+    exim_datum_data_set(&key_datum, (void *) to);
+    exim_datum_size_set(&key_datum, Ustrlen(to) + 1);
 
-    if (EXIM_DBGET(dbm_file, key_datum, result_datum))
-      {
-      /* If the datum size is that of a binary time, we are in the new world
-      where messages are sent periodically. Otherwise the file is an old one,
-      where the datum was filled with a tod_log time, which is assumed to be
-      different in size. For that, only one message is ever sent. This change
-      introduced at Exim 3.00. In a couple of years' time the test on the size
-      can be abolished. */
-
-      if (EXIM_DATUM_SIZE(result_datum) == sizeof(time_t))
-        memcpy(&then, EXIM_DATUM_DATA(result_datum), sizeof(time_t));
-      else
-        then = now;
-      }
+    if (exim_dbget(dbm_file, &key_datum, &result_datum))
+      memcpy(&then, exim_datum_data_get(&result_datum), sizeof(time_t));
     }
 
   /* Either "then" is set zero, if no message has yet been sent, or it
@@ -523,6 +503,15 @@ if (oncelog && *oncelog != 0 && to)
   if (then != 0 && (once_repeat_sec <= 0 || now - then < once_repeat_sec))
     {
     int log_fd;
+    if (is_tainted(logfile))
+      {
+      addr->transport_return = DEFER;
+      addr->basic_errno = EACCES;
+      addr->message = string_sprintf("Tainted '%s' (logfile for %s transport)"
+	" not permitted", logfile, tblock->name);
+      goto END_OFF;
+      }
+
     DEBUG(D_transport) debug_printf("message previously sent to %s%s\n", to,
       (once_repeat_sec > 0)? " and repeat time not reached" : "");
     log_fd = logfile ? Uopen(logfile, O_WRONLY|O_APPEND|O_CREAT, ob->mode) : -1;
@@ -544,13 +533,20 @@ if (oncelog && *oncelog != 0 && to)
   }
 
 /* We are going to send a message. Ensure any requested file is available. */
-
 if (file)
   {
-  ff = Ufopen(file, "rb");
-  if (!ff && !ob->file_optional)
+  if (is_tainted(file))
     {
     addr->transport_return = DEFER;
+    addr->basic_errno = EACCES;
+    addr->message = string_sprintf("Tainted '%s' (file for %s transport)"
+      " not permitted", file, tblock->name);
+    return FALSE;
+    }
+  if (!(ff = Ufopen(file, "rb")) && !ob->file_optional)
+    {
+    addr->transport_return = DEFER;
+    addr->basic_errno = errno;
     addr->message = string_sprintf("Failed to open file %s when sending "
       "message from %s transport: %s", file, tblock->name, strerror(errno));
     return FALSE;
@@ -559,17 +555,16 @@ if (file)
 
 /* Make a subprocess to send the message */
 
-pid = child_open_exim(&fd);
-
-/* Creation of child failed; defer this delivery. */
-
-if (pid < 0)
+if ((pid = child_open_exim(&fd, US"autoreply")) < 0)
   {
+  /* Creation of child failed; defer this delivery. */
+
   addr->transport_return = DEFER;
+  addr->basic_errno = errno;
   addr->message = string_sprintf("Failed to create child process to send "
     "message from %s transport: %s", tblock->name, strerror(errno));
   DEBUG(D_transport) debug_printf("%s\n", addr->message);
-  if (dbm_file) EXIM_DBCLOSE(dbm_file);
+  if (dbm_file) exim_dbclose(dbm_file);
   return FALSE;
   }
 
@@ -595,57 +590,11 @@ for (h = header_list; h; h = h->next)
 if (h)
   {
   message_id = Ustrchr(h->text, ':') + 1;
-  while (isspace(*message_id)) message_id++;
+  Uskip_whitespace(&message_id);
   fprintf(fp, "In-Reply-To: %s", message_id);
   }
 
-/* Generate a References header if there is at least one of Message-ID:,
-References:, or In-Reply-To: (see RFC 2822). */
-
-for (h = header_list; h; h = h->next)
-  if (h->type != htype_old && strncmpic(US"References:", h->text, 11) == 0)
-    break;
-
-if (!h)
-  for (h = header_list; h; h = h->next)
-    if (h->type != htype_old && strncmpic(US"In-Reply-To:", h->text, 12) == 0)
-      break;
-
-/* We limit the total length of references.  Although there is no fixed
-limit, some systems do not like headers growing beyond recognition.
-Keep the first message ID for the thread root and the last few for
-the position inside the thread, up to a maximum of 12 altogether. */
-
-if (h || message_id)
-  {
-  fprintf(fp, "References:");
-  if (h)
-    {
-    uschar *s, *id, *error;
-    uschar *referenced_ids[12];
-    int reference_count = 0;
-    int i;
-
-    s = Ustrchr(h->text, ':') + 1;
-    f.parse_allow_group = FALSE;
-    while (*s != 0 && (s = parse_message_id(s, &id, &error)) != NULL)
-      {
-      if (reference_count == nelem(referenced_ids))
-        {
-        memmove(referenced_ids + 1, referenced_ids + 2,
-           sizeof(referenced_ids) - 2*sizeof(uschar *));
-        referenced_ids[reference_count - 1] = id;
-        }
-      else referenced_ids[reference_count++] = id;
-      }
-    for (i = 0; i < reference_count; ++i) fprintf(fp, " %s", referenced_ids[i]);
-    }
-
-  /* The message id will have a newline on the end of it. */
-
-  if (message_id) fprintf(fp, " %s", message_id);
-  else fprintf(fp, "\n");
-  }
+moan_write_references(fp, message_id);
 
 /* Add an Auto-Submitted: header */
 
@@ -687,12 +636,11 @@ limit if we are returning the body. */
 
 if (return_message)
   {
-  uschar *rubric = (tblock->headers_only)?
-    US"------ This is a copy of the message's header lines.\n"
-    : (tblock->body_only)?
-    US"------ This is a copy of the body of the message, without the headers.\n"
-    :
-    US"------ This is a copy of the message, including all the headers.\n";
+  uschar *rubric = tblock->headers_only
+    ? US"------ This is a copy of the message's header lines.\n"
+    : tblock->body_only
+    ? US"------ This is a copy of the body of the message, without the headers.\n"
+    : US"------ This is a copy of the message, including all the headers.\n";
   transport_ctx tctx = {
     .u = {.fd = fileno(fp)},
     .tblock = tblock,
@@ -777,18 +725,18 @@ if (cache_fd >= 0)
 else if (dbm_file)
   {
   EXIM_DATUM key_datum, value_datum;
-  EXIM_DATUM_INIT(key_datum);          /* Some DBM libraries need to have */
-  EXIM_DATUM_INIT(value_datum);        /* cleared datums. */
-  EXIM_DATUM_DATA(key_datum) = CS to;
-  EXIM_DATUM_SIZE(key_datum) = Ustrlen(to) + 1;
+  exim_datum_init(&key_datum);          /* Some DBM libraries need to have */
+  exim_datum_init(&value_datum);        /* cleared datums. */
+  exim_datum_data_set(&key_datum, to);
+  exim_datum_size_set(&key_datum, Ustrlen(to) + 1);
 
   /* Many OS define the datum value, sensibly, as a void *. However, there
   are some which still have char *. By casting this address to a char * we
   can avoid warning messages from the char * systems. */
 
-  EXIM_DATUM_DATA(value_datum) = CS (&now);
-  EXIM_DATUM_SIZE(value_datum) = (int)sizeof(time_t);
-  EXIM_DBPUT(dbm_file, key_datum, value_datum);
+  exim_datum_data_set(&value_datum, &now);
+  exim_datum_size_set(&value_datum, sizeof(time_t));
+  exim_dbput(dbm_file, &key_datum, &value_datum);
   }
 
 /* If sending failed, defer to try again - but if once is set the next
@@ -823,48 +771,26 @@ if (logfile)
   int log_fd = Uopen(logfile, O_WRONLY|O_APPEND|O_CREAT, ob->mode);
   if (log_fd >= 0)
     {
-    uschar *ptr = log_buffer;
+    gstring gs = { .size = LOG_BUFFER_SIZE, .ptr = 0, .s = log_buffer }, *g = &gs;
+
+    /* Use taint-unchecked routines for writing into log_buffer, trusting
+    that we'll never expand it. */
+
     DEBUG(D_transport) debug_printf("logging message details\n");
-    sprintf(CS ptr, "%s\n", tod_stamp(tod_log));
-    while(*ptr) ptr++;
+    g = string_fmt_append_f(g, SVFMT_TAINT_NOCHK, "%s\n", tod_stamp(tod_log));
     if (from)
-      {
-      (void)string_format(ptr, LOG_BUFFER_SIZE - (ptr-log_buffer),
-        "  From: %s\n", from);
-      while(*ptr) ptr++;
-      }
+      g = string_fmt_append_f(g, SVFMT_TAINT_NOCHK, "  From: %s\n", from);
     if (to)
-      {
-      (void)string_format(ptr, LOG_BUFFER_SIZE - (ptr-log_buffer),
-        "  To: %s\n", to);
-      while(*ptr) ptr++;
-      }
+      g = string_fmt_append_f(g, SVFMT_TAINT_NOCHK, "  To: %s\n", to);
     if (cc)
-      {
-      (void)string_format(ptr, LOG_BUFFER_SIZE - (ptr-log_buffer),
-        "  Cc: %s\n", cc);
-      while(*ptr) ptr++;
-      }
+      g = string_fmt_append_f(g, SVFMT_TAINT_NOCHK, "  Cc: %s\n", cc);
     if (bcc)
-      {
-      (void)string_format(ptr, LOG_BUFFER_SIZE - (ptr-log_buffer),
-        "  Bcc: %s\n", bcc);
-      while(*ptr) ptr++;
-      }
+      g = string_fmt_append_f(g, SVFMT_TAINT_NOCHK, "  Bcc: %s\n", bcc);
     if (subject)
-      {
-      (void)string_format(ptr, LOG_BUFFER_SIZE - (ptr-log_buffer),
-        "  Subject: %s\n", subject);
-      while(*ptr) ptr++;
-      }
+      g = string_fmt_append_f(g, SVFMT_TAINT_NOCHK, "  Subject: %s\n", subject);
     if (headers)
-      {
-      (void)string_format(ptr, LOG_BUFFER_SIZE - (ptr-log_buffer),
-        "  %s\n", headers);
-      while(*ptr) ptr++;
-      }
-    if(write(log_fd, log_buffer, ptr - log_buffer) != ptr-log_buffer
-      || close(log_fd))
+      g = string_fmt_append_f(g, SVFMT_TAINT_NOCHK, "  %s\n", headers);
+    if(write(log_fd, g->s, g->ptr) != g->ptr || close(log_fd))
       DEBUG(D_transport) debug_printf("Problem writing log file %s for %s "
         "transport\n", logfile, tblock->name);
     }
@@ -873,7 +799,7 @@ if (logfile)
   }
 
 END_OFF:
-if (dbm_file) EXIM_DBCLOSE(dbm_file);
+if (dbm_file) exim_dbclose(dbm_file);
 if (cache_fd > 0) (void)close(cache_fd);
 
 DEBUG(D_transport) debug_printf("%s transport succeeded\n", tblock->name);
@@ -882,4 +808,7 @@ return FALSE;
 }
 
 #endif	/*!MACRO_PREDEF*/
+#endif	/*TRANSPORT_AUTOREPOL*/
 /* End of transport/autoreply.c */
+/* vi: aw ai sw=2
+*/

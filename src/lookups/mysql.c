@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2022 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* Thanks to Paul Kelly for contributing the original code for these
 functions. */
@@ -81,7 +83,7 @@ static mysql_connection *mysql_connections = NULL;
 /* See local README for interface description. */
 
 static void *
-mysql_open(uschar *filename, uschar **errmsg)
+mysql_open(const uschar * filename, uschar ** errmsg)
 {
 return (void *)(1);    /* Just return something non-null */
 }
@@ -101,7 +103,7 @@ mysql_connection *cn;
 while ((cn = mysql_connections) != NULL)
   {
   mysql_connections = cn->next;
-  DEBUG(D_lookup) debug_printf("close MYSQL connection: %s\n", cn->server);
+  DEBUG(D_lookup) debug_printf_indent("close MYSQL connection: %s\n", cn->server);
   mysql_close(cn->handle);
   }
 }
@@ -122,6 +124,7 @@ Arguments:
   errmsg       where to point an error message
   defer_break  TRUE if no more servers are to be tried after DEFER
   do_cache     set zero if data is changed
+  opts	       options
 
 The server string is of the form "host/dbname/user/password". The host can be
 host:port. This string is in a nextinlist temporary buffer, so can be
@@ -132,7 +135,7 @@ Returns:       OK, FAIL, or DEFER
 
 static int
 perform_mysql_search(const uschar *query, uschar *server, uschar **resultptr,
-  uschar **errmsg, BOOL *defer_break, uint *do_cache)
+  uschar **errmsg, BOOL *defer_break, uint *do_cache, const uschar * opts)
 {
 MYSQL *mysql_handle = NULL;        /* Keep compilers happy */
 MYSQL_RES *mysql_result = NULL;
@@ -152,10 +155,10 @@ database, user, password. We can write to the string, since it is in a
 nextinlist temporary buffer. The copy of the string that is used for caching
 has the password removed. This copy is also used for debugging output. */
 
-for (i = 3; i > 0; i--)
+for (int i = 3; i > 0; i--)
   {
   uschar *pp = Ustrrchr(server, '/');
-  if (pp == NULL)
+  if (!pp)
     {
     *errmsg = string_sprintf("incomplete MySQL server data: %s",
       (i == 3)? server : server_copy);
@@ -172,10 +175,7 @@ sdata[0] = server;   /* What's left at the start */
 
 for (cn = mysql_connections; cn; cn = cn->next)
   if (Ustrcmp(cn->server, server_copy) == 0)
-    {
-    mysql_handle = cn->handle;
-    break;
-    }
+    { mysql_handle = cn->handle; break; }
 
 /* If no cached connection, we must set one up. Mysql allows for a host name
 and port to be specified. It also allows the name of a Unix socket to be used.
@@ -227,12 +227,12 @@ if (!cn)
   if (sdata[1][0] == 0) sdata[1] = NULL;
 
   DEBUG(D_lookup)
-    debug_printf("MYSQL new connection: host=%s port=%d socket=%s "
+    debug_printf_indent("MYSQL new connection: host=%s port=%d socket=%s "
       "database=%s user=%s\n", sdata[0], port, socket, sdata[1], sdata[2]);
 
   /* Get store for a new handle, initialize it, and connect to the server */
 
-  mysql_handle = store_get(sizeof(MYSQL));
+  mysql_handle = store_get(sizeof(MYSQL), GET_UNTAINTED);
   mysql_init(mysql_handle);
   mysql_options(mysql_handle, MYSQL_READ_DEFAULT_GROUP, CS group);
   if (mysql_real_connect(mysql_handle,
@@ -248,7 +248,7 @@ if (!cn)
 
   /* Add the connection to the cache */
 
-  cn = store_get(sizeof(mysql_connection));
+  cn = store_get(sizeof(mysql_connection), GET_UNTAINTED);
   cn->server = server_copy;
   cn->handle = mysql_handle;
   cn->next = mysql_connections;
@@ -260,7 +260,7 @@ if (!cn)
 else
   {
   DEBUG(D_lookup)
-    debug_printf("MYSQL using cached connection for %s\n", server_copy);
+    debug_printf_indent("MYSQL using cached connection for %s\n", server_copy);
   }
 
 /* Run the query */
@@ -283,11 +283,11 @@ up. Setting do_cache zero requests this. */
 
 if (!(mysql_result = mysql_use_result(mysql_handle)))
   {
-  if ( mysql_field_count(mysql_handle) == 0 )
+  if (mysql_field_count(mysql_handle) == 0)
     {
-    DEBUG(D_lookup) debug_printf("MYSQL: query was not one that returns data\n");
+    DEBUG(D_lookup) debug_printf_indent("MYSQL: query was not one that returns data\n");
     result = string_cat(result,
-	       string_sprintf("%d", mysql_affected_rows(mysql_handle)));
+	       string_sprintf("%lld", mysql_affected_rows(mysql_handle)));
     *do_cache = 0;
     goto MYSQL_EXIT;
     }
@@ -309,18 +309,20 @@ fields = mysql_fetch_fields(mysql_result);
 
 while ((mysql_row_data = mysql_fetch_row(mysql_result)))
   {
-  unsigned long *lengths = mysql_fetch_lengths(mysql_result);
+  unsigned long * lengths = mysql_fetch_lengths(mysql_result);
 
   if (result)
     result = string_catn(result, US"\n", 1);
 
   if (num_fields != 1)
-    for (i = 0; i < num_fields; i++)
+    for (int i = 0; i < num_fields; i++)
       result = lf_quote(US fields[i].name, US mysql_row_data[i], lengths[i],
 			result);
 
   else if (mysql_row_data[0] != NULL)    /* NULL value yields nothing */
-      result = string_catn(result, US mysql_row_data[0], lengths[0]);
+      result = lengths[0] == 0 && !result
+	? string_get(1)		/* for 0-len string result ensure non-null gstring */
+        : string_catn(result, US mysql_row_data[0], lengths[0]);
   }
 
 /* more results? -1 = no, >0 = error, 0 = yes (keep looping)
@@ -328,18 +330,15 @@ while ((mysql_row_data = mysql_fetch_row(mysql_result)))
    we don't expect any more results. */
 
 while((i = mysql_next_result(mysql_handle)) >= 0)
-  {
-  if(i == 0)	/* Just ignore more results */
+  if(i != 0)
     {
-    DEBUG(D_lookup) debug_printf("MYSQL: got unexpected more results\n");
-    continue;
+    *errmsg = string_sprintf(
+	  "MYSQL: lookup result error when checking for more results: %s\n",
+	  mysql_error(mysql_handle));
+    goto MYSQL_EXIT;
     }
-
-  *errmsg = string_sprintf(
-	"MYSQL: lookup result error when checking for more results: %s\n",
-	mysql_error(mysql_handle));
-  goto MYSQL_EXIT;
-  }
+  else	/* just ignore more results */
+    DEBUG(D_lookup) debug_printf_indent("MYSQL: got unexpected more results\n");
 
 /* If result is NULL then no data has been found and so we return FAIL.
 Otherwise, we must terminate the string which has been built; string_cat()
@@ -366,12 +365,12 @@ if (mysql_result) mysql_free_result(mysql_result);
 if (result)
   {
   *resultptr = string_from_gstring(result);
-  store_reset(result->s + (result->size = result->ptr + 1));
+  gstring_release_unused(result);
   return OK;
   }
 else
   {
-  DEBUG(D_lookup) debug_printf("%s\n", *errmsg);
+  DEBUG(D_lookup) debug_printf_indent("%s\n", *errmsg);
   return yield;      /* FAIL or DEFER */
   }
 }
@@ -389,11 +388,12 @@ query is deferred with a retryable error is now in a separate function that is
 shared with other SQL lookups. */
 
 static int
-mysql_find(void *handle, uschar *filename, const uschar *query, int length,
-  uschar **result, uschar **errmsg, uint *do_cache)
+mysql_find(void * handle, const uschar * filename, const uschar * query,
+  int length, uschar ** result, uschar ** errmsg, uint * do_cache,
+  const uschar * opts)
 {
 return lf_sqlperform(US"MySQL", US"mysql_servers", mysql_servers, query,
-  result, errmsg, do_cache, perform_mysql_search);
+  result, errmsg, do_cache, opts, perform_mysql_search);
 }
 
 
@@ -414,43 +414,39 @@ can't quote "on spec".
 Arguments:
   s          the string to be quoted
   opt        additional option text or NULL if none
+  idx	     lookup type index
 
 Returns:     the processed string or NULL for a bad option
 */
 
 static uschar *
-mysql_quote(uschar *s, uschar *opt)
+mysql_quote(uschar * s, uschar * opt, unsigned idx)
 {
-register int c;
-int count = 0;
-uschar *t = s;
-uschar *quoted;
+int c, count = 0;
+uschar * t = s, * quoted;
 
-if (opt != NULL) return NULL;     /* No options recognized */
+if (opt) return NULL;     /* No options recognized */
 
-while ((c = *t++) != 0)
+while ((c = *t++))
   if (Ustrchr("\n\t\r\b\'\"\\", c) != NULL) count++;
 
-if (count == 0) return s;
-t = quoted = store_get(Ustrlen(s) + count + 1);
+/* Old code:  if (count == 0) return s;
+Now always allocate and copy, to track the quoted status. */
 
-while ((c = *s++) != 0)
+t = quoted = store_get_quoted(Ustrlen(s) + count + 1, s, idx);
+
+while ((c = *s++))
   {
   if (Ustrchr("\n\t\r\b\'\"\\", c) != NULL)
     {
     *t++ = '\\';
     switch(c)
       {
-      case '\n': *t++ = 'n';
-      break;
-      case '\t': *t++ = 't';
-      break;
-      case '\r': *t++ = 'r';
-      break;
-      case '\b': *t++ = 'b';
-      break;
-      default:   *t++ = c;
-      break;
+      case '\n': *t++ = 'n'; break;
+      case '\t': *t++ = 't'; break;
+      case '\r': *t++ = 'r'; break;
+      case '\b': *t++ = 'b'; break;
+      default:   *t++ = c;   break;
       }
     }
   else *t++ = c;
@@ -469,30 +465,33 @@ return quoted;
 
 #include "../version.h"
 
-void
-mysql_version_report(FILE *f)
+gstring *
+mysql_version_report(gstring * g)
 {
-fprintf(f, "Library version: MySQL: Compile: %lu %s [%s]\n"
-           "                        Runtime: %lu %s\n",
+g = string_fmt_append(g,
+  "Library version: MySQL: Compile: %lu %s [%s]\n"
+  "                        Runtime: %lu %s\n",
         (long)EXIM_MxSQL_VERSION_ID, EXIM_MxSQL_VERSION_STR, EXIM_MxSQL_BASE_STR,
         mysql_get_client_version(), mysql_get_client_info());
 #ifdef DYNLOOKUP
-fprintf(f, "                        Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g,
+  "                        Exim version %s\n", EXIM_VERSION_STR);
 #endif
+return g;
 }
 
 /* These are the lookup_info blocks for this driver */
 
 static lookup_info mysql_lookup_info = {
-  US"mysql",                     /* lookup name */
-  lookup_querystyle,             /* query-style lookup */
-  mysql_open,                    /* open function */
-  NULL,                          /* no check function */
-  mysql_find,                    /* find function */
-  NULL,                          /* no close function */
-  mysql_tidy,                    /* tidy function */
-  mysql_quote,                   /* quoting function */
-  mysql_version_report           /* version reporting */
+  .name = US"mysql",			/* lookup name */
+  .type = lookup_querystyle,		/* query-style lookup */
+  .open = mysql_open,			/* open function */
+  .check = NULL,			/* no check function */
+  .find = mysql_find,			/* find function */
+  .close = NULL,			/* no close function */
+  .tidy = mysql_tidy,			/* tidy function */
+  .quote = mysql_quote,			/* quoting function */
+  .version_report = mysql_version_report           /* version reporting */
 };
 
 #ifdef DYNLOOKUP

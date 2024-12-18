@@ -2,10 +2,16 @@
 *                  Exim Monitor                  *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
+#define EM_VERSION_C
 
 #include "mytypes.h"
+#include "store.h"
+#include "path_max.h"
 #include "macros.h"
 #include <string.h>
 #include <stdlib.h>
@@ -33,7 +39,7 @@ version_date[0] = 0;
 Ustrncat(version_date, EXIM_BUILD_DATE_OVERRIDE, 31);
 
 #else
-Ustrcpy(today, __DATE__);
+Ustrcpy(today, US __DATE__);
 if (today[4] == ' ') i = 1;
 today[3] = today[6] = '-';
 
@@ -42,8 +48,8 @@ version_date[0] = 0;
 Ustrncat(version_date, today+4+i, 3-i);
 Ustrncat(version_date, today, 4);
 Ustrncat(version_date, today+7, 4);
-Ustrcat(version_date, " ");
-Ustrcat(version_date, __TIME__);
+Ustrcat(version_date, US" ");
+Ustrcat(version_date, US __TIME__);
 #endif
 }
 

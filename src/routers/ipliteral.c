@@ -2,11 +2,15 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "../exim.h"
+
+#ifdef ROUTER_IPLITERAL		/* Remainder of file */
 #include "rf_functions.h"
 #include "ipliteral.h"
 
@@ -15,7 +19,7 @@
 empty declarations ("undefined" in the Standard) we put in a dummy value. */
 
 optionlist ipliteral_router_options[] = {
-  { "", opt_hidden, NULL }
+  { "", opt_hidden, {NULL} }
 };
 
 /* Size of the options list. An extern variable has to be used so that its
@@ -56,7 +60,6 @@ ipliteral_router_init(router_instance *rblock)
 ipliteral_router_options_block *ob =
   (ipliteral_router_options_block *)(rblock->options_block);
 */
-rblock = rblock;
 }
 
 
@@ -115,9 +118,6 @@ const uschar *ip;
 int len = Ustrlen(domain);
 int rc, ipv;
 
-addr_new = addr_new;         /* Keep picky compilers happy */
-addr_succeed = addr_succeed;
-
 DEBUG(D_route) debug_printf("%s router called for %s: domain = %s\n",
   rblock->name, addr->address, addr->domain);
 
@@ -149,7 +149,7 @@ if (verify_check_this_host(CUSS&rblock->ignore_target_hosts,
 
 /* Set up a host item */
 
-h = store_get(sizeof(host_item));
+h = store_get(sizeof(host_item), GET_UNTAINTED);
 
 h->next = NULL;
 h->address = string_copy(ip);
@@ -201,5 +201,6 @@ return rf_queue_add(addr, addr_local, addr_remote, rblock, pw)?
   OK : DEFER;
 }
 
-#endif   /*!MACRO_PREDEF*/
+#endif	/*!MACRO_PREDEF*/
+#endif	/*ROUTER_IPLITERAL*/
 /* End of routers/ipliteral.c */

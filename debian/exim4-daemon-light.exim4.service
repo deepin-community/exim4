@@ -1,0 +1,33 @@
+[Unit]
+Description=exim Mail Transport Agent
+Documentation=man:exim(8)
+Documentation=https://exim.org/docs.html
+Conflicts=sendmail.service postfix.service
+After=network-online.target nss-lookup.target
+Wants=network-online.target
+
+[Service]
+PrivateTmp=true
+ProtectSystem=full
+# exim needs to access ~/.forward and MDA-files to for local delivery
+# ProtectHome=true
+PrivateDevices=true
+ProtectHostname=true
+ProtectClock=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectProc=invisible
+RestrictRealtime=true
+PIDFile=/run/exim4/exim.pid
+Environment="EXIMSERVICE=-bdf -q30m" "UPEX4OPTS="
+EnvironmentFile=-/etc/default/exim4
+ExecStartPre=/usr/sbin/update-exim4.conf $UPEX4OPTS
+ExecStart=/usr/sbin/exim4 $EXIMSERVICE
+ExecReload=/usr/sbin/update-exim4.conf $UPEX4OPTS ; \
+	kill -HUP $MAINPID
+Type=exec
+
+[Install]
+WantedBy=multi-user.target

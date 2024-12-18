@@ -2,129 +2,102 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 #include "../exim.h"
+
+#ifdef ROUTER_REDIRECT	/* Remainder of file */
 #include "rf_functions.h"
 #include "redirect.h"
 
 
 
 /* Options specific to the redirect router. */
+#define LOFF(field) OPT_OFF(redirect_router_options_block, field)
 
 optionlist redirect_router_options[] = {
   { "allow_defer",        opt_bit | (RDON_DEFER << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "allow_fail",         opt_bit | (RDON_FAIL << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "allow_filter",       opt_bit | (RDON_FILTER << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "allow_freeze",       opt_bit | (RDON_FREEZE << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
-  { "check_ancestor",     opt_bool,
-      (void *)offsetof(redirect_router_options_block, check_ancestor) },
-  { "check_group",        opt_bool,
-      (void *)offsetof(redirect_router_options_block, check_group) },
-  { "check_owner",        opt_bool,
-      (void *)offsetof(redirect_router_options_block, check_owner) },
-  { "data",               opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, data) },
-  { "directory_transport",opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, directory_transport_name) },
-  { "file",               opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, file) },
-  { "file_transport",     opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, file_transport_name) },
+      LOFF(bit_options) },
+  { "check_ancestor",     opt_bool,		LOFF(check_ancestor) },
+  { "check_group",        opt_bool,		LOFF(check_group) },
+  { "check_owner",        opt_bool,		LOFF(check_owner) },
+  { "data",               opt_stringptr,	LOFF(data) },
+  { "directory_transport",opt_stringptr,	LOFF(directory_transport_name) },
+  { "file",               opt_stringptr,	LOFF(file) },
+  { "file_transport",     opt_stringptr,	LOFF(file_transport_name) },
+
   { "filter_prepend_home",opt_bit | (RDON_PREPEND_HOME << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_blackhole",   opt_bit | (RDON_BLACKHOLE << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_exim_filter", opt_bit | (RDON_EXIM_FILTER << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_file",        opt_bool,
-      (void *)offsetof(redirect_router_options_block, forbid_file) },
+      LOFF(forbid_file) },
   { "forbid_filter_dlfunc", opt_bit | (RDON_DLFUNC << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_filter_existstest",  opt_bit | (RDON_EXISTS << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_filter_logwrite",opt_bit | (RDON_LOG << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_filter_lookup", opt_bit | (RDON_LOOKUP << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_filter_perl", opt_bit | (RDON_PERL << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_filter_readfile", opt_bit | (RDON_READFILE << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_filter_readsocket", opt_bit | (RDON_READSOCK << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_filter_reply",opt_bool,
-      (void *)offsetof(redirect_router_options_block, forbid_filter_reply) },
+      LOFF(forbid_filter_reply) },
   { "forbid_filter_run",  opt_bit | (RDON_RUN << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_include",     opt_bit | (RDON_INCLUDE << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_pipe",        opt_bool,
-      (void *)offsetof(redirect_router_options_block, forbid_pipe) },
+      LOFF(forbid_pipe) },
   { "forbid_sieve_filter",opt_bit | (RDON_SIEVE_FILTER << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "forbid_smtp_code",     opt_bool,
-      (void *)offsetof(redirect_router_options_block, forbid_smtp_code) },
+      LOFF(forbid_smtp_code) },
   { "hide_child_in_errmsg", opt_bool,
-      (void *)offsetof(redirect_router_options_block,  hide_child_in_errmsg) },
+      LOFF( hide_child_in_errmsg) },
   { "ignore_eacces",      opt_bit | (RDON_EACCES << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
+      LOFF(bit_options) },
   { "ignore_enotdir",     opt_bit | (RDON_ENOTDIR << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
-  { "include_directory",  opt_stringptr,
-      (void *)offsetof(redirect_router_options_block,  include_directory) },
-  { "modemask",           opt_octint,
-      (void *)offsetof(redirect_router_options_block, modemask) },
-  { "one_time",           opt_bool,
-      (void *)offsetof(redirect_router_options_block, one_time) },
-  { "owners",             opt_uidlist,
-      (void *)offsetof(redirect_router_options_block, owners) },
-  { "owngroups",          opt_gidlist,
-      (void *)offsetof(redirect_router_options_block, owngroups) },
-  { "pipe_transport",     opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, pipe_transport_name) },
-  { "qualify_domain",     opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, qualify_domain) },
-  { "qualify_preserve_domain", opt_bool,
-      (void *)offsetof(redirect_router_options_block, qualify_preserve_domain) },
-  { "repeat_use",         opt_bool | opt_public,
-      (void *)offsetof(router_instance, repeat_use) },
-  { "reply_transport",    opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, reply_transport_name) },
+      LOFF(bit_options) },
+
+  { "include_directory",  opt_stringptr,	LOFF( include_directory) },
+  { "modemask",           opt_octint,		LOFF(modemask) },
+  { "one_time",           opt_bool,		LOFF(one_time) },
+  { "owners",             opt_uidlist,		LOFF(owners) },
+  { "owngroups",          opt_gidlist,		LOFF(owngroups) },
+  { "pipe_transport",     opt_stringptr,	LOFF(pipe_transport_name) },
+  { "qualify_domain",     opt_stringptr,	LOFF(qualify_domain) },
+  { "qualify_preserve_domain", opt_bool,	LOFF(qualify_preserve_domain) },
+  { "repeat_use",         opt_bool | opt_public, OPT_OFF(router_instance, repeat_use) },
+  { "reply_transport",    opt_stringptr,	LOFF(reply_transport_name) },
+
   { "rewrite",            opt_bit | (RDON_REWRITE << 16),
-      (void *)offsetof(redirect_router_options_block, bit_options) },
-  { "sieve_enotify_mailto_owner", opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, sieve_enotify_mailto_owner) },
-  { "sieve_subaddress", opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, sieve_subaddress) },
-  { "sieve_useraddress", opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, sieve_useraddress) },
-  { "sieve_vacation_directory", opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, sieve_vacation_directory) },
-  { "skip_syntax_errors", opt_bool,
-      (void *)offsetof(redirect_router_options_block, skip_syntax_errors) },
-#ifdef EXPERIMENTAL_SRS
-  { "srs",                opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, srs) },
-  { "srs_alias",          opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, srs_alias) },
-  { "srs_condition",      opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, srs_condition) },
-  { "srs_dbinsert",       opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, srs_dbinsert) },
-  { "srs_dbselect",       opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, srs_dbselect) },
-#endif
-  { "syntax_errors_text", opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, syntax_errors_text) },
-  { "syntax_errors_to",   opt_stringptr,
-      (void *)offsetof(redirect_router_options_block, syntax_errors_to) }
+      LOFF(bit_options) },
+
+  { "sieve_enotify_mailto_owner", opt_stringptr, LOFF(sieve_enotify_mailto_owner) },
+  { "sieve_subaddress", opt_stringptr,		LOFF(sieve_subaddress) },
+  { "sieve_useraddress", opt_stringptr,		LOFF(sieve_useraddress) },
+  { "sieve_vacation_directory", opt_stringptr,	LOFF(sieve_vacation_directory) },
+  { "skip_syntax_errors", opt_bool,		LOFF(skip_syntax_errors) },
+  { "syntax_errors_text", opt_stringptr,	LOFF(syntax_errors_text) },
+  { "syntax_errors_to",   opt_stringptr,	LOFF(syntax_errors_to) }
 };
 
 /* Size of the options list. An extern variable has to be used so that its
@@ -172,13 +145,6 @@ redirect_router_options_block redirect_router_option_defaults = {
   NULL,        /* qualify_domain */
   NULL,        /* owners */
   NULL,        /* owngroups */
-#ifdef EXPERIMENTAL_SRS
-  NULL,        /* srs */
-  NULL,        /* srs_alias */
-  NULL,        /* srs_condition */
-  NULL,        /* srs_dbinsert */
-  NULL,        /* srs_dbselect */
-#endif
   022,         /* modemask */
   RDO_REWRITE | RDO_PREPEND_HOME, /* bit_options */
   FALSE,       /* check_ancestor */
@@ -342,9 +308,8 @@ redirect_router_options_block *ob =
 
 while (generated)
   {
-  address_item *parent;
-  address_item *next = generated;
-  uschar *errors_address = next->prop.errors_address;
+  address_item * next = generated, * parent;
+  const uschar * errors_address = next->prop.errors_address;
 
   generated = next->next;
   next->parent = addr;
@@ -407,12 +372,11 @@ while (generated)
     in \N...\N to avoid expansion later. In Cygwin, home directories can
     contain $ characters. */
 
-    if (rblock->home_directory != NULL)
+    if (rblock->home_directory)
       next->home_dir = rblock->home_directory;
     else if (rblock->check_local_user)
       next->home_dir = string_sprintf("\\N%s\\N", pw->pw_dir);
-    else if (rblock->router_home_directory != NULL &&
-             testflag(addr, af_home_expanded))
+    else if (rblock->router_home_directory && testflag(addr, af_home_expanded))
       {
       next->home_dir = deliver_home;
       setflag(next, af_home_expanded);
@@ -432,14 +396,16 @@ while (generated)
     if (next->address[0] == '|')
       {
       address_pipe = next->address;
-      if (rf_get_transport(ob->pipe_transport_name, &(ob->pipe_transport),
+      GET_OPTION("pipe_transport");
+      if (rf_get_transport(ob->pipe_transport_name, &ob->pipe_transport,
           next, rblock->name, US"pipe_transport"))
         next->transport = ob->pipe_transport;
       address_pipe = NULL;
       }
     else if (next->address[0] == '>')
       {
-      if (rf_get_transport(ob->reply_transport_name, &(ob->reply_transport),
+      GET_OPTION("reply_transport");
+      if (rf_get_transport(ob->reply_transport_name, &ob->reply_transport,
           next, rblock->name, US"reply_transport"))
         next->transport = ob->reply_transport;
       }
@@ -449,17 +415,20 @@ while (generated)
       address_file = next->address;
       if (next->address[len-1] == '/')
         {
+	GET_OPTION("directory_transport");
         if (rf_get_transport(ob->directory_transport_name,
             &(ob->directory_transport), next, rblock->name,
             US"directory_transport"))
           next->transport = ob->directory_transport;
         }
       else
-        {
-        if (rf_get_transport(ob->file_transport_name, &(ob->file_transport),
+	{
+	GET_OPTION("file_transport");
+        if (rf_get_transport(ob->file_transport_name, &ob->file_transport,
             next, rblock->name, US"file_transport"))
           next->transport = ob->file_transport;
-        }
+	}
+
       address_file = NULL;
       }
     }
@@ -552,9 +521,6 @@ int options = ob->bit_options;
 int frc = 0;
 int xrc = 0;
 
-addr_local = addr_local;     /* Keep picky compilers happy */
-addr_remote = addr_remote;
-
 /* Initialize the data to be propagated to the children */
 
 addr_prop.address_data = deliver_address_data;
@@ -563,10 +529,9 @@ addr_prop.localpart_data = deliver_localpart_data;
 addr_prop.errors_address = NULL;
 addr_prop.extra_headers = NULL;
 addr_prop.remove_headers = NULL;
+addr_prop.variables = NULL;
+tree_dup((tree_node **)&addr_prop.variables, addr->prop.variables);
 
-#ifdef EXPERIMENTAL_SRS
-addr_prop.srs_sender = NULL;
-#endif
 #ifdef SUPPORT_I18N
 addr_prop.utf8_msg = addr->prop.utf8_msg;
 addr_prop.utf8_downcvt = addr->prop.utf8_downcvt;
@@ -599,95 +564,6 @@ if (!ugid.gid_set && pw != NULL)
   ugid.gid_set = TRUE;
   }
 
-#ifdef EXPERIMENTAL_SRS
-  /* Perform SRS on recipient/return-path as required  */
-
-  if(ob->srs != NULL)
-  {
-    BOOL usesrs = TRUE;
-
-    if(ob->srs_condition != NULL)
-      usesrs = expand_check_condition(ob->srs_condition, "srs_condition expansion failed", NULL);
-
-    if(usesrs)
-    {
-      int srs_action = 0, n_srs;
-      uschar *res;
-      uschar *usedomain;
-
-      /* What are we doing? */
-      if(Ustrcmp(ob->srs, "forward") == 0)
-        srs_action = 1;
-      else if(Ustrcmp(ob->srs, "reverseandforward") == 0)
-      {
-        srs_action = 3;
-
-        if((ob->srs_dbinsert == NULL) ^ (ob->srs_dbselect == NULL))
-          return DEFER;
-      }
-      else if(Ustrcmp(ob->srs, "reverse") == 0)
-        srs_action = 2;
-
-      /* Reverse SRS */
-      if(srs_action & 2)
-      {
-        srs_orig_recipient = addr->address;
-
-        eximsrs_init();
-        if(ob->srs_dbselect)
-          eximsrs_db_set(TRUE, ob->srs_dbselect);
-/* Comment this out for now...
-//        else
-//          eximsrs_db_set(TRUE, NULL);
-*/
-
-        if((n_srs = eximsrs_reverse(&res, addr->address)) == OK)
-        {
-          srs_recipient = res;
-          DEBUG(D_any)
-            debug_printf("SRS (reverse): Recipient '%s' rewritten to '%s'\n", srs_orig_recipient, srs_recipient);
-        }
-
-        eximsrs_done();
-
-        if(n_srs != OK)
-          return n_srs;
-      }
-
-      /* Forward SRS */
-      /* No point in actually performing SRS if we are just verifying a recipient */
-      if((srs_action & 1) && verify == v_none &&
-         (sender_address ? sender_address[0] != 0 : FALSE))
-      {
-
-        srs_orig_sender = sender_address;
-        eximsrs_init();
-        if(ob->srs_dbinsert)
-          eximsrs_db_set(FALSE, ob->srs_dbinsert);
-/* Comment this out for now...
-//        else
-//          eximsrs_db_set(FALSE, NULL);
-*/
-
-        if (!(usedomain = ob->srs_alias ? expand_string(ob->srs_alias) : NULL))
-          usedomain = string_copy(deliver_domain);
-
-        if((n_srs = eximsrs_forward(&res, sender_address, usedomain)) == OK)
-        {
-          addr_prop.srs_sender = res;
-          DEBUG(D_any)
-            debug_printf("SRS (forward): Sender '%s' rewritten to '%s'\n", srs_orig_sender, res);
-        }
-
-        eximsrs_done();
-
-        if(n_srs != OK)
-          return n_srs;
-      }
-    }
-  }
-#endif
-
 /* Call the function that interprets redirection data, either inline or from a
 file. This is a separate function so that the system filter can use it. It will
 run the function in a subprocess if necessary. If qualify_preserve_domain is
@@ -697,11 +573,15 @@ address. Otherwise, if a local qualify_domain is provided, set that up. */
 
 if (ob->qualify_preserve_domain)
   qualify_domain_recipient = addr->domain;
-else if (ob->qualify_domain != NULL)
+else
   {
-  uschar *new_qdr = rf_expand_data(addr, ob->qualify_domain, &xrc);
-  if (new_qdr == NULL) return xrc;
-  qualify_domain_recipient = new_qdr;
+  GET_OPTION("qualify_domain");
+  if (ob->qualify_domain)
+    {
+    uschar *new_qdr = rf_expand_data(addr, ob->qualify_domain, &xrc);
+    if (!new_qdr) return xrc;
+    qualify_domain_recipient = new_qdr;
+    }
   }
 
 redirect.owners = ob->owners;
@@ -711,21 +591,13 @@ redirect.check_owner = ob->check_owner;
 redirect.check_group = ob->check_group;
 redirect.pw = pw;
 
-if (ob->file != NULL)
-  {
-  redirect.string = ob->file;
-  redirect.isfile = TRUE;
-  }
-else
-  {
-  redirect.string = ob->data;
-  redirect.isfile = FALSE;
-  }
+redirect.string = (redirect.isfile = (ob->file != NULL))
+  ? ob->file : ob->data;
 
 frc = rda_interpret(&redirect, options, ob->include_directory,
   ob->sieve_vacation_directory, ob->sieve_enotify_mailto_owner,
   ob->sieve_useraddress, ob->sieve_subaddress, &ugid, &generated,
-  &(addr->message), ob->skip_syntax_errors? &eblock : NULL, &filtertype,
+  &addr->message, ob->skip_syntax_errors? &eblock : NULL, &filtertype,
   string_sprintf("%s router (recipient is %s)", rblock->name, addr->address));
 
 qualify_domain_recipient = save_qualify_domain_recipient;
@@ -736,104 +608,102 @@ For FAIL and FREEZE we honour any previously set up deliveries by a filter. */
 switch (frc)
   {
   case FF_NONEXIST:
-  addr->message = addr->user_message = NULL;
-  return DECLINE;
+    addr->message = addr->user_message = NULL;
+    return DECLINE;
 
   case FF_BLACKHOLE:
-  DEBUG(D_route) debug_printf("address :blackhole:d\n");
-  generated = NULL;
-  discarded = US":blackhole:";
-  frc = FF_DELIVERED;
-  break;
+    DEBUG(D_route) debug_printf("address :blackhole:d\n");
+    generated = NULL;
+    discarded = US":blackhole:";
+    frc = FF_DELIVERED;
+    break;
 
-  /* FF_DEFER and FF_FAIL can arise only as a result of explicit commands
-  (:defer: or :fail: in an alias file or "fail" in a filter). If a configured
-  message was supplied, allow it to be included in an SMTP response after
-  verifying. Remove any SMTP code if it is not allowed. */
+    /* FF_DEFER and FF_FAIL can arise only as a result of explicit commands
+    (:defer: or :fail: in an alias file or "fail" in a filter). If a configured
+    message was supplied, allow it to be included in an SMTP response after
+    verifying. Remove any SMTP code if it is not allowed. */
 
   case FF_DEFER:
-  yield = DEFER;
-  goto SORT_MESSAGE;
+    yield = DEFER;
+    goto SORT_MESSAGE;
 
   case FF_FAIL:
-  if ((xrc = sort_errors_and_headers(rblock, addr, verify, &addr_prop)) != OK)
-    return xrc;
-  add_generated(rblock, addr_new, addr, generated, &addr_prop, &ugid, pw);
-  yield = FAIL;
+    if ((xrc = sort_errors_and_headers(rblock, addr, verify, &addr_prop)) != OK)
+      return xrc;
+    add_generated(rblock, addr_new, addr, generated, &addr_prop, &ugid, pw);
+    yield = FAIL;
 
-  SORT_MESSAGE:
-  if (addr->message == NULL)
-    addr->message = (yield == FAIL)? US"forced rejection" : US"forced defer";
-  else
-    {
-    int ovector[3];
-    if (ob->forbid_smtp_code &&
-        pcre_exec(regex_smtp_code, NULL, CS addr->message,
-          Ustrlen(addr->message), 0, PCRE_EOPT,
-          ovector, sizeof(ovector)/sizeof(int)) >= 0)
+    SORT_MESSAGE:
+    if (!addr->message)
+      addr->message = yield == FAIL ? US"forced rejection" : US"forced defer";
+    else
       {
-      DEBUG(D_route) debug_printf("SMTP code at start of error message "
-        "is ignored because forbid_smtp_code is set\n");
-      addr->message += ovector[1];
+      uschar * matched;
+      if (  ob->forbid_smtp_code
+	 && regex_match(regex_smtp_code, addr->message, -1, &matched))
+	{
+	DEBUG(D_route) debug_printf("SMTP code at start of error message "
+	  "is ignored because forbid_smtp_code is set\n");
+	addr->message += Ustrlen(matched);
+	}
+      addr->user_message = addr->message;
+      setflag(addr, af_pass_message);
       }
-    addr->user_message = addr->message;
-    setflag(addr, af_pass_message);
-    }
-  return yield;
+    return yield;
 
-  /* As in the case of a system filter, a freeze does not happen after a manual
-  thaw. In case deliveries were set up by the filter, we set the child count
-  high so that their completion does not mark the original address done. */
+    /* As in the case of a system filter, a freeze does not happen after a manual
+    thaw. In case deliveries were set up by the filter, we set the child count
+    high so that their completion does not mark the original address done. */
 
   case FF_FREEZE:
-  if (!f.deliver_manual_thaw)
-    {
-    if ((xrc = sort_errors_and_headers(rblock, addr, verify, &addr_prop))
-      != OK) return xrc;
-    add_generated(rblock, addr_new, addr, generated, &addr_prop, &ugid, pw);
-    if (addr->message == NULL) addr->message = US"frozen by filter";
-    addr->special_action = SPECIAL_FREEZE;
-    addr->child_count = 9999;
-    return DEFER;
-    }
-  frc = FF_NOTDELIVERED;
-  break;
+    if (!f.deliver_manual_thaw)
+      {
+      if ((xrc = sort_errors_and_headers(rblock, addr, verify, &addr_prop))
+	!= OK) return xrc;
+      add_generated(rblock, addr_new, addr, generated, &addr_prop, &ugid, pw);
+      if (addr->message == NULL) addr->message = US"frozen by filter";
+      addr->special_action = SPECIAL_FREEZE;
+      addr->child_count = 9999;
+      return DEFER;
+      }
+    frc = FF_NOTDELIVERED;
+    break;
 
-  /* Handle syntax errors and :include: failures and lookup defers */
+    /* Handle syntax errors and :include: failures and lookup defers */
 
   case FF_ERROR:
   case FF_INCLUDEFAIL:
 
-  /* If filtertype is still FILTER_UNSET, it means that the redirection data
-  was never inspected, so the error was an expansion failure or failure to open
-  the file, or whatever. In these cases, the existing error message is probably
-  sufficient. */
+    /* If filtertype is still FILTER_UNSET, it means that the redirection data
+    was never inspected, so the error was an expansion failure or failure to open
+    the file, or whatever. In these cases, the existing error message is probably
+    sufficient. */
 
-  if (filtertype == FILTER_UNSET) return DEFER;
+    if (filtertype == FILTER_UNSET) return DEFER;
 
-  /* If it was a filter and skip_syntax_errors is set, we want to set up
-  the error message so that it can be logged and mailed to somebody. */
+    /* If it was a filter and skip_syntax_errors is set, we want to set up
+    the error message so that it can be logged and mailed to somebody. */
 
-  if (filtertype != FILTER_FORWARD && ob->skip_syntax_errors)
-    {
-    eblock = store_get(sizeof(error_block));
-    eblock->next = NULL;
-    eblock->text1 = addr->message;
-    eblock->text2 = NULL;
-    addr->message = addr->user_message = NULL;
-    }
+    if (filtertype != FILTER_FORWARD && ob->skip_syntax_errors)
+      {
+      eblock = store_get(sizeof(error_block), GET_UNTAINTED);
+      eblock->next = NULL;
+      eblock->text1 = addr->message;
+      eblock->text2 = NULL;
+      addr->message = addr->user_message = NULL;
+      }
 
-  /* Otherwise set up the error for the address and defer. */
+    /* Otherwise set up the error for the address and defer. */
 
-  else
-    {
-    addr->basic_errno = ERRNO_BADREDIRECT;
-    addr->message = string_sprintf("error in %s %s: %s",
-      (filtertype != FILTER_FORWARD)? "filter" : "redirect",
-      (ob->data == NULL)? "file" : "data",
-      addr->message);
-    return DEFER;
-    }
+    else
+      {
+      addr->basic_errno = ERRNO_BADREDIRECT;
+      addr->message = string_sprintf("error in %s %s: %s",
+	filtertype == FILTER_FORWARD ? "redirect" : "filter",
+	ob->data ? "data" : "file",
+	addr->message);
+      return DEFER;
+      }
   }
 
 
@@ -861,7 +731,7 @@ if (eblock != NULL)
         ob->syntax_errors_text))                 /* Custom message */
     return DEFER;
 
-  if (filtertype != FILTER_FORWARD || generated == NULL)
+  if (filtertype != FILTER_FORWARD || !generated)
     {
     addr->message = US"syntax error in redirection data";
     return DECLINE;
@@ -874,7 +744,7 @@ calling sort_errors_and_headers() in case this router declines - that function
 may modify the errors_address field in the current address, and we don't want
 to do that for a decline. */
 
-if (generated != NULL)
+if (generated)
   {
   if ((xrc = sort_errors_and_headers(rblock, addr, verify, &addr_prop)) != OK)
     return xrc;
@@ -939,4 +809,5 @@ return yield;
 }
 
 #endif   /*!MACRO_PREDEF*/
+#endif	/*ROUTER_REDIRECT*/
 /* End of routers/redirect.c */

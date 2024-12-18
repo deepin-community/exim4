@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2020 - 2022 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /* The code in this module was contributed by Ard Biesheuvel. */
 
@@ -31,9 +33,9 @@ static ibase_connection *ibase_connections = NULL;
 
 /* See local README for interface description. */
 
-static void *ibase_open(uschar * filename, uschar ** errmsg)
+static void *ibase_open(const uschar * filename, uschar ** errmsg)
 {
-    return (void *) (1);        /* Just return something non-null */
+return (void *) (1);        /* Just return something non-null */
 }
 
 
@@ -51,7 +53,7 @@ static void ibase_tidy(void)
 
     while ((cn = ibase_connections) != NULL) {
         ibase_connections = cn->next;
-        DEBUG(D_lookup) debug_printf("close Interbase connection: %s\n",
+        DEBUG(D_lookup) debug_printf_indent("close Interbase connection: %s\n",
                                      cn->server);
         isc_commit_transaction(status, &cn->transh);
         isc_detach_database(status, &cn->dbh);
@@ -112,12 +114,13 @@ perform_ibase_search(uschar * query, uschar * server, uschar ** resultptr,
 isc_stmt_handle stmth = NULL;
 XSQLDA *out_sqlda;
 XSQLVAR *var;
+int i;
+rmark reset_point;
 
 char buffer[256];
 ISC_STATUS status[20], *statusp = status;
 
 gstring * result;
-int i;
 int yield = DEFER;
 ibase_connection *cn;
 uschar *server_copy = NULL;
@@ -128,7 +131,7 @@ database, user, password. We can write to the string, since it is in a
 nextinlist temporary buffer. The copy of the string that is used for caching
 has the password removed. This copy is also used for debugging output. */
 
-for (i = 2; i > 0; i--)
+for (int i = 2; i > 0; i--)
   {
   uschar *pp = Ustrrchr(server, '|');
 
@@ -170,14 +173,12 @@ if (cn)
     isc_detach_database(status, &cn->dbh);
     }
   else
-    {
-    DEBUG(D_lookup) debug_printf("Interbase using cached connection for %s\n",
+    DEBUG(D_lookup) debug_printf_indent("Interbase using cached connection for %s\n",
 		     server_copy);
-    }
   }
 else
   {
-  cn = store_get(sizeof(ibase_connection));
+  cn = store_get(sizeof(ibase_connection), GET_UNTAINTED);
   cn->server = server_copy;
   cn->dbh = NULL;
   cn->transh = NULL;
@@ -189,7 +190,7 @@ else
 
 if (cn->dbh == NULL || cn->transh == NULL)
   {
-  char *dpb, *p;
+  char *dpb;
   short dpb_length;
   static char trans_options[] =
       { isc_tpb_version3, isc_tpb_read, isc_tpb_read_committed,
@@ -201,16 +202,16 @@ if (cn->dbh == NULL || cn->transh == NULL)
   *dpb++ = isc_dpb_version1;
   *dpb++ = isc_dpb_user_name;
   *dpb++ = strlen(sdata[1]);
-  for (p = sdata[1]; *p;)
+  for (char * p = sdata[1]; *p;)
       *dpb++ = *p++;
   *dpb++ = isc_dpb_password;
   *dpb++ = strlen(sdata[2]);
-  for (p = sdata[2]; *p;)
+  for (char * p = sdata[2]; *p;)
       *dpb++ = *p++;
   dpb_length = dpb - buffer;
 
   DEBUG(D_lookup)
-      debug_printf("new Interbase connection: database=%s user=%s\n",
+      debug_printf_indent("new Interbase connection: database=%s user=%s\n",
 		   sdata[0], sdata[1]);
 
   /* Connect to the database */
@@ -250,7 +251,9 @@ if (isc_dsql_allocate_statement(status, &cn->dbh, &stmth))
   goto IBASE_EXIT;
   }
 
-out_sqlda = store_get(XSQLDA_LENGTH(1));
+/* Lacking any information, assume that the data is untainted */
+reset_point = store_mark();
+out_sqlda = store_get(XSQLDA_LENGTH(1), GET_UNTAINTED);
 out_sqlda->version = SQLDA_VERSION1;
 out_sqlda->sqln = 1;
 
@@ -258,7 +261,7 @@ if (isc_dsql_prepare
     (status, &cn->transh, &stmth, 0, query, 1, out_sqlda))
   {
   isc_interprete(buffer, &statusp);
-  store_reset(out_sqlda);
+  reset_point = store_reset(reset_point);
   out_sqlda = NULL;
   *errmsg =
       string_sprintf("Interbase prepare_statement() failed: %s",
@@ -270,13 +273,13 @@ if (isc_dsql_prepare
 /* re-allocate the output structure if there's more than one field */
 if (out_sqlda->sqln < out_sqlda->sqld)
   {
-  XSQLDA *new_sqlda = store_get(XSQLDA_LENGTH(out_sqlda->sqld));
+  XSQLDA *new_sqlda = store_get(XSQLDA_LENGTH(out_sqlda->sqld), GET_UNTAINTED);
   if (isc_dsql_describe
       (status, &stmth, out_sqlda->version, new_sqlda))
     {
     isc_interprete(buffer, &statusp);
     isc_dsql_free_statement(status, &stmth, DSQL_drop);
-    store_reset(out_sqlda);
+    reset_point = store_reset(reset_point);
     out_sqlda = NULL;
     *errmsg = string_sprintf("Interbase describe_statement() failed: %s",
 		       buffer);
@@ -292,46 +295,46 @@ for (i = 0, var = out_sqlda->sqlvar; i < out_sqlda->sqld; i++, var++)
   switch (var->sqltype & ~1)
     {
     case SQL_VARYING:
-	var->sqldata = CS store_get(sizeof(char) * var->sqllen + 2);
+	var->sqldata = CS store_get(sizeof(char) * var->sqllen + 2, GET_UNTAINTED);
 	break;
     case SQL_TEXT:
-	var->sqldata = CS store_get(sizeof(char) * var->sqllen);
+	var->sqldata = CS store_get(sizeof(char) * var->sqllen, GET_UNTAINTED);
 	break;
     case SQL_SHORT:
-	var->sqldata = CS  store_get(sizeof(short));
+	var->sqldata = CS  store_get(sizeof(short), GET_UNTAINTED);
 	break;
     case SQL_LONG:
-	var->sqldata = CS  store_get(sizeof(ISC_LONG));
+	var->sqldata = CS  store_get(sizeof(ISC_LONG), GET_UNTAINTED);
 	break;
 #ifdef SQL_INT64
     case SQL_INT64:
-	var->sqldata = CS  store_get(sizeof(ISC_INT64));
+	var->sqldata = CS  store_get(sizeof(ISC_INT64), GET_UNTAINTED);
 	break;
 #endif
     case SQL_FLOAT:
-	var->sqldata = CS  store_get(sizeof(float));
+	var->sqldata = CS  store_get(sizeof(float), GET_UNTAINTED);
 	break;
     case SQL_DOUBLE:
-	var->sqldata = CS  store_get(sizeof(double));
+	var->sqldata = CS  store_get(sizeof(double), GET_UNTAINTED);
 	break;
 #ifdef SQL_TIMESTAMP
     case SQL_DATE:
-	var->sqldata = CS  store_get(sizeof(ISC_QUAD));
+	var->sqldata = CS  store_get(sizeof(ISC_QUAD), GET_UNTAINTED);
 	break;
 #else
     case SQL_TIMESTAMP:
-	var->sqldata = CS  store_get(sizeof(ISC_TIMESTAMP));
+	var->sqldata = CS  store_get(sizeof(ISC_TIMESTAMP), GET_UNTAINTED);
 	break;
     case SQL_TYPE_DATE:
-	var->sqldata = CS  store_get(sizeof(ISC_DATE));
+	var->sqldata = CS  store_get(sizeof(ISC_DATE), GET_UNTAINTED);
 	break;
     case SQL_TYPE_TIME:
-	var->sqldata = CS  store_get(sizeof(ISC_TIME));
+	var->sqldata = CS  store_get(sizeof(ISC_TIME), GET_UNTAINTED);
 	break;
   #endif
     }
   if (var->sqltype & 1)
-    var->sqlind = (short *) store_get(sizeof(short));
+    var->sqlind = (short *) store_get(sizeof(short), GET_UNTAINTED);
   }
 
 /* finally, we're ready to execute the statement */
@@ -373,7 +376,7 @@ while (isc_dsql_fetch(status, &stmth, out_sqlda->version, out_sqlda) != 100L)
     }
 
   else
-    for (i = 0; i < out_sqlda->sqld; i++)
+    for (int i = 0; i < out_sqlda->sqld; i++)
       {
       int len = fetch_field(buffer, sizeof(buffer), &out_sqlda->sqlvar[i]);
 
@@ -388,10 +391,8 @@ while (isc_dsql_fetch(status, &stmth, out_sqlda->version, out_sqlda) != 100L)
 
       else if (buffer[0] == 0 || Ustrchr(buffer, ' ') != NULL)
 	{
-	int j;
-
 	result = string_catn(result, US "\"", 1);
-	for (j = 0; j < len; j++)
+	for (int j = 0; j < len; j++)
 	  {
 	  if (buffer[j] == '\"' || buffer[j] == '\\')
 	      result = string_cat(result, US "\\", 1);
@@ -415,7 +416,7 @@ if (!result)
   *errmsg = US "Interbase: no data found";
   }
 else
-  store_reset(result->s + result->ptr + 1);
+  gstring_release_unused(result);
 
 
 /* Get here by goto from various error checks. */
@@ -434,7 +435,7 @@ if (result)
   }
 else
   {
-  DEBUG(D_lookup) debug_printf("%s\n", *errmsg);
+  DEBUG(D_lookup) debug_printf_indent("%s\n", *errmsg);
   return yield;           /* FAIL or DEFER */
   }
 }
@@ -451,33 +452,27 @@ arguments are not used. Loop through a list of servers while the query is
 deferred with a retryable error. */
 
 static int
-ibase_find(void *handle, uschar * filename, uschar * query, int length,
-           uschar ** result, uschar ** errmsg, uint *do_cache)
+ibase_find(void * handle, const uschar * filename, uschar * query, int length,
+  uschar ** result, uschar ** errmsg, uint * do_cache, const uschar * opts)
 {
-    int sep = 0;
-    uschar *server;
-    uschar *list = ibase_servers;
-    uschar buffer[512];
+int sep = 0;
+uschar *server;
+uschar *list = ibase_servers;
 
-    /* Keep picky compilers happy */
-    do_cache = do_cache;
+DEBUG(D_lookup) debug_printf_indent("Interbase query: %s\n", query);
 
-    DEBUG(D_lookup) debug_printf("Interbase query: %s\n", query);
+while ((server = string_nextinlist(&list, &sep, NULL, 0)))
+  {
+  BOOL defer_break = FALSE;
+  int rc = perform_ibase_search(query, server, result, errmsg, &defer_break);
+  if (rc != DEFER || defer_break)
+    return rc;
+  }
 
-    while ((server =
-            string_nextinlist(&list, &sep, buffer,
-                              sizeof(buffer))) != NULL) {
-        BOOL defer_break = FALSE;
-        int rc = perform_ibase_search(query, server, result, errmsg,
-                                      &defer_break);
-        if (rc != DEFER || defer_break)
-            return rc;
-    }
+if (!ibase_servers)
+  *errmsg = US "no Interbase servers defined (ibase_servers option)";
 
-    if (ibase_servers == NULL)
-        *errmsg = US "no Interbase servers defined (ibase_servers option)";
-
-    return DEFER;
+return DEFER;
 }
 
 
@@ -498,51 +493,32 @@ can't quote "on spec".
 Arguments:
   s          the string to be quoted
   opt        additional option text or NULL if none
+  idx	     lookup type index
 
 Returns:     the processed string or NULL for a bad option
 */
 
-static uschar *ibase_quote(uschar * s, uschar * opt)
+static uschar *
+ibase_quote(uschar * s, uschar * opt, unsigned idx)
 {
-    register int c;
-    int count = 0;
-    uschar *t = s;
-    uschar *quoted;
+int c;
+int count = 0;
+uschar * t = s, * quoted;
 
-    if (opt != NULL)
-        return NULL;            /* No options recognized */
+if (opt)
+  return NULL;            /* No options recognized */
 
-    while ((c = *t++) != 0)
-        if (Ustrchr("\n\t\r\b\'\"\\", c) != NULL)
-            count++;
+while ((c = *t++))
+  if (c == '\'') count++;
 
-    if (count == 0)
-        return s;
-    t = quoted = store_get(Ustrlen(s) + count + 1);
+t = quoted = store_get_quoted(Ustrlen(s) + count + 1, s, idx);
 
-    while ((c = *s++) != 0) {
-        if (Ustrchr("'", c) != NULL) {
-            *t++ = '\'';
-            *t++ = '\'';
-/*    switch(c)
-      {
-      case '\n': *t++ = 'n';
-      break;
-      case '\t': *t++ = 't';
-      break;
-      case '\r': *t++ = 'r';
-      break;
-      case '\b': *t++ = 'b';
-      break;
-      default:   *t++ = c;
-      break;
-      }*/
-        } else
-            *t++ = c;
-    }
+while ((c = *s++))
+  if (c == '\'') { *t++ = '\''; *t++ = '\''; }
+  else *t++ = c;
 
-    *t = 0;
-    return quoted;
+*t = 0;
+return quoted;
 }
 
 
@@ -554,25 +530,26 @@ static uschar *ibase_quote(uschar * s, uschar * opt)
 
 #include "../version.h"
 
-void
-ibase_version_report(FILE *f)
+gstring *
+ibase_version_report(gstring * g)
 {
 #ifdef DYNLOOKUP
-fprintf(f, "Library version: ibase: Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g, "Library version: ibase: Exim version %s\n", EXIM_VERSION_STR));
 #endif
+return g;
 }
 
 
 static lookup_info _lookup_info = {
-  US"ibase",                     /* lookup name */
-  lookup_querystyle,             /* query-style lookup */
-  ibase_open,                    /* open function */
-  NULL,                          /* no check function */
-  ibase_find,                    /* find function */
-  NULL,                          /* no close function */
-  ibase_tidy,                    /* tidy function */
-  ibase_quote,                   /* quoting function */
-  ibase_version_report           /* version reporting */
+  .name = US"ibase",			/* lookup name */
+  .type = lookup_querystyle,		/* query-style lookup */
+  .open = ibase_open,			/* open function */
+  .check NULL,				/* no check function */
+  .find = ibase_find,			/* find function */
+  .close = NULL,			/* no close function */
+  .tidy = ibase_tidy,			/* tidy function */
+  .quote = ibase_quote,			/* quoting function */
+  .version_report = ibase_version_report           /* version reporting */
 };
 
 #ifdef DYNLOOKUP

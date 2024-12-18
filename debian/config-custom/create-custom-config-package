@@ -10,7 +10,7 @@ TARGETDIR="../exim4-config-$PACKAGESUFFIX"
 #DEBUG=1
 
 # copy over -changelog, generating a proper changelog entry
-# copy over update-exim4defaults, ip-up.d, email-addresses
+# copy over ip-up.d, email-addresses
 
 dh_testdir
 
@@ -52,7 +52,7 @@ for file in compat control copyright rules install; do
   copytextreplace debian/config-custom/debian/$file
 done
 
-for file in ip-up.d update-exim4defaults email-addresses; do
+for file in ip-up.d email-addresses; do
   copytextreplace debian/$file
 done
 

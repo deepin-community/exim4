@@ -2,8 +2,10 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
+/* Copyright (c) The Exim Maintainers 2021 - 2024 */
 /* Copyright (c) University of Cambridge 1995 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 
 /* Source files for exim all #include this header, which drags in everything
@@ -87,6 +89,13 @@ making unique names. */
 # include <limits.h>
 #endif
 
+#ifdef EXIM_HAVE_INOTIFY
+# include <sys/inotify.h>
+#endif
+#ifdef EXIM_HAVE_KEVENT
+# include <sys/event.h>
+#endif
+
 /* C99 integer types, figure out how to undo this if needed for older systems */
 
 #include <inttypes.h>
@@ -118,15 +127,50 @@ making unique names. */
 # define EXIM_ARITH_MIN (-EXIM_ARITH_MAX - 1)
 #endif
 
-/* Some systems have PATH_MAX and some have MAX_PATH_LEN. */
+/* RFC 5321 specifies that the maximum length of a local-part is 64 octets
+and the maximum length of a domain is 255 octets, but then also defines
+the maximum length of a forward/reverse path as 256 not 64+1+255.
+For an IP address, the maximum is 45 without a scope and we don't work
+with scoped addresses, so go with that.  (IPv6 with mapped IPv4).
 
-#ifndef PATH_MAX
-# ifdef MAX_PATH_LEN
-#  define PATH_MAX MAX_PATH_LEN
-# else
-#  define PATH_MAX 1024
-# endif
-#endif
+A hostname maximum length is in practice the same as the domainname, for
+the same core reasons (maximum length of a DNS name), but the semantics
+are different and seeing "DOMAIN" in source is confusing when talking about
+hostnames; so we define a second macro.  We'll use RFC 2181 as the reference
+for this one.
+
+There is no known (to me) specification on the maximum length of a human name
+in email addresses and we should be careful about imposing such a limit on
+received email, but in terms of limiting what untrusted callers specify, or
+local generation, having a limit makes sense.  Err on the side of generosity.
+
+For a display mail address, we have a human name, an email in brackets,
+possibly some (Comments), so it needs to be at least 512+3 and some more to
+avoid extraneous errors.
+Since the sane SMTP line length limit is 998, constraining such parameters to
+be 1024 seems generous and unlikely to spuriously reject legitimate
+invocations.
+
+The driver name is a name of a router/transport/authenticator etc in the
+configuration file.  We also use this for some other short strings, such
+as queue names.
+Also TLS ciphersuite name (no real known limit since the protocols use
+integers, but max seen in reality is 45 octets).
+
+RFC 1413 gives us the 512 limit on IDENT protocol userids.
+*/
+
+#define EXIM_EMAILADDR_MAX     256
+#define EXIM_LOCALPART_MAX      64
+#define EXIM_DOMAINNAME_MAX    255
+#define EXIM_IPADDR_MAX         45
+#define EXIM_HOSTNAME_MAX      255
+#define EXIM_HUMANNAME_MAX     256
+#define EXIM_DISPLAYMAIL_MAX  1024
+#define EXIM_DRIVERNAME_MAX     64
+#define EXIM_CIPHERNAME_MAX     64
+#define EXIM_IDENTUSER_MAX     512
+
 
 #include <sys/types.h>
 #include <sys/file.h>
@@ -470,19 +514,23 @@ extern int ferror(FILE *);
 
 /* The header from the PCRE regex package */
 
-#include <pcre.h>
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
 
 /* Exim includes are in several files. Note that local_scan.h #includes
 config.h, mytypes.h, and store.h, so we don't need to mention them explicitly.
 */
 
 #include "local_scan.h"
+#include "path_max.h"
 #include "macros.h"
-#include "dbstuff.h"
+#include "blob.h"
+#include "hintsdb.h"
+#include "hintsdb_structs.h"
 #include "structs.h"
 #include "blob.h"
-#include "globals.h"
 #include "hash.h"
+#include "globals.h"
 #include "functions.h"
 #include "dbfunctions.h"
 #include "osfunctions.h"
@@ -493,13 +541,10 @@ config.h, mytypes.h, and store.h, so we don't need to mention them explicitly.
 #ifdef SUPPORT_SPF
 # include "spf.h"
 #endif
-#ifdef EXPERIMENTAL_SRS
-# include "srs.h"
-#endif
 #ifndef DISABLE_DKIM
 # include "dkim.h"
 #endif
-#ifdef EXPERIMENTAL_DMARC
+#ifdef SUPPORT_DMARC
 # include "dmarc.h"
 # include <opendmarc/dmarc.h>
 #endif
@@ -516,7 +561,7 @@ requires various things that are set therein. */
 #endif
 
 #ifdef ENABLE_DISABLE_FSYNC
-# define EXIMfsync(f) (disable_fsync? 0 : fsync(f))
+# define EXIMfsync(f) (disable_fsync ? 0 : fsync(f))
 #else
 # define EXIMfsync(f) fsync(f)
 #endif
@@ -539,11 +584,13 @@ union sockaddr_46 {
   struct sockaddr v0;
 };
 
-/* If SUPPORT_TLS is not defined, ensure that USE_GNUTLS is also not defined
-so that if USE_GNUTLS *is* set, we can assume SUPPORT_TLS is also set.
+/* If DISABLE_TLS is defined, ensure that USE_GNUTLS is not defined
+so that if USE_GNUTLS *is* set, we can assume DISABLE_TLS is not set.
+Ditto USE_OPENSSL.
 Likewise, OSCP, AUTH_TLS and CERTNAMES cannot be supported. */
 
-#ifndef SUPPORT_TLS
+#ifdef DISABLE_TLS
+# undef USE_OPENSSL
 # undef USE_GNUTLS
 # ifndef DISABLE_OCSP
 #  define DISABLE_OCSP
@@ -595,6 +642,22 @@ default to EDQUOT if it exists, otherwise ENOSPC. */
 
 #ifndef EXIM_GROUPLIST_SIZE
 # define EXIM_GROUPLIST_SIZE NGROUPS_MAX
+#endif
+
+/* Linux has TCP_CORK, FreeBSD has TCP_NOPUSH; they do pretty much the same */
+
+#ifdef TCP_CORK
+# define EXIM_TCP_CORK TCP_CORK
+#elif defined(TCP_NOPUSH)
+# define EXIM_TCP_CORK TCP_NOPUSH
+#endif
+
+/* LibreSSL seems to not push out the SMTP response to QUIT with our usual
+handling which is trying to get the client to FIN first so that the server does
+not get the TIME_WAIT */
+
+#if !defined(DISABLE_TLS) && defined(USE_OPENSSL) && defined(LIBRESSL_VERSION_NUMBER)
+# define SERVERSIDE_CLOSE_NOWAIT
 #endif
 
 #endif

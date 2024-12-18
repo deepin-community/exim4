@@ -2,12 +2,14 @@
 *     Exim - an Internet mail transport agent    *
 *************************************************/
 
-/* Copyright (c) University of Cambridge 2016 - 2018*/
+/* Copyright (c) The Exim Maintainers 2020 - 2022 */
+/* Copyright (c) University of Cambridge 2016 - 2018 */
 /* See the file NOTICE for conditions of use and distribution. */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "../exim.h"
 
-#ifdef EXPERIMENTAL_LMDB
+#ifdef LOOKUP_LMDB
 
 #include <lmdb.h>
 
@@ -23,14 +25,14 @@ MDB_dbi db_dbi;
 *************************************************/
 
 static void *
-lmdb_open(uschar * filename, uschar ** errmsg)
+lmdb_open(const uschar * filename, uschar ** errmsg)
 {
 MDB_env * db_env = NULL;
 Lmdbstrct * lmdb_p;
 int ret, save_errno;
 const uschar * errstr;
 
-lmdb_p = store_get(sizeof(Lmdbstrct));
+lmdb_p = store_get(sizeof(Lmdbstrct), GET_UNTAINTED);
 lmdb_p->txn = NULL;
 
 if ((ret = mdb_env_create(&db_env)))
@@ -74,9 +76,9 @@ bad:
 *************************************************/
 
 static int
-lmdb_find(void * handle, uschar * filename,
+lmdb_find(void * handle, const uschar * filename,
     const uschar * keystring, int length, uschar ** result, uschar ** errmsg,
-    uint * do_cache)
+    uint * do_cache, const uschar * opts)
 {
 int ret;
 MDB_val dbkey, data;
@@ -85,24 +87,24 @@ Lmdbstrct * lmdb_p = handle;
 dbkey.mv_data = CS keystring;
 dbkey.mv_size = length;
 
-DEBUG(D_lookup) debug_printf("LMDB: lookup key: %s\n", CS keystring);
+DEBUG(D_lookup) debug_printf_indent("LMDB: lookup key: %s\n", CS keystring);
 
 if ((ret = mdb_get(lmdb_p->txn, lmdb_p->db_dbi, &dbkey, &data)) == 0)
   {
   *result = string_copyn(US data.mv_data, data.mv_size);
-  DEBUG(D_lookup) debug_printf("LMDB: lookup result: %s\n", *result);
+  DEBUG(D_lookup) debug_printf_indent("LMDB: lookup result: %s\n", *result);
   return OK;
   }
 else if (ret == MDB_NOTFOUND)
   {
   *errmsg = US"LMDB: lookup, no data found";
-  DEBUG(D_lookup) debug_printf("%s\n", *errmsg);
+  DEBUG(D_lookup) debug_printf_indent("%s\n", *errmsg);
   return FAIL;
   }
 else
   {
   *errmsg = string_sprintf("LMDB: lookup error: %s", mdb_strerror(ret));
-  DEBUG(D_lookup) debug_printf("%s\n", *errmsg);
+  DEBUG(D_lookup) debug_printf_indent("%s\n", *errmsg);
   return DEFER;
   }
 }
@@ -128,26 +130,27 @@ mdb_env_close(db_env);
 
 #include "../version.h"
 
-void
-lmdb_version_report(FILE * f)
+gstring *
+lmdb_version_report(gstring * g)
 {
-fprintf(f, "Library version: LMDB: Compile: %d.%d.%d\n",
-    MDB_VERSION_MAJOR, MDB_VERSION_MINOR, MDB_VERSION_PATCH);
+g = string_fmt_append(g, "Library version: LMDB: Compile: %d.%d.%d\n",
+			  MDB_VERSION_MAJOR, MDB_VERSION_MINOR, MDB_VERSION_PATCH);
 #ifdef DYNLOOKUP
-fprintf(f, "                        Exim version %s\n", EXIM_VERSION_STR);
+g = string_fmt_append(g, "                        Exim version %s\n", EXIM_VERSION_STR);
 #endif
+return g;
 }
 
 static lookup_info lmdb_lookup_info = {
-  US"lmdb",                     /* lookup name */
-  lookup_absfile,               /* query-style lookup */
-  lmdb_open,                    /* open function */
-  NULL,                         /* no check function */
-  lmdb_find,                    /* find function */
-  lmdb_close,                   /* close function */
-  NULL,                         /* tidy function */
-  NULL,                         /* quoting function */
-  lmdb_version_report           /* version reporting */
+  .name = US"lmdb",			/* lookup name */
+  .type = lookup_absfile,		/* query-style lookup */
+  .open = lmdb_open,			/* open function */
+  .check = NULL,			/* no check function */
+  .find = lmdb_find,			/* find function */
+  .close = lmdb_close,			/* close function */
+  .tidy = NULL,				/* tidy function */
+  .quote = NULL,			/* quoting function */
+  .version_report = lmdb_version_report           /* version reporting */
 };
 
 #ifdef DYNLOOKUP
@@ -157,4 +160,4 @@ static lookup_info lmdb_lookup_info = {
 static lookup_info *_lookup_list[] = { &lmdb_lookup_info };
 lookup_module_info lmdb_lookup_module_info = { LOOKUP_MODULE_INFO_MAGIC, _lookup_list, 1 };
 
-#endif /* EXPERIMENTAL_LMDB */
+#endif /* LOOKUP_LMDB */

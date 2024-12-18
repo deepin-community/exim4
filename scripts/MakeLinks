@@ -3,7 +3,8 @@
 # Script to build links for all the exim source files from the system-
 # specific build directory. It should be run from within that directory.
 #
-# Copyright (c) The Exim Maintainers 1995 - 2018
+# Copyright (c) The Exim Maintainers 1995 - 2024
+# SPDX-License-Identifier: GPL-2.0-or-later
 
 test ! -d ../src && \
   echo "*** $0 should be run in a system-specific subdirectory." && \
@@ -30,9 +31,9 @@ echo ">>> Creating links to source files..."
 mkdir lookups
 cd lookups
 # Makefile is generated
-for f in README cdb.c dbmdb.c dnsdb.c dsearch.c ibase.c ldap.h ldap.c \
-  lmdb.c lsearch.c mysql.c redis.c nis.c nisplus.c oracle.c passwd.c \
-  pgsql.c spf.c sqlite.c testdb.c whoson.c \
+for f in README cdb.c dbmdb.c dnsdb.c dsearch.c ibase.c json.c ldap.h ldap.c \
+  lmdb.c lsearch.c mysql.c nis.c nisplus.c oracle.c passwd.c \
+  pgsql.c readsock.c redis.c spf.c sqlite.c testdb.c whoson.c \
   lf_functions.h lf_check_file.c lf_quote.c lf_sqlperform.c
 do
   ln -s ../../src/lookups/$f $f
@@ -67,15 +68,15 @@ done
 
 cd ..
 
-# Likewise for the code for the authorization functions
+# Likewise for the code for the authentication drivers
 mkdir auths
 cd auths
 for f in README Makefile call_pam.c call_pwcheck.c \
   call_radius.c check_serv_cond.c cyrus_sasl.c cyrus_sasl.h gsasl_exim.c \
   gsasl_exim.h get_data.c get_no64_data.c heimdal_gssapi.c heimdal_gssapi.h \
-  md5.c xtextencode.c xtextdecode.c cram_md5.c cram_md5.h plaintext.c plaintext.h \
+  xtextencode.c xtextdecode.c cram_md5.c cram_md5.h plaintext.c plaintext.h \
   pwcheck.c pwcheck.h auth-spa.c auth-spa.h dovecot.c dovecot.h sha1.c spa.c \
-  spa.h tls.c tls.h
+  spa.h tls.c tls.h external.c external.h
 do
   ln -s ../../src/auths/$f $f
 done
@@ -95,18 +96,20 @@ cd ..
 # but local_scan.c does not, because its location is taken from the build-time
 # configuration. Likewise for the os.c file, which gets build dynamically.
 
-for f in blob.h dbfunctions.h dbstuff.h exim.h functions.h globals.h \
-  hash.h local_scan.h \
-  macros.h mytypes.h osfunctions.h store.h structs.h lookupapi.h sha_ver.h \
+for f in blob.h dbfunctions.h exim.h functions.h globals.h \
+  hash.h hintsdb.h hintsdb_structs.h local_scan.h \
+  macros.h mytypes.h osfunctions.h path_max.h store.h \
+  structs.h lookupapi.h sha_ver.h \
   \
-  acl.c buildconfig.c base64.c child.c crypt16.c daemon.c dbfn.c debug.c deliver.c \
-  directory.c dns.c drtables.c dummies.c enq.c exim.c exim_dbmbuild.c \
-  exim_dbutil.c exim_lock.c expand.c filter.c filtertest.c globals.c \
-  hash.c header.c host.c ip.c log.c lss.c match.c moan.c parse.c perl.c queue.c \
-  rda.c readconf.c receive.c retry.c rewrite.c rfc2047.c route.c search.c \
-  setenv.c environment.c \
+  acl.c buildconfig.c base64.c child.c crypt16.c daemon.c dbfn.c debug.c \
+  deliver.c directory.c dns.c dnsbl.c drtables.c dummies.c enq.c exim.c \
+  exim_dbmbuild.c exim_dbutil.c exim_lock.c expand.c filter.c filtertest.c \
+  globals.c hash.c header.c host.c host_address.c ip.c log.c lss.c match.c md5.c moan.c \
+  parse.c perl.c priv.c proxy.c queue.c rda.c readconf.c receive.c retry.c rewrite.c \
+  regex_cache.c rfc2047.c route.c search.c setenv.c environment.c \
   sieve.c smtp_in.c smtp_out.c spool_in.c spool_out.c std-crypto.c store.c \
-  string.c tls.c tlscert-gnu.c tlscert-openssl.c tls-gnu.c tls-openssl.c \
+  string.c tls.c tlscert-gnu.c tlscert-openssl.c tls-cipher-stdname.c \
+  tls-gnu.c tls-openssl.c \
   tod.c transport.c tree.c verify.c version.c \
   dkim.c dkim.h dkim_transport.c dmarc.c dmarc.h \
   valgrind.h memcheck.h \
@@ -123,7 +126,7 @@ done
 
 # EXPERIMENTAL_*
 for f in  arc.c bmi_spam.c bmi_spam.h dcc.c dcc.h dane.c dane-openssl.c \
-  danessl.h imap_utf7.c spf.c spf.h srs.c srs.h utf8.c
+  danessl.h imap_utf7.c spf.c spf.h srs.c srs.h utf8.c xclient.c
 do
   ln -s ../src/$f $f
 done

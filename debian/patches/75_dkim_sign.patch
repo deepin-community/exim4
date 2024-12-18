@@ -1,0 +1,25 @@
+Description: Avoid crash on unreadable dkim private key
+Author: Jeremy Harris
+Origin: upstream, https://bugs.exim.org/attachment.cgi?id=1493
+Bug: https://bugs.exim.org/show_bug.cgi?id=3116
+Bug-Debian: https://bugs.debian.org/1082905
+
+--- a/src/dkim.c
++++ b/src/dkim.c
+@@ -740,11 +740,15 @@ if (dkim_domain)
+ 			  dkim_private_key_expanded,
+ 			  dkim_hash_expanded,
+ 			  errstr
+ 			  )))
+       goto bad;
+-    dkim_private_key_expanded[0] = '\0';
++
++    if (dkim_private_key_expanded != dkim->dkim_private_key)
++      /* Avoid leaking keying material via big_buffer */
++      dkim_private_key_expanded[0] = '\0';
++
+ 
+     pdkim_set_optional(sig,
+ 			CS dkim_sign_headers_expanded,
+ 			CS dkim_identity_expanded,
+ 			pdkim_canon,
