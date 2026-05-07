@@ -1,3 +1,12 @@
+exim4 (4.98-2deepin1) unstable; urgency=medium
+
+  * Fix CVE-2025-30232: use-after-free vulnerability in debug pretrigger
+    handling. A local user with command-line access could potentially
+    escalate privileges.
+    Upstream: https://github.com/Exim/exim/commit/be040d7df68a8cbb244aaabc37832984dafcbf55
+
+ -- deepin-ci-robot <packages@deepin.org>  Fri, 08 May 2026 02:50:00 +0800
+
 exim4 (4.98-2) unstable; urgency=low
 
   * Also run update-exim4.conf on systemd daemon reload. Closes: #1077034

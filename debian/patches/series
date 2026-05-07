@@ -10,3 +10,4 @@
 74_DKIM-fix-parsing-of-pubkey-RR.patch
 75_dkim_sign.patch
 90_localscan_dlopen.dpatch
+CVE-2025-30232.patch
