@@ -21,7 +21,8 @@
 exim_dbmbuild \- Build a DBM file.
 .SH SYNOPSIS
 .B exim_dbmbuild
-.I [\-nolc] [\-nozero] [\-noduperr] [\-nowarn] inputfile|\- outputfile
+.RB [ \-nolc "] [" \-nozero "] [" \-noduperr "] [" \-nowarn ]
+.RI [ inputfile " | " \fB\-\fR ] " outputfile"
 
 .SH DESCRIPTION
 The
@@ -33,18 +34,18 @@ lookup (see section 9.1).
 It writes a DBM file using the lower-cased alias names as keys and the
 remainder of the information as data.
 The lower-casing can be prevented by calling the program with the
-.I \-nolc
+.B \-nolc
 option.
 
 A terminating zero is included as part of the key string.
 This is expected by the dbm lookup type.
 However, if the option
-.I \-nozero
-is given, 
+.B \-nozero
+is given,
 .B exim_dbmbuild
 creates files without terminating zeroes in either the key strings or the
 data strings.
-The 
+The
 .I dbmnz
 lookup type can be used with such files.
 
@@ -54,7 +55,7 @@ output file.
 It creates the output under a temporary name, and then renames it if all
 went well.
 If the native DB interface is in use (USE_DB is set in a compile-time
-configuration file - this is common in free versions of Unix) the two file
+configuration file \(en this is common in free versions of Unix) the two file
 names must be different, because in this mode the Berkeley DB functions
 create a single output file using exactly the name given.
 For example,
@@ -66,34 +67,38 @@ reads the system alias file and creates a DBM version of it in
 
 In systems that use the
 .I ndbm
-routines (mostly proprietary versions of Unix), two files are used, with the
-suffixes .dir and .pag.
-In this environment, the suffixes are added to the second argument of
-.B exim_dbmbuild,
+routines
+(mostly proprietary versions of Unix),
+two files are used, with the suffixes .dir and .pag.
+In this environment,
+the suffixes are added to the second argument of
+.BR exim_dbmbuild ,
 so it can be the same as the first.
 This is also the case when the Berkeley functions are used in
-compatibility mode (though this is not recommended), because in that case
-it adds a .db suffix to the file name.
+compatibility mode
+(though this is not recommended),
+because in that case it adds a .db suffix to the file name.
 
 If a duplicate key is encountered, the program outputs a warning, and when
 it finishes, its return code is 1 rather than zero, unless the
-.I \-noduperr
+.B \-noduperr
 option is used.
-By default, only the first of a set of duplicates is used - this makes it
+By default, only the first of a set of duplicates is used \(en this makes it
 compatible with lsearch lookups.
 There is an option
-.I \-lastdup
+.B \-lastdup
 which causes it to use the data for the last duplicate instead.
 There is also an option
-.I \-nowarn,
+.BR \-nowarn ,
 which stops it listing duplicate keys to \(lqstderr\(rq.
 For other errors, where it doesn't actually make a new file, the return
 code is 2.
 
 .SH BUGS
-This manual page needs a major re-work. If somebody knows better groff
-than us and has more experience in writing manual pages, any patches
-would be greatly appreciated.
+This manual page needs a major re-work.
+If somebody knows better groff than us and
+has more experience in writing manual pages,
+any patches would be greatly appreciated.
 
 .SH SEE ALSO
 .BR exim (8),

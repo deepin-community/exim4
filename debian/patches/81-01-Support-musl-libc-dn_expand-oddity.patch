@@ -1,0 +1,74 @@
+From 628bbaca7672748d941a12e7cd5f0122a4e18c81 Mon Sep 17 00:00:00 2001
+From: Jeremy Harris <jgh146exb@wizmail.org>
+Date: Tue, 28 Apr 2026 14:47:32 +0100
+Subject: [PATCH 1/4] Support musl libc dn_expand oddity
+
+CVE-2026-40684
+---
+ doc/ChangeLog                            | 16 ++++++++++++++++
+ .../CVE2026-40684.assessment                     | 12 ++++++++++++
+ src/string.c                                 | 12 ++++++------
+ 3 files changed, 34 insertions(+), 6 deletions(-)
+ create mode 100644 doc/doc-txt/exim-security-2026-04.1/CVE2026-40684.assessment
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -1,9 +1,13 @@
+ This document describes *changes* to previous versions, that might
+ affect Exim's operation, with an unchanged configuration file.  For new
+ options, and new features, see the NewStuff file next to this ChangeLog.
+ 
++JH/34 CVE-2026-40684: A crafted DNS record could cause a crash of the Exim
++      process acessing it, when operating with musl libc. This could be the
++      daemon. An Exim using Gnu libc is not affeected.
++
+ JH/33 Bug 3215: Fix GnuTLS hostname verify of a server certificate with a
+       zero-length Subject. These are now being handed out by LetsEncrypt; note
+       that this means they carry no DN (as well as no SN, that having decreed
+       deprecated in favour of SANs). The $tls_*peerdn variables relating to
+       these certificates will be empty strings.
+--- /dev/null
++++ b/doc/doc-txt/exim-security-2026-04.1/CVE2026-40684.assessment
+@@ -0,0 +1,12 @@
++CVE2026-40684
++
++Vulnerability conditions
++------------------------
++
++- Exim build/run using musl libc (not gnulibc)
++- Deamon running, accepting connections
++
++Impact
++------
++
++Remote-triggered crash, via crafted PTR record
+--- a/src/string.c
++++ b/src/string.c
+@@ -606,21 +606,21 @@ string_copy_dnsdomain(uschar * s)
+ {
+ uschar * yield;
+ uschar * ss = yield = store_get(Ustrlen(s) + 1, GET_TAINTED);	/* always treat as tainted */
+ 
+ while (*s)
+-  {
+   if (*s != '\\')
+     *ss++ = *s++;
+-  else if (isdigit(s[1]))
+-    {
+-    *ss++ = (s[1] - '0')*100 + (s[2] - '0')*10 + s[3] - '0';
+-    s += 4;
++  else if (isdigit(*++s)) /* Apparently, musl libc dn_expand seen doing \DD */
++    {	/* and \D also. We can only hope not when a real digit follows. */
++    uschar c = *s++ - '0';
++    if (isdigit(*s)) c = c * 10 + *s++ - '0';
++    if (isdigit(*s)) c = c * 10 + *s++ - '0';
++    *ss++ = c;
+     }
+   else if (*++s)
+     *ss++ = *s++;
+-  }
+ 
+ *ss = 0;
+ return yield;
+ }
+ 

@@ -1,6 +1,9 @@
-Tests: basic
+Tests:
+ basic,
 Depends:
  exim4,
  libnet-ssleay-perl,
  swaks,
-Restrictions: allow-stderr, isolation-container
+Restrictions:
+ allow-stderr,
+ isolation-container,

@@ -1,0 +1,133 @@
+From d22a2f873e7cc58e864ddb3869e2add9cff58c27 Mon Sep 17 00:00:00 2001
+From: Jeremy Harris <jgh146exb@wizmail.org>
+Date: Fri, 20 Dec 2024 15:58:45 +0000
+Subject: [PATCH] DKIM: fix verify of malformed header lines.  Bug 3036
+
+---
+ doc/ChangeLog       |  5 ++++
+ src/receive.c           | 25 +++++++++++++-----
+ test/log/4502               |  3 +++
+ test/scripts/4500-DKIM/4502 | 52 +++++++++++++++++++++++++++++++++++++
+ test/stderr/0044            |  1 +
+ test/stderr/2600            |  1 +
+ test/stderr/2610            |  1 +
+ test/stderr/2620            |  1 +
+ test/stderr/5004            |  1 +
+ test/stderr/5005            |  4 +++
+ test/stderr/5006            |  1 +
+ 11 files changed, 89 insertions(+), 6 deletions(-)
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -17,10 +17,15 @@ JH/16 Bug 3124: Fix theoretical crash in
+       detected, but a null-deref results.  In practice, IP packets with options
+       are rare (to non-existent).  Exim refuses connections having any, but this
+       issue was in the coding for logging preceding that refusal.  If coredumps
+       were enabled (not common), an attack could cause filesystem space usage.
+ 
++JH/20 Bug 3036: Fix smuggling attack on DKIM verification. A crafted insertion
++      between message header and body could look like a header, unsigned, for
++      the verification code but as part of the body for delivery of the message.
++      Address by cancelling verification.
++
+ Exim version 4.98.2
+ -------------------
+ 
+ This is a security release, addressing CVE-2025-30232
+ 
+--- a/src/receive.c
++++ b/src/receive.c
+@@ -2248,14 +2248,27 @@ OVERSIZE:
+     uschar * p = next->text;
+ 
+     /* If not a valid header line, break from the header reading loop, leaving
+     next != NULL, indicating that it holds the first line of the body. */
+ 
+-    if (isspace(*p)) break;
++    if (isspace(*p))
++      {
++      DEBUG(D_receive) debug_printf("WARNING: bad header line "
++	      " (starts with whitespace).  Assuming first line of body\n");
++#ifndef DISABLE_DKIM
++      f.dkim_disable_verify = TRUE;	/* This could be a DKIM-bypass attack */
++#endif
++      break;
++      }
+     while (mac_isgraph(*p) && *p != ':') p++;
+     if (Uskip_whitespace(&p) != ':')
+       {
++      DEBUG(D_receive) debug_printf("WARNING: bad header line"
++	      " (no colon).  Assuming first line of body\n");
++#ifndef DISABLE_DKIM
++      f.dkim_disable_verify = TRUE;
++#endif
+       body_zerocount = had_zero;
+       break;
+       }
+ 
+     /* We have a valid header line. If there were any binary zeroes in
+@@ -2564,11 +2577,11 @@ for (header_line * h = header_list->next
+       /****
+       to_or_cc_header_exists = TRUE;
+       ****/
+       break;
+     }
+-  }
++  }	/* Scan headers to identify them */
+ 
+ /* Extract recipients from the headers if that is required (the -t option).
+ Note that this is documented as being done *before* any address rewriting takes
+ place. There are two possibilities:
+ 
+@@ -2720,11 +2733,11 @@ if (extract_recip)
+ 
+       if (h->type == htype_bcc) h->type = htype_old;
+       }   /* For appropriate header line */
+     }     /* For each header line */
+ 
+-  }
++  }	/* Extract recipients from headers */
+ 
+ /* Now build the unique message id. This has changed several times over the
+ lifetime of Exim, and is changing for Exim 4.97.
+ The previous change was in about 2003.
+ 
+@@ -2877,11 +2890,11 @@ if (  !msgid_header
+   if (!resents_exist)
+     {
+     msgid_header_newly_created = TRUE;
+     msgid_header = h;
+     }
+-  }
++  }	/* Generate Message-ID: header */
+ 
+ /* If we are to log recipients, keep a copy of the raw ones before any possible
+ rewriting. Must copy the count, because later ACLs and the local_scan()
+ function may mess with the real recipients. */
+ 
+@@ -2982,11 +2995,11 @@ if (  !from_header
+       sender_address_unrewritten ? sender_address_unrewritten : sender_address,
+       *oname ? ">" : "");
+ 
+     from_header = header_last;    /* To get it checked for Sender: */
+     }
+-  }
++  }	/* Generate From: header */
+ 
+ 
+ /* If the sender is local (without suppress_local_fixups), or if we are in
+ submission mode and there is an authenticated_id, check that an existing From:
+ is correct, and if not, generate a Sender: header, unless disabled. Any
+@@ -3068,11 +3081,11 @@ if (  from_header
+     if (Ustrcmp(sender_address_unrewritten, generated_sender_address) != 0)
+       log_write(L_address_rewrite, LOG_MAIN,
+         "\"%s\" from env-from rewritten as \"%s\" by submission mode",
+         sender_address_unrewritten, generated_sender_address);
+     }
+-  }
++  }	/* generate Sender: header */
+ 
+ /* If there are any rewriting rules, apply them to the sender address, unless
+ it has already been rewritten as part of verification for SMTP input. */
+ 
+ DEBUG(D_rewrite)

@@ -1,0 +1,63 @@
+From c2ed759f5604625bf1d055d327864e7c2dd26c48 Mon Sep 17 00:00:00 2001
+From: Timo Sirainen <timo@sirainen.com>
+Date: Wed, 5 Feb 2025 10:53:58 +0000
+Subject: [PATCH] Dovecot: fix protocol sequence for version 2.4.0
+
+---
+ src/auths/dovecot.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+--- a/src/auths/dovecot.c
++++ b/src/auths/dovecot.c
+@@ -253,10 +253,11 @@ auth_dovecot_server(auth_instance * ablo
+ auth_dovecot_options_block *ob =
+        (auth_dovecot_options_block *) ablock->options_block;
+ uschar buffer[DOVECOT_AUTH_MAXLINELEN];
+ uschar *args[DOVECOT_AUTH_MAXFIELDCOUNT];
+ uschar *auth_command;
++uschar *version_command;
+ uschar *auth_extra_data = US"";
+ uschar *p;
+ int nargs, tmp;
+ int crequid = 1, ret = DEFER;
+ host_item host;
+@@ -334,10 +335,23 @@ for (;;)
+   if (Ustrcmp(args[0], US"VERSION") == 0)
+     {
+     CHECK_COMMAND("VERSION", 2, 2);
+     if (Uatoi(args[1]) != VERSION_MAJOR)
+       OUT("authentication socket protocol version mismatch");
++
++    version_command = string_sprintf("VERSION\t%d\t%d\n",
++	   VERSION_MAJOR, VERSION_MINOR);
++    
++    if ((
++    #ifndef DISABLE_TLS
++	cctx.tls_ctx ? tls_write(cctx.tls_ctx, version_command, Ustrlen(version_command), FALSE) :
++    #endif
++	write(cctx.sock, version_command, Ustrlen(version_command))) < 0)
++      HDEBUG(D_auth) debug_printf("error sending version_command: %s\n",
++	strerror(errno));
++    
++    HDEBUG(D_auth) debug_printf("  DOVECOT>> '%s'\n", version_command);
+     }
+   else if (Ustrcmp(args[0], US"MECH") == 0)
+     {
+     CHECK_COMMAND("MECH", 1, INT_MAX);
+     have_mech_line = TRUE;
+@@ -409,13 +423,13 @@ fprintf(f, "VERSION\t%d\t%d\r\nSERVICE\t
+ 
+ Subsequently, the command was modified to add "secured" and "valid-client-
+ cert" when relevant.
+ ****************************************************************************/
+ 
+-auth_command = string_sprintf("VERSION\t%d\t%d\nCPID\t%d\n"
++auth_command = string_sprintf("CPID\t%d\n"
+        "AUTH\t%d\t%s\tservice=smtp\t%srip=%s\tlip=%s\tnologin\tresp=%s\n",
+-       VERSION_MAJOR, VERSION_MINOR, getpid(), crequid,
++       getpid(), crequid,
+        ablock->public_name, auth_extra_data, sender_host_address,
+        interface_address, data);
+ 
+ if ((
+ #ifndef DISABLE_TLS

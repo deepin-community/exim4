@@ -1,0 +1,257 @@
+From 68b963b9f75ca27b38e1c0f8c87037990199f505 Mon Sep 17 00:00:00 2001
+From: Jeremy Harris <jgh146exb@wizmail.org>
+Date: Tue, 10 Mar 2026 21:29:52 +0000
+Subject: [PATCH 4/4] SPA authenticator: harden buffer usage
+
+CVE-2026-40687
+---
+ doc/ChangeLog                         |   4 +
+ .../CVE2026-40687.assessment                  |  12 ++
+ src/auths/auth-spa.c                      | 113 +++---------------
+ src/auths/auth-spa.h                      |   1 -
+ 4 files changed, 35 insertions(+), 95 deletions(-)
+ create mode 100644 doc/doc-txt/exim-security-2026-04.1/CVE2026-40687.assessment
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -1,9 +1,13 @@
+ This document describes *changes* to previous versions, that might
+ affect Exim's operation, with an unchanged configuration file.  For new
+ options, and new features, see the NewStuff file next to this ChangeLog.
+ 
++JH/36 CVE-2026-40687: The spa authenticator used an unitialized buffer, which
++      could result in a leak of data. It also had potential for wrting past the
++      end of static buffers, by choice of data provided by the client.
++
+ JH/35 CVE-2026-40686: The ${from_utf8:} expansion operator, fed malformed input,
+       could read into the heap. If the result was used for an SMTP rejection
+       message, data exfiltration would be possible.
+ 
+ BQ/02 CVE-2026-40685: JSON string expansions could, when fed crafted source
+--- /dev/null
++++ b/doc/doc-txt/exim-security-2026-04.1/CVE2026-40687.assessment
+@@ -0,0 +1,12 @@
++CVE2026-40687
++
++Vulnerability conditions
++------------------------
++
++- Config uses the "spa" authenticator driver
++
++Impact
++------
++
++- Remote-triggered crash (only of connection process, not daemon)
++- Infoleak
+--- a/src/auths/auth-spa.c
++++ b/src/auths/auth-spa.c
+@@ -163,11 +163,10 @@ int main (int argc, char ** argv)
+ 
+ extern int DEBUGLEVEL;
+ 
+ #include "../exim.h"
+ #include "auth-spa.h"
+-#include <assert.h>
+ 
+ 
+ #ifndef _BYTEORDER_H
+ # define _BYTEORDER_H
+ 
+@@ -411,10 +410,12 @@ spa_base64_to_bits (char *out, int outle
+ /* base 64 to raw bytes in quasi-big-endian order, returning count of bytes */
+ {
+ int len = 0;
+ uschar digit1, digit2, digit3, digit4;
+ 
++memset(out, 0, outlength);
++
+ if (in[0] == '+' && in[1] == ' ')
+   in += 2;
+ if (*in == '\r')
+   return (0);
+ 
+@@ -1238,63 +1239,37 @@ spa_string_add(SPAbuf * buffer, size_t o
+ int len = string ? Ustrlen(string) : 0;
+ spa_bytes_add(buffer, off, header, string, len);
+ }
+ 
+ static uschar *
+-strToUnicode(const uschar * p)
++strToUnicode(const uschar * p, int len)
+ {
+-static uschar buf[1024];
+-size_t l = Ustrlen(p);
+-
+-assert (l * 2 < sizeof buf);
+-
+-for (int i = 0; l--; ) { buf[i++] = *p++; buf[i++] = 0; }
++uschar * buf = store_get(len * 2, p);
++for (int i = 0; len--; ) { buf[i++] = *p++; buf[i++] = 0; }
+ return buf;
+ }
+ 
+ static void
+ spa_unicode_add_string(SPAbuf * buffer, size_t off, SPAStrHeader * header,
+   const uschar * string)
+ {
+-const uschar * p = string;
+-uschar * b = NULL;
++const uschar * p = string, * b = NULL;
+ int len = 0;
+ if (p)
+   {
+   len = Ustrlen(p);
+-  b = US strToUnicode(p);
++  b = strToUnicode(p, len);
+   }
+ spa_bytes_add(buffer, off, header, b, len*2);
+ }
+ 
+ 
+-#ifdef notdef
+-
+-#define DumpBuffer(fp, structPtr, header) \
+- dumpRaw(fp,(US structPtr)+IVAL(&structPtr->header.offset,0),SVAL(&structPtr->header.len,0))
+-
+-
+-static void
+-dumpRaw (FILE * fp, uschar *buf, size_t len)
++uschar *
++unicodeToString (char * p, size_t len)
+ {
+ int i;
+-
+-for (i = 0; i < len; ++i)
+-  fprintf (fp, "%02x ", buf[i]);
+-
+-fprintf (fp, "\n");
+-}
+-
+-#endif
+-
+-char *
+-unicodeToString (char *p, size_t len)
+-{
+-int i;
+-static char buf[1024];
+-
+-assert (len + 1 < sizeof buf);
++uschar * buf = store_get((int)len + 1, p);
+ 
+ for (i = 0; i < len; ++i)
+   {
+   buf[i] = *p & 0x7f;
+   p += 2;
+@@ -1303,89 +1278,37 @@ for (i = 0; i < len; ++i)
+ buf[i] = '\0';
+ return buf;
+ }
+ 
+ static uschar *
+-toString (char *p, size_t len)
++toString (const char *p, size_t len)
+ {
+-static uschar buf[1024];
+-
+-assert (len + 1 < sizeof buf);
++uschar * buf = store_get((int)len + 1, p);
+ 
+ memcpy (buf, p, len);
+-buf[len] = 0;
++buf[len] = '\0';
+ return buf;
+ }
+ 
+ static inline uschar *
+ get_challenge_unistr(SPAAuthChallenge * challenge, SPAStrHeader * hdr)
+ {
+-int off = IVAL(&hdr->offset, 0);
+-int len = SVAL(&hdr->len, 0);
+-return off + len < sizeof(SPAAuthChallenge)
+-  ? US unicodeToString(CS challenge + off, len/2) : US"";
+-}
++int offset = IVAL(&hdr->offset, 0), len = SVAL(&hdr->len, 0);
+ 
+-static inline uschar *
+-get_challenge_str(SPAAuthChallenge * challenge, SPAStrHeader * hdr)
+-{
+-int off = IVAL(&hdr->offset, 0);
+-int len = SVAL(&hdr->len, 0);
+-return off + len < sizeof(SPAAuthChallenge)
+-  ? US toString(CS challenge + off, len) : US"";
++return offset + len < sizeof(SPAAuthChallenge)
++  ? unicodeToString(CS challenge + offset, len/2) : US"";
+ }
+ 
+-#ifdef notdef
+-
+-#define GetUnicodeString(structPtr, header) \
+- unicodeToString(((char*)structPtr) + IVAL(&structPtr->header.offset,0) , SVAL(&structPtr->header.len,0)/2)
+-
+-#define GetString(structPtr, header) \
+- toString(((CS structPtr) + IVAL(&structPtr->header.offset,0)), SVAL(&structPtr->header.len,0))
+-
+-
+-void
+-dumpSmbNtlmAuthRequest (FILE * fp, SPAAuthRequest * request)
++static uschar *
++get_challenge_str(SPAAuthChallenge * challenge, SPAStrHeader * hdr)
+ {
+-fprintf (fp, "NTLM Request:\n");
+-fprintf (fp, "      Ident = %s\n", request->ident);
+-fprintf (fp, "      mType = %d\n", IVAL (&request->msgType, 0));
+-fprintf (fp, "      Flags = %08x\n", IVAL (&request->flags, 0));
+-fprintf (fp, "       User = %s\n", GetString (request, user));
+-fprintf (fp, "     Domain = %s\n", GetString (request, domain));
+-}
++int offset = IVAL(&hdr->offset, 0), len = SVAL(&hdr->len, 0);
+ 
+-void
+-dumpSmbNtlmAuthChallenge (FILE * fp, SPAAuthChallenge * challenge)
+-{
+-fprintf (fp, "NTLM Challenge:\n");
+-fprintf (fp, "      Ident = %s\n", challenge->ident);
+-fprintf (fp, "      mType = %d\n", IVAL (&challenge->msgType, 0));
+-fprintf (fp, "     Domain = %s\n", GetUnicodeString (challenge, uDomain));
+-fprintf (fp, "      Flags = %08x\n", IVAL (&challenge->flags, 0));
+-fprintf (fp, "  Challenge = ");
+-dumpRaw (fp, challenge->challengeData, 8);
++return offset + len < sizeof(SPAAuthChallenge)
++  ? toString(CS challenge + offset, len) : US"";
+ }
+ 
+-void
+-dumpSmbNtlmAuthResponse (FILE * fp, SPAAuthResponse * response)
+-{
+-fprintf (fp, "NTLM Response:\n");
+-fprintf (fp, "      Ident = %s\n", response->ident);
+-fprintf (fp, "      mType = %d\n", IVAL (&response->msgType, 0));
+-fprintf (fp, "     LmResp = ");
+-DumpBuffer (fp, response, lmResponse);
+-fprintf (fp, "     NTResp = ");
+-DumpBuffer (fp, response, ntResponse);
+-fprintf (fp, "     Domain = %s\n", GetUnicodeString (response, uDomain));
+-fprintf (fp, "       User = %s\n", GetUnicodeString (response, uUser));
+-fprintf (fp, "        Wks = %s\n", GetUnicodeString (response, uWks));
+-fprintf (fp, "       sKey = ");
+-DumpBuffer (fp, response, sessionKey);
+-fprintf (fp, "      Flags = %08x\n", IVAL (&response->flags, 0));
+-}
+-#endif
+ 
+ void
+ spa_build_auth_request (SPAAuthRequest * request, uschar * user, uschar * domain)
+ {
+ uschar * u = string_copy(user);
+--- a/src/auths/auth-spa.h
++++ b/src/auths/auth-spa.h
+@@ -90,8 +90,8 @@ void spa_build_auth_request (SPAAuthRequ
+        uschar * domain);
+ extern void spa_smb_encrypt (unsigned char * passwd, unsigned char * c8,
+                              unsigned char * p24);
+ extern void spa_smb_nt_encrypt (unsigned char * passwd, unsigned char * c8,
+                                 unsigned char * p24);
+-extern char *unicodeToString(char *p, size_t len);
++extern uschar *unicodeToString(char *p, size_t len);
+ extern void spa_build_auth_challenge(SPAAuthRequest *, SPAAuthChallenge *);
+ 

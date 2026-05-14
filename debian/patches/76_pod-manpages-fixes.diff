@@ -1,0 +1,156 @@
+Description: Fix some issues in pod-generated manpages.
+Author: Andreas Metzler <ametzler@debian.org>,
+ Bjarni Ingi Gislason
+Bug-Debian: https://bugs.debian.org/1087172
+Bug-Debian: https://bugs.debian.org/1087206
+Bug-Debian: https://bugs.debian.org/1087222
+Origin: vendor
+Forwarded: https://lists.exim.org/lurker/message/20241117.142139.0cda8c21.en.html
+Last-Update: 2024-11-17
+Applied-Upstream: commit:39d262b83fee69d4463bde978291a809b0f23c4a
+
+--- exim4-4.98.orig/src/exim_msgdate.src
++++ exim4-4.98/src/exim_msgdate.src
+@@ -605,7 +605,7 @@ The value is an integer between 0 and 16
+ means there is no localhost_number.
+ 
+ Do not confuse this with the L<--local|/l---local> option, which displays times
+- in the local timezone.
++in the local timezone.
+ 
+ =item B<--C> B<full path to exim configuration file>
+ 
+@@ -614,7 +614,7 @@ We set C<localhost_number> from the exim
+ 
+ =item B<-dexim_path>
+ 
+-The test test harness passes the full path of the C<exim> binary,
++The test harness passes the full path of the C<exim> binary,
+ or here the C<exim_msgdate> being tested. Not currently used.
+ 
+ =back
+--- exim4-4.98.orig/src/eximstats.src
++++ exim4-4.98/src/eximstats.src
+@@ -395,7 +395,7 @@ Show the delivery times (B<DT>)for all t
+ Exim must have been configured to use the +deliver_time logging option
+ for this option to work.
+ 
+-I<list> is an optional list of times. Eg -show_dt1,2,4,8 will show
++I<list> is an optional list of times. E.g. -show_dt1,2,4,8 will show
+ the number of messages with delivery times under 1 second, 2 seconds, 4 seconds,
+ 8 seconds, and over 8 seconds.
+ 
+@@ -408,7 +408,7 @@ These figures will be skewed by pipeline
+ Exim must have been configured to use the +queue_time_overall logging option
+ for this option to work.
+ 
+-I<list> is an optional list of times. Eg -show_rt1,2,4,8 will show
++I<list> is an optional list of times. E.g. -show_rt1,2,4,8 will show
+ the number of messages with receipt times under 1 second, 2 seconds, 4 seconds,
+ 8 seconds, and over 8 seconds.
+ 
+@@ -436,14 +436,14 @@ May be combined with B<-byhost> and/or B
+ =item B<-pattern> I<Description> I</Pattern/>
+ 
+ Look for the specified pattern and count the number of lines in which it appears.
+-This option can be specified multiple times. Eg:
++This option can be specified multiple times. E.g.:
+ 
+  -pattern 'Refused connections' '/refused connection/'
+ 
+ 
+ =item B<-merge>
+ 
+-This option allows eximstats to merge old eximstat reports together. Eg:
++This option allows eximstats to merge old eximstat reports together. E.g.:
+ 
+  eximstats mainlog.sun > report.sun.txt
+  eximstats mainlog.mon > report.mon.txt
+@@ -524,8 +524,8 @@ we will output an error message if we do
+ =item B<-d>
+ 
+ Debug flag. This outputs the eval()'d parser onto STDOUT which makes it
+-easier to trap errors in the eval section. Remember to add 1 to the line numbers to allow for the
+-title!
++easier to trap errors in the eval section.
++Remember to add 1 to the line numbers to allow for the title!
+ 
+ =back
+ 
+@@ -534,7 +534,8 @@ title!
+ Eximstats parses exim mainlog and syslog files to output a statistical
+ analysis of the messages processed. By default, a text
+ analysis is generated, but you can request other output formats
+-using flags. See the help (B<-help>) to learn
++using flags.
++See the help (B<-help>) to learn
+ about how to create charts from the tables.
+ 
+ =head1 AUTHOR
+@@ -731,7 +732,7 @@ sub get_filehandle {
+ # Given a data size in bytes, round it to KB, MB, or GB
+ # as appropriate.
+ #
+-# Eg 12000 => 12KB, 15000000 => 14GB, etc.
++# E.g. 12000 => 12KB, 15000000 => 14GB, etc.
+ #
+ # Note: I've experimented with Math::BigInt and it results in a 33%
+ # performance degredation as opposed to storing numbers split into
+@@ -854,7 +855,7 @@ sub add_volume {
+ # Given a time in seconds, break it down into
+ # weeks, days, hours, minutes, and seconds.
+ #
+-# Eg 12005 => 3h20m5s
++# E.g. 12005 => 3h20m5s
+ #######################################################################
+ sub format_time {
+ my($t) = pop @_;
+@@ -883,7 +884,7 @@ $p;
+ #
+ # Given a time in weeks, days, hours, minutes, or seconds, convert it to seconds.
+ #
+-# Eg 3h20m5s => 12005
++# E.g. 3h20m5s => 12005
+ #######################################################################
+ sub unformat_time {
+   my($formatted_time) = pop @_;
+@@ -1067,8 +1068,8 @@ sub calculate_localtime_offset {
+ #
+ # Print a table showing how long a particular step took for
+ # the messages. The parameters are:
+-#   $title         Eg "Time spent on the queue"
+-#   $message_type  Eg "Remote"
++#   $title         E.g. "Time spent on the queue"
++#   $message_type  E.g. "Remote"
+ #   \@times        The maximum time a message took for it to increment
+ #                  the corresponding @values counter.
+ #   \@values       An array of message counters.
+@@ -1800,7 +1801,7 @@ Valid options are:
+ -show_rt<list>  Show the receipt times for all the messages.
+ -show_dt<list>  Show the delivery times for all the messages.
+                 <list> is an optional list of times in seconds.
+-                Eg -show_rt1,2,4,8.
++                E.g. -show_rt1,2,4,8.
+ 
+ -include_original_destination   show both the final and original
+                 destinations in the results rather than just the final ones.
+@@ -1814,7 +1815,7 @@ Valid options are:
+ 
+ -pattern "Description" /pattern/
+                 Count lines matching specified patterns and show them in
+-                the results. It can be specified multiple times. Eg:
++                the results. It can be specified multiple times. E.g.:
+                 -pattern 'Refused connections' '/refused connection/'
+ 
+ -merge          merge previously generated reports into a new report
+--- exim4-4.98.orig/src/exipick.src
++++ exim4-4.98/src/exipick.src
+@@ -1533,7 +1533,7 @@ There are many ways to negate tests, eac
+ 
+ With a few exceptions the available variables match Exim's internal expansion variables in both name and exact contents.  There are a few notable additions and format deviations which are noted below.  Although a brief explanation is offered below, Exim's spec.txt should be consulted for full details.  It is important to remember that not every variable will be defined for every message.  For example, $sender_host_port is not defined for messages not received from a remote host.
+ 
+-Internally, all variables are represented as strings, meaning any operator will work on any variable.  This means that C<< $sender_host_name > 4 >> is a legal criterion, even if it does not produce meaningful results.  Variables in the list below are marked with a 'type' to help in choosing which types of operators make sense to use.
++Internally, all variables are represented as strings, meaning any operator will work on any variable.  This means that C<< $sender_host_name > 4 >> is a valid criterion, even if it does not produce meaningful results.  Variables in the list below are marked with a 'type' to help in choosing which types of operators make sense to use.
+ 
+   Identifiers
+     B - Boolean variables

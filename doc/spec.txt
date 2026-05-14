@@ -4,7 +4,7 @@ Exim Maintainers
 
 Copyright (c) 2024 The Exim Maintainers
 
-Revision 4.98  10 Jul 2024 EM
+Revision 4.98.2  25 Mar 2025 EM
 
 -------------------------------------------------------------------------------
 
@@ -635,7 +635,7 @@ ACKNOWLEDGMENTS, in which I have started recording the names of contributors.
 1.1 Exim documentation
 ----------------------
 
-This edition of the Exim specification applies to version 4.98 of Exim.
+This edition of the Exim specification applies to version 4.98.2 of Exim.
 Substantive changes from the 4.97 edition are marked in some renditions of this
 document; this paragraph is so marked if the rendition is capable of showing a
 change indicator.
@@ -1760,7 +1760,7 @@ only a short time (see timeout_frozen_after and ignore_bounce_errors_after).
 
 Exim is distributed as a gzipped or bzipped tar file which, when unpacked,
 creates a directory with the name of the current release (for example,
-exim-4.98) into which the following files are placed:
+exim-4.98.2) into which the following files are placed:
 
     ACKNOWLEDGMENTS contains some acknowledgments
     CHANGES         contains a reference to where changes are documented
@@ -2381,7 +2381,7 @@ when you have set INFO_DIRECTORY, as described in section 4.17 below.
 For the utility programs, old versions are renamed by adding the suffix .O to
 their names. The Exim binary itself, however, is handled differently. It is
 installed under a name that includes the version number and the compile number,
-for example, exim-4.98-1. The script then arranges for a symbolic link called
+for example, exim-4.98.2-1. The script then arranges for a symbolic link called
 exim to point to the binary. If you are updating a previous version of Exim,
 the script takes care to ensure that the name exim is never absent from the
 directory (as seen by other processes).
@@ -2945,7 +2945,8 @@ brief message about itself and exits.
 
     Features such as authentication and encryption, where the client input is
     not plain text, cannot easily be tested with -bh. Instead, you should use a
-    specialized SMTP test program such as swaks.
+    specialized SMTP test program such as swaks [https://www.jetmore.org/john/
+    code/swaks/].
 
 -bhc <IP address>
 
@@ -16461,6 +16462,19 @@ run, a line is written to the panic log, but the ETRN caller still receives a
 SMTP, so it is not possible for it to change the uid before running the
 command.
 
+Serialization of ETRN commands is based on the MD5 hash of the command's
+argument. No more than one ETRN command with the same hash of its arguments can
+run at a given time. Other ETRN commands get a 458 SMTP rejection.
+
+To protect against attacks flooding the ETRN serialization table, you should
+consider rate limiting the ETRN command.
+
+deny
+  ratelimit = 3 / 1m / per_cmd / $sender_host_address
+  message = rate for ETRN is over the limit ($sender_rate > $sender_rate_limit)
+
+accept
+
 +---------------------------------------------------------+
 |smtp_etrn_serialize|Use: main|Type: boolean|Default: true|
 +---------------------------------------------------------+
@@ -28161,7 +28175,8 @@ SUPPORT_DANE=yes in Local/Makefile. If it has been included, the macro
 
 A TLSA record consist of 4 fields, the "Certificate Usage", the "Selector", the
 "Matching type", and the "Certificate Association Data". For a detailed
-description of the TLSA record see RFC 7671.
+description of the TLSA record see RFC 7671 [https://tools.ietf.org/html/
+rfc7671#page-5].
 
 The TLSA record for the server may have "Certificate Usage" (1st) field of
 DANE-TA(2) or DANE-EE(3). These are the "Trust Anchor" and "End Entity"
@@ -28199,7 +28214,7 @@ than 4096, for interoperability); to use keyUsage fields correctly; to use
 random serial numbers. The list of requirements is subject to change as best
 practices evolve. If you're not already using a private CA, or it doesn't meet
 these requirements, then we encourage you to avoid all these issues and use a
-public CA such as Let's Encrypt instead.
+public CA such as Let's Encrypt [https://letsencrypt.org/] instead.
 
 The TLSA record should have a "Selector" (2nd) field of SPKI(1) and a "Matching
 Type" (3rd) field of SHA2-512(2).
@@ -28327,12 +28342,13 @@ The MTA-STS design requires a certificate from a public Certificate Authority
 which is recognized by clients sending to you. That selection of which CAs are
 trusted by others is outside your control.
 
-The most interoperable course of action is probably to use Let's Encrypt, with
-automated certificate renewal; to publish the anchor information in
-DNSSEC-secured DNS via TLSA records for DANE clients (such as Exim and Postfix)
-and to publish anchor information for MTA-STS as well. This is what is done for
-the exim.org domain itself (with caveats around occasionally broken MTA-STS
-because of incompatible specification changes prior to reaching RFC status).
+The most interoperable course of action is probably to use Let's Encrypt [
+https://letsencrypt.org/], with automated certificate renewal; to publish the
+anchor information in DNSSEC-secured DNS via TLSA records for DANE clients
+(such as Exim and Postfix) and to publish anchor information for MTA-STS as
+well. This is what is done for the exim.org domain itself (with caveats around
+occasionally broken MTA-STS because of incompatible specification changes prior
+to reaching RFC status).
 
 
 

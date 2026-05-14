@@ -1,0 +1,57 @@
+From 9fdc057e71b87c87a0d3d2288b2810a0efaaba57 Mon Sep 17 00:00:00 2001
+From: Bernard Quatermass <toolsmith@quatermass.co.uk>
+Date: Mon, 23 Mar 2026 16:43:51 +0000
+Subject: [PATCH 2/4] when dewrap, only skip \ if associated char
+
+CVE2026-40685
+---
+ doc/ChangeLog                                 |  5 ++++-
+ .../exim-security-2026-04.1/CVE2026-40685.assessment  | 11 +++++++++++
+ src/expand.c                                      |  2 +-
+ 3 files changed, 16 insertions(+), 2 deletions(-)
+ create mode 100644 doc/doc-txt/exim-security-2026-04.1/CVE2026-40685.assessment
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -1,9 +1,12 @@
+ This document describes *changes* to previous versions, that might
+ affect Exim's operation, with an unchanged configuration file.  For new
+ options, and new features, see the NewStuff file next to this ChangeLog.
+ 
++BQ/02 CVE-2026-40685: JSON string expansions could, when fed crafted source
++      strings, corrupt the heap.
++
+ JH/34 CVE-2026-40684: A crafted DNS record could cause a crash of the Exim
+       process acessing it, when operating with musl libc. This could be the
+       daemon. An Exim using Gnu libc is not affeected.
+ 
+ JH/33 Bug 3215: Fix GnuTLS hostname verify of a server certificate with a
+--- /dev/null
++++ b/doc/doc-txt/exim-security-2026-04.1/CVE2026-40685.assessment
+@@ -0,0 +1,11 @@
++CVE2026-40685
++
++Vulnerability conditions
++------------------------
++
++- Config uses json operators on externally-provided input
++
++Impact
++------
++
++- Remote-triggered heap corruption
+--- a/src/expand.c
++++ b/src/expand.c
+@@ -2379,11 +2379,11 @@ if (Uskip_whitespace(&p) == *wrap)
+   {
+   s = ++p;
+   wrap++;
+   while (*p)
+     {
+-    if (*p == '\\') p++;
++    if (*p == '\\' && *(p+1)) p++;
+     else if (!quotesmode && *p == wrap[-1]) depth++;
+     else if (*p == *wrap)
+       if (depth == 0)
+ 	{
+ 	*p = '\0';

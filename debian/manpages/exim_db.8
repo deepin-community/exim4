@@ -19,7 +19,8 @@
 .\" \(oqthis text is enclosed in single quotes\(cq
 .\" \(lqthis text is enclosed in double quotes\(rq
 .SH NAME
-exim_db \- Exim's hint databases maintenance (exim_dumpdb, exim_fixdb, exim_tidydb)
+exim_db \- Exim's hint databases maintenance (exim_dumpdb, exim_fixdb, \
+exim_tidydb)
 .SH SYNOPSIS
 .B exim_dumpdb
 .I spooldir database
@@ -28,7 +29,8 @@ exim_db \- Exim's hint databases maintenance (exim_dumpdb, exim_fixdb, exim_tidy
 .I spooldir database
 .br
 .B exim_tidydb
-.I [\-f] [\-t time] spooldir database
+.RB [ \-f "] [" \-t
+.IR time "] " "spooldir database"
 
 .SH DESCRIPTION
 Three utility programs are provided for maintaining the DBM files that
@@ -48,7 +50,7 @@ databases of information about messages waiting for remote hosts
 the callout cache
 .TP
 .B ratelimit
-the data for implementing the ratelimit ACL condition 
+the data for implementing the ratelimit ACL condition
 .TP
 .B misc
 other hints data (for example, for serializing ETRN runs)
@@ -72,9 +74,10 @@ It starts with one of the letters R, or T, depending on whether it refers
 to a routing or transport retry.
 For a local delivery, the next part is the local address; for a remote
 delivery it is the name of the remote host, followed by its failing IP
-address (unless \(lqretry_include_ip_address\(rq is set false on the smtp
-transport). If the remote port is not the standard one (port 25), it is
-added to the IP address.
+address
+(unless \(lqretry_include_ip_address\(rq is set false on the smtp transport).
+If the remote port is not the standard one (port 25),
+it is added to the IP address.
 Then there follows an error code, an additional error code, and a
 textual description of the error.
 
@@ -101,9 +104,10 @@ utility program is used to tidy up the contents of a hints database.
 If run with no options, it removes all records that are more than 30 days
 old.  The age is calculated from the date and time that the record was last
 updated.  Note that, in the case of the retry database, it is not the time
-since the first delivery failure. Information about a host that has been
-down for more than 30 days will remain in the database, provided that the
-record is updated sufficiently often.
+since the first delivery failure.
+Information about a host that has been down for more than 30 days will
+remain in the database,
+provided that the record is updated sufficiently often.
 
 The cutoff date can be altered by means of the \-t option, which must be
 followed by a time.
@@ -117,8 +121,8 @@ Both the
 and
 .I retry
 databases contain items that involve message ids.
-In the former these appear as data in records keyed by host - they were
-messages that were waiting for that host - and in the latter they are the
+In the former these appear as data in records keyed by host \(en they were
+messages that were waiting for that host \(en and in the latter they are the
 keys for retry information for messages that have suffered certain types
 of error.
 When \(lqexim_tidydb\(rq is run, a check is made to ensure that message ids in
@@ -133,23 +137,31 @@ utility outputs comments on the standard output whenever it removes
 information from the database.
 
 Certain records are automatically removed by Exim when they are no longer
-needed, but others are not. For example, if all the MX hosts for a domain
-are down, a retry record is created for each one. If the primary MX host
-comes back first, its record is removed when Exim successfully delivers to
-it, but the records for the others remain because Exim has not tried to use
-those hosts. 
+needed,
+but others are not.
+For example,
+if all the MX hosts for a domain are down,
+a retry record is created for each one.
+If the primary MX host comes back first,
+its record is removed when Exim successfully delivers to it,
+but the records for the others remain because Exim has not tried to use
+those hosts.
 
-It is important, therefore, to run \(lqexim_tidydb\(rq periodically on all
-the hints databases. You should do this at a quiet time of day, because it
-requires a database to be locked (and therefore inaccessible to Exim) while
-it does its work. Removing records from a DBM file does not normally make
-the file smaller, but all the common DBM libraries are able to re-use the
-space that is released. After an initial phase of increasing in size, the
-databases normally reach a point at which they no longer get any bigger, as
-long as they are regularly tidied.
+It is important, therefore,
+to run \(lqexim_tidydb\(rq periodically on all the hints databases.
+You should do this at a quiet time of day,
+because it requires a database to be locked
+(and therefore inaccessible to Exim)
+while it does its work.
+Removing records from a DBM file does not normally make the file smaller,
+but all the common DBM libraries are able to re-use the space that is
+released.
+After an initial phase of increasing in size,
+the databases normally reach a point at which they no longer get any bigger,
+as long as they are regularly tidied.
 
 Warning: If you never run \(lqexim_tidydb\(rq, the space used by the hints
-databases is likely to keep on increasing. 
+databases is likely to keep on increasing.
 
 The
 .B exim_fixdb
@@ -179,9 +191,10 @@ hour, and minute.
 Colons can be used as optional separators.
 
 .SH BUGS
-This manual page needs a major re-work. If somebody knows better groff
-than us and has more experience in writing manual pages, any patches
-would be greatly appreciated.
+This manual page needs a major re-work.
+If somebody knows better groff than us and
+has more experience in writing manual pages,
+any patches would be greatly appreciated.
 
 .SH SEE ALSO
 .BR exim (8),
