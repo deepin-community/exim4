@@ -6,13 +6,6 @@
 # See /usr/share/doc/exim4-base/README.Debian.gz for explanations.
 
 .ifdef MAIN_TLS_ENABLE
-# Defines what hosts to 'advertise' STARTTLS functionality to. The
-# default, *, will advertise to all hosts that connect with EHLO.
-.ifndef MAIN_TLS_ADVERTISE_HOSTS
-MAIN_TLS_ADVERTISE_HOSTS = *
-.endif
-tls_advertise_hosts = MAIN_TLS_ADVERTISE_HOSTS
-
 
 # Full paths to Certificate and Private Key. The Private Key file
 # must be kept 'secret' and should be owned by root.Debian-exim mode
@@ -77,4 +70,10 @@ tls_try_verify_hosts = MAIN_TLS_TRY_VERIFY_HOSTS
 
 .else
 # Use upstream defaults
+.endif
+
+# Defines what hosts to 'advertise' STARTTLS functionality to. The
+# upstream default, *, will advertise to all hosts that connect with EHLO.
+.ifdef MAIN_TLS_ADVERTISE_HOSTS
+tls_advertise_hosts = MAIN_TLS_ADVERTISE_HOSTS
 .endif

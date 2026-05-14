@@ -23,11 +23,11 @@ Subject: [PATCH] Fix SPA authenticator.  Bug 3106
 +      from this macro made me want to replace it with a real function so more
 +      extensive rework becamse needed.
 +
- Exim version 4.98
- -----------------
+ Exim version 4.98.2
+ -------------------
  
- JH/01 Support list of dkim results in the dkim_status ACL condition, making
-       it more usable in the data ACL.
+ This is a security release, addressing CVE-2025-30232
+ 
 --- a/src/auths/auth-spa.c
 +++ b/src/auths/auth-spa.c
 @@ -1201,59 +1201,71 @@ A = B = C = D = 0;

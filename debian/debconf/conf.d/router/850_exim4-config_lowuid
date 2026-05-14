@@ -7,7 +7,7 @@ FIRST_USER_ACCOUNT_UID = 0
 .endif
 
 .ifndef DEFAULT_SYSTEM_ACCOUNT_ALIAS
-DEFAULT_SYSTEM_ACCOUNT_ALIAS = :fail: no mail to system accounts
+DEFAULT_SYSTEM_ACCOUNT_ALIAS = :fail: Unrouteable address
 .endif
 
 COND_SYSTEM_USER_AND_REMOTE_SUBMITTER = "\

@@ -1,0 +1,83 @@
+From 371e5210218746e876fd71c888fdb666c85ceb56 Mon Sep 17 00:00:00 2001
+From: Jeremy Harris <jgh146exb@wizmail.org>
+Date: Sun, 19 Apr 2026 15:14:14 +0100
+Subject: [PATCH] GnuTLS: fix hostname verify of server cert for empty Subject.
+  Bug 3215
+
+---
+ doc/ChangeLog |  6 ++++++
+ src/tls-gnu.c     | 27 +++++++++++++++++----------
+ 2 files changed, 23 insertions(+), 10 deletions(-)
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -1,9 +1,15 @@
+ This document describes *changes* to previous versions, that might
+ affect Exim's operation, with an unchanged configuration file.  For new
+ options, and new features, see the NewStuff file next to this ChangeLog.
+ 
++JH/33 Bug 3215: Fix GnuTLS hostname verify of a server certificate with a
++      zero-length Subject. These are now being handed out by LetsEncrypt; note
++      that this means they carry no DN (as well as no SN, that having decreed
++      deprecated in favour of SANs). The $tls_*peerdn variables relating to
++      these certificates will be empty strings.
++
+ JH/07 Bug 3106: Fix coding in SPA authenticator. A macro argument was not
+       properly parenthesized, resulting in a logic error.  While the simple
+       fix was provided by Andrew Aitchison, the over-large code block resulting
+       from this macro made me want to replace it with a real function so more
+       extensive rework becamse needed.
+--- a/src/tls-gnu.c
++++ b/src/tls-gnu.c
+@@ -2265,11 +2265,10 @@ gnutls_protocol_t protocol;
+ gnutls_cipher_algorithm_t cipher;
+ gnutls_kx_algorithm_t kx;
+ gnutls_mac_algorithm_t mac;
+ gnutls_certificate_type_t ct;
+ gnutls_x509_crt_t crt;
+-uschar * dn_buf;
+ size_t sz;
+ 
+ if (state->have_set_peerdn)
+   return OK;
+ state->have_set_peerdn = TRUE;
+@@ -2387,22 +2386,30 @@ if ((ct = gnutls_certificate_type_get(se
+ rc = import_cert(&cert_list[0], &crt);
+ exim_gnutls_peer_err(US"cert 0");
+ 
+ state->tlsp->peercert = state->peercert = crt;
+ 
++state->peerdn = US"";
+ sz = 0;
+-rc = gnutls_x509_crt_get_dn(crt, NULL, &sz);
+-if (rc != GNUTLS_E_SHORT_MEMORY_BUFFER)
++if (!(rc = gnutls_x509_crt_get_dn(crt, NULL, &sz)))
++  { DEBUG(D_tls) debug_printf_indent("TLS: zero-length DN\n"); }
++else if (rc == GNUTLS_E_REQUESTED_DATA_NOT_AVAILABLE)
++  { DEBUG(D_tls) debug_printf_indent("TLS: no DN\n"); }
++else
+   {
+-  exim_gnutls_peer_err(US"getting size for cert DN failed");
+-  return FAIL; /* should not happen */
+-  }
+-dn_buf = store_get_perm(sz, GET_TAINTED);
+-rc = gnutls_x509_crt_get_dn(crt, CS dn_buf, &sz);
+-exim_gnutls_peer_err(US"failed to extract certificate DN [gnutls_x509_crt_get_dn(cert 0)]");
++  uschar * dn_buf;
++  if (rc != GNUTLS_E_SHORT_MEMORY_BUFFER)
++    {
++    exim_gnutls_peer_err(US"getting size for cert DN failed");
++    return FAIL; /* should not happen */
++    }
++  dn_buf = store_get_perm(sz, GET_TAINTED);
++  rc = gnutls_x509_crt_get_dn(crt, CS dn_buf, &sz);
++  exim_gnutls_peer_err(US"failed to extract certificate DN [gnutls_x509_crt_get_dn(cert 0)]");
+ 
+-state->peerdn = dn_buf;
++  state->peerdn = dn_buf;
++  }
+ 
+ return OK;
+ #undef exim_gnutls_peer_err
+ }
+ 

@@ -25,11 +25,11 @@ Broken-since: 2658a023286f
 +      record could crash the meesage recieve process. Investigation by
 +      Maxim Galaganov.
 +
- Exim version 4.98
- -----------------
+ Exim version 4.98.2
+ -------------------
  
- JH/01 Support list of dkim results in the dkim_status ACL condition, making
-       it more usable in the data ACL.
+ This is a security release, addressing CVE-2025-30232
+ 
 --- a/src/functions.h
 +++ b/src/functions.h
 @@ -1018,11 +1018,11 @@ return g ? (unsigned)g->ptr : 0;

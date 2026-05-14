@@ -9,4 +9,14 @@
 73_Fix-SPA-authenticator.-Bug-3106.patch
 74_DKIM-fix-parsing-of-pubkey-RR.patch
 75_dkim_sign.patch
+76_pod-manpages-fixes.diff
+77-Fix-IP-SRR-parsing.-Bug-3124.patch
+78_DKIM-fix-verify-of-malformed-header-lines.-Bug-3036.patch
+79_Dovecot-fix-protocol-sequence-for-version-2.4.0.patch
+80_GnuTLS-fix-hostname-verify-of-server-cert-for-empty-.patch
+81-01-Support-musl-libc-dn_expand-oddity.patch
+81-02-when-dewrap-only-skip-if-associated-char.patch
+81-03-Expansions-harden-for-malformed-UTF-8.patch
+81-04-SPA-authenticator-harden-buffer-usage.patch
+82-TLS-on-rxd-close-with-CHUNKING-active-clean-the-inpu.patch
 90_localscan_dlopen.dpatch

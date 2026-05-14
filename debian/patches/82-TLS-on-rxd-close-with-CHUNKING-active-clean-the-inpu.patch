@@ -1,0 +1,161 @@
+From 040c1ce6889f435206677ed532c9a4185cf0bcaf Mon Sep 17 00:00:00 2001
+From: Jeremy Harris <jgh146exb@wizmail.org>
+Date: Sat, 2 May 2026 18:52:10 +0100
+Subject: [PATCH] TLS: on rxd close with CHUNKING active, clean the input
+ processing stack (closes #39, EXIM-Security-2026-05-01.1)
+
+(cherry picked from commit f7387b3ba8944791d6ed8a3e4bf8f6f4239c74d1)
+---
+ doc/ChangeLog            | 13 +++++++
+ src/functions.h              |  1 +
+ src/smtp_in.c                | 50 +++++++++++++++++++-----
+ src/tls-gnu.c                |  6 +--
+ src/tls-openssl.c            |  2 +-
+ test/log/1114                    |  1 +
+ test/scripts/1100-Basic-TLS/1114 | 40 +++++++++++++++++++-
+ test/stdout/1114                 | 65 ++++++++++++++++++++++++++++++++
+ 8 files changed, 163 insertions(+), 15 deletions(-)
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -1,9 +1,14 @@
+ This document describes *changes* to previous versions, that might
+ affect Exim's operation, with an unchanged configuration file.  For new
+ options, and new features, see the NewStuff file next to this ChangeLog.
+ 
++JH/01 GnuTLS: when a TLS close alert was received with CHUNKING still active
++      a one-byte write into a freed buffer was possible.  Fix by reinstating
++      the plaintext input handlers on TLS close while maintaining the bdat
++      handlers.
++
+ JH/36 CVE-2026-40687: The spa authenticator used an unitialized buffer, which
+       could result in a leak of data. It also had potential for wrting past the
+       end of static buffers, by choice of data provided by the client.
+ 
+ JH/35 CVE-2026-40686: The ${from_utf8:} expansion operator, fed malformed input,
+--- a/src/functions.h
++++ b/src/functions.h
+@@ -57,10 +57,11 @@ extern BOOL    tls_client_start(client_c
+ extern BOOL    tls_client_adjunct_start(host_item *, client_conn_ctx *,
+ 		  const uschar *, uschar **);
+ extern void    tls_client_creds_reload(BOOL);
+ 
+ extern void    tls_close(void *, int);
++extern void    tls_close_notify(void);
+ extern BOOL    tls_could_getc(void);
+ extern void    tls_daemon_init(void);
+ extern int     tls_daemon_tick(void);
+ extern BOOL    tls_dropprivs_validate_require_cipher(BOOL);
+ extern BOOL    tls_export_cert(uschar *, size_t, void *);
+--- a/src/smtp_in.c
++++ b/src/smtp_in.c
+@@ -697,10 +697,22 @@ return wouldblock_reading();
+ 
+ 
+ /******************************************************************************/
+ /* Variants of the smtp_* input handling functions for use in CHUNKING mode */
+ 
++static inline void
++smtp_rcv_cleartext(void)
++{
++receive_getc = smtp_getc;
++receive_getbuf = smtp_getbuf;
++receive_get_cache = smtp_get_cache;
++receive_hasc = smtp_hasc;
++receive_ungetc = smtp_ungetc;
++receive_feof = smtp_feof;
++receive_ferror = smtp_ferror;
++}
++
+ /* Forward declarations */
+ static inline void bdat_push_receive_functions(void);
+ static inline void bdat_pop_receive_functions(void);
+ 
+ 
+@@ -939,10 +951,36 @@ bdat_push_receive_functions();  /* we're
+ return lwr_receive_ungetc(ch);
+ }
+ 
+ 
+ 
++#ifndef DISABLE_TLS
++/* The TLS layer has received a Close notification alert, meaning no
++more encrypted data will be received.
++
++To preserve layering of the receive processing if a BDAT chunk is still
++in progress, pop the bdat layer, reset to plaintext processing then
++re-push the bdat layer.
++Then close our writing side of the TLS channel.
++
++Any chunk in progress will likely error out anyway; let the existing
++processing handle it.
++*/
++
++void
++tls_close_notify(void)
++{
++if (chunking_state > CHUNKING_OFFERED)
++  {
++  bdat_pop_receive_functions();
++  smtp_rcv_cleartext();
++  bdat_push_receive_functions();
++  }
++tls_close(NULL, TLS_NO_SHUTDOWN);
++}
++#endif
++
+ /******************************************************************************/
+ 
+ /*************************************************
+ *     Write formatted string to SMTP channel     *
+ *************************************************/
+@@ -2172,17 +2210,12 @@ else
+ /* Set up the buffer for inputting using direct read() calls, and arrange to
+ call the local functions instead of the standard C ones. */
+ 
+ smtp_buf_init();
+ 
+-receive_getc = smtp_getc;
+-receive_getbuf = smtp_getbuf;
+-receive_get_cache = smtp_get_cache;
+-receive_hasc = smtp_hasc;
+-receive_ungetc = smtp_ungetc;
+-receive_feof = smtp_feof;
+-receive_ferror = smtp_ferror;
++smtp_rcv_cleartext();
++
+ lwr_receive_getc = NULL;
+ lwr_receive_getbuf = NULL;
+ lwr_receive_hasc = NULL;
+ lwr_receive_ungetc = NULL;
+ 
+--- a/src/tls-gnu.c
++++ b/src/tls-gnu.c
+@@ -3893,11 +3893,11 @@ if (sigalrm_seen)
+   }
+ 
+ else if (inbytes == 0)
+   {
+   DEBUG(D_tls) debug_printf("Got TLS_EOF\n");
+-  tls_close(NULL, TLS_NO_SHUTDOWN);
++  tls_close_notify();
+   return FALSE;
+   }
+ 
+ /* Handle genuine errors */
+ 
+--- a/src/tls-openssl.c
++++ b/src/tls-openssl.c
+@@ -4518,11 +4518,11 @@ switch(error)
+     DEBUG(D_tls) debug_printf("Got SSL_ERROR_ZERO_RETURN\n");
+ 
+     if (SSL_get_shutdown(ssl) == SSL_RECEIVED_SHUTDOWN)
+ 	  SSL_shutdown(ssl);
+ 
+-    tls_close(NULL, TLS_NO_SHUTDOWN);
++    tls_close_notify();
+     return FALSE;
+ 
+   /* Handle genuine errors */
+   case SSL_ERROR_SSL:
+     {

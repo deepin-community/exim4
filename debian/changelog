@@ -1,3 +1,100 @@
+exim4 (4.98.2-1+deb13u2) trixie-security; urgency=high
+
+  * Backport fix for Use-After-Free in GnuTLS BDAT/CHUNKING code path.
+    This is Exim-Security-2026-05-01.1, fixed upstream in 4.99.3.
+
+ -- Andreas Metzler <ametzler@debian.org>  Mon, 11 May 2026 19:14:46 +0200
+
+exim4 (4.98.2-1+deb13u1) trixie; urgency=medium
+
+  * Fix GnuTLS hostname verify of a server certificate with a zero-length
+    Subject. Patch from upstream GIT master (Closes: #1134984)
+  * Pull CVE-fixes from 4.99.2
+    +CVE-2026-40684  Possible crash with malicious DNS data when using musl
+     libc On systems using musl libc (not glibc) due to an oddity in octal
+     printing it is possible to crash the connection instance when malformed
+     DNS data is present in PTR records.
+    +CVE-2026-40685  Possible OOB read/write on corrupt JSON in header
+     configurations using json operators on invalid externally-provided input
+     could trigger heap corruption.
+    +CVE-2026-40686  Possible OOB read with large UTF8 trailing characters
+     configurations using utf8 operators on malformed utf8 in headers could
+     trigger OOB reads and might trigger some data leak if error messages are
+     required for subsequent emails in the current connection and similar
+     malformed headers are present.
+    +CVE-2026-40687  Possible OOB read/write with SPA authenticator in
+     configurations using the SPA authentication driver to a
+     hostile/compromised external SPA/NTLM connection it is possible to
+     trigger an OOB read/write and crash the connection instance or possibly
+     leak heap data to the instance.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 02 May 2026 11:31:20 +0200
+
+exim4 (4.98.2-1) unstable; urgency=medium
+
+  * New upstream version (Basically identical to 4.98,1 + CVE-2025-30232 fix)
+  * Unfuzz patches.
+  * Add export-dir setting to gbp.conf.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 29 Mar 2025 13:22:55 +0100
+
+exim4 (4.98.1-2) unstable; urgency=high
+
+  * Fix use-after-free  (requiring local command-line access) notified by
+    Trend Micro (ref: ZDI-CAN-26250). this is 4.98.2 without the version
+    number bump. CVE-2025-30232
+
+ -- Andreas Metzler <ametzler@debian.org>  Fri, 21 Mar 2025 15:32:31 +0100
+
+exim4 (4.98.1-1) unstable; urgency=medium
+
+  * Refresh upstream keys from
+    https://downloads.exim.org/Exim-Maintainers-Keyring.asc
+  * New upstream version (Basically identical to 4.98 +
+    81_Squashed-from-fix-cve-2025-26794-fixes-CVE-26794.patch)
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 15 Mar 2025 13:41:07 +0100
+
+exim4 (4.98-4) unstable; urgency=high
+
+  * Cherry-pick patches from upstream git master:
+    + 79_Dovecot-fix-protocol-sequence-for-version-2.4.0.patch (Compliance
+      with upcoming dovecot v1.3 auth protocol)
+  * Use default 550 message in lowuid_aliases router ("Unrouteable address"
+    instead of "no mail to system accounts") to avoid disclosing information on
+    installed packages. Closes: #1092910
+  * 81_Squashed-from-fix-cve-2025-26794-fixes-CVE-26794.patch: Upgrade to
+    4.98.1, fixing CVE-2025-26794. This is a SQL injection for the
+    (Sqlite-)hints database with ETRN. Debian binaries do not yet use sqlite
+    for the hints DB so this just only affects users building their own
+    binaries from sources and switching to sqlite-hints-DB.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 15 Feb 2025 14:02:27 +0100
+
+exim4 (4.98-3) unstable; urgency=low
+
+  * Manpage formatting fixes by Bjarni Ingi Gislason:
+    exim4-config_files.5 Closes: #1082620
+    exim_db.8            Closes: #1087135
+    exim_dbmbuild.8      Closes: #1087139
+    exiwhat.8            Closes: #1087225
+  * Extract non-lintish changes from patches for pod2man-generated manpages.
+    Closes: #1087172,#1087206,#1087222
+  * Cherrypick patches from upstream GIT master:
+    + 77-Fix-IP-SRR-parsing.-Bug-3124.patch: Fix theoretical crash in
+      received connection, triggerable by a crafted packet with massive
+      count of IP options. https://bugs.exim.org/show_bug.cgi?id=3124
+    + Fix for DKIM smuggling attack.
+      78-DKIM-fix-verify-of-malformed-header-lines.-Bug-3036.patch
+      https://bugs.exim.org/show_bug.cgi?id=3036
+  * Move tls_advertise_hosts setting outside (misnamed) .ifdef
+    MAIN_TLS_ENABLE to ease disabling of incoming TLS. Also make
+    README.Debian more explicit in this respect. Closes: #1089517
+  * Remove Marc Haber from uploaders. - Thank you for your work!
+  * Run wrap-and-sort -ast.
+
+ -- Andreas Metzler <ametzler@debian.org>  Sat, 21 Dec 2024 16:47:07 +0100
+
 exim4 (4.98-2) unstable; urgency=low
 
   * Also run update-exim4.conf on systemd daemon reload. Closes: #1077034

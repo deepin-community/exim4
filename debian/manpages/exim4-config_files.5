@@ -18,9 +18,8 @@
 .\" \(oqthis text is enclosed in single quotes\(cq
 .\" \(lqthis text is enclosed in double quotes\(rq
 .SH NAME
-exim4-config_files \- Files in use by the Debian exim4 packages
+exim4\-config_files \- Files in use by the Debian exim4 packages
 .SH SYNOPSIS
-.br
 /etc/aliases
 .br
 /etc/email\-addresses
@@ -79,7 +78,6 @@ useful for users who use their ISP's domain for email.
 The file should contain lines of the form
 .
 .LP
-.br
 user: someone@isp.com
 .br
 otheruser: someoneelse@anotherisp.com
@@ -90,7 +88,6 @@ the outside world. Technically, the from, reply\-to, and sender
 addresses, along with the envelope sender, are rewritten for users that
 appear to be in the local domain.
 .
-.LP
 .SH /etc/exim4/local_host_blacklist
 .I [exim host list]
 is an optional file containing a list of IP addresses, networks and
@@ -111,7 +108,6 @@ follows a positive item, and as "and" if it follows a negative item.
 For example, a /etc/exim4/local_host_blacklist
 .
 .LP
-.br
 192.168.10.0/24
 .br
 !172.16.10.128/26
@@ -125,14 +121,12 @@ Exim just evaluates left to right (or up-down in the file listing
 context), so you don't get the same kind of operator binding as in a
 programming language.
 .
-.LP
 .SH /etc/exim4/host_local_deny_exceptions
 .I [exim host list]
 contains a list of IP addresses, networks and host names whose
 messages will be accepted despite the address is also listed in
 /etc/exim4/local_host_blacklist, overriding a blacklisting.
 .
-.LP
 .SH /etc/exim4/local_sender_blacklist
 .I [exim address list]
 is an optional files containing a list of envelope senders whose
@@ -152,7 +146,6 @@ follows a positive item, and as "and" if it follows a negative item.
 For example, a /etc/exim4/local_sender_blacklist
 .
 .LP
-.br
 domain1.example
 .br
 !local@domain2.example
@@ -166,21 +159,18 @@ Exim just evaluates left to right (or up-down in the file listing
 context), so you don't get the same kind of operator binding as in a
 programming language.
 .
-.LP
 .SH /etc/exim4/sender_local_deny_exceptions
 .I [exim address list]
 is an optional file containing a list of envelope senders whose messages
 will be accepted despite the address being also listed in
 /etc/exim4/local_sender_blacklist, overriding a blacklisting.
 .
-.LP
 .SH /etc/exim4/local_sender_callout
 .I [exim address list]
 is an optional file containing a list of envelope senders whose
 messages are subject to sender verification with a callout. This is a
 full exim4 address list, and all available features can be used.
 .
-.LP
 .SH /etc/exim4/local_rcpt_callout
 .I [exim address list]
 is an optional file containing a list of envelope recipients for which
@@ -188,7 +178,6 @@ incoming messages are subject to recipient verification with a
 callout. This is a full exim4 address list, and all available features
 can be used.
 .
-.LP
 .SH /etc/exim4/local_domain_dnsbl_whitelist
 .I [exim address list]
 is an optional file containing a list of envelope senders whose
@@ -198,7 +187,6 @@ This feature is intended to be used in case of a domain-based DNSBL
 being too heavy handed, for example listing entire top-level domains
 for their registry policies.
 .
-.LP
 .SH /etc/exim4/hubbed_hosts
 .I [exim domain list]
 is an optional file containing a list of route_data records which can
@@ -213,7 +201,6 @@ The file should contain key-value pairs of domain pattern and route
 data of the form
 .
 .LP
-.br
 domain: host-list options
 .br
 dict.ref.example:  mail\-1.ref.example:mail\-2.ref.example
@@ -231,7 +218,6 @@ mail to bar.example to be sent to 192.168.183.3.
 See spec.txt chapter 20.3 through 20.7 for a more detailed explanation
 of host list format and available options.
 .
-.LP
 .SH /etc/exim4/passwd
 contains account and password data for SMTP authentication when the
 local exim is SMTP server and clients authenticate to the local exim.
@@ -240,7 +226,6 @@ local exim is SMTP server and clients authenticate to the local exim.
 The file should contain lines of the form
 .
 .LP
-.br
 username:crypted-password:clear-password
 .
 .LP
@@ -258,7 +243,6 @@ omitted completely.
 This file must be readable for the Debian\-exim user and should not be
 readable for others. Recommended file mode is root:Debian\-exim 640.
 .
-.LP
 .SH /etc/exim4/passwd.client
 contains account and password data for SMTP authentication when exim
 is authenticating as a client to some remote server.
@@ -267,7 +251,6 @@ is authenticating as a client to some remote server.
 The file should contain lines of the form
 .
 .LP
-.br
 target.mail.server.example:login-user-name:password
 .
 .LP
@@ -313,7 +296,6 @@ This file must be readable for the Debian\-exim user and should not be
 readable for others. Recommended file mode is root:Debian\-exim 640.
 .
 .LP
-.br
 # example for CONFDIR/passwd.client
 .br
 # this will only match if the server's generic name matches exactly
@@ -334,29 +316,25 @@ mail.server.example:user:password
 .br
 # the regular expression
 .br
-^smtp[0\-9]*\\.mail\\.server\\.example:user:password
+^smtp[0\-9]*\e.mail\e.server\e.example:user:password
 .br
 .
-.LP
 .SH /etc/exim4/exim.crt
 contains the certificate that exim uses to initiate TLS connections.
 This is public information and can be world readable.
 /usr/share/doc/exim4\-base/examples/exim\-gencert can
 be used to generate a private key and self-signed certificate.
 .
-.LP
 .SH /etc/exim4/exim.key
 contains the private key belonging to the certificate in exim.crt.
 This file's contents must be kept secret and should have mode
 root:Debian\-exim 640.  /usr/share/doc/exim4\-base/examples/exim\-gencert
 can be used to generate a private key and self-signed certificate.
 .
-.LP
 .SH /etc/mailname
 The "mail name" of the system. See Debian policy Chapter Customized programs
 and exim4-base's README.Debian for further details.
 .
-.LP
 .SH BUGS
 Plenty. Please report them through the Debian BTS
 .
@@ -365,16 +343,14 @@ This manual page needs a major re-work. If somebody knows better groff
 than us and has more experience in writing manual pages, any patches
 would be greatly appreciated.
 .
-.LP
 .SH NOTES
 .SS Unresolvable items in host lists
 .
-.LP
 Adding or keeping items in the abovementioned host lists which are not
 resolvable by DNS has severe consequences.
 .
 .LP
-e.g. if resolving a
+e.g., if resolving a
 .B hostname
 in local_host_blacklist returns a temporary error (DNS timeout) exim
 will not be able to check whether a connecting host is part of the list.
@@ -385,13 +361,13 @@ connecting host.
 .LP
 On the other hand if there is a permanent error in resolving a name in the
 host list (the record was removed from DNS) exim behaves as if the host
-does not match the list. e.g. a local_host_blacklist consisting of
+does not match the list. e.g., a local_host_blacklist consisting of
 .
 .LP
 notresolvable.example.com:rejectme.example.com
 .
 .LP
-is equivalent to an empty one. - Exim tries to match the IP-address of the
+is equivalent to an empty one. \(en Exim tries to match the IP-address of the
 connecting host to notresolvable.example.com, resolving this IP by DNS
 fails, exim behaves as if the connecting host does not match the list. List
 processing stops at this point!
@@ -406,11 +382,9 @@ See Exim specification Chapter
 .I Domain, host, address, and local part lists
 , section
 .I Behaviour when an IP address or name cannot be found.
-<http://www.exim.org/exim\-html\-current/doc/html/spec_html/ch\-domain_host_address_and_local_part_lists.html>
+<http://www.exim.org/exim\-html\-current/\:doc/\:html/\:spec_html/\:ch\-domain_host_address_and_local_part_lists.html>
 .
-.LP
 .SH SEE ALSO
-.br
 .BR exim (8),
 .br
 .BR update\-exim4.conf (8),
@@ -420,8 +394,6 @@ See Exim specification Chapter
 and for general notes and details about interaction with debconf
 .B /usr/share/doc/exim4\-base/README.Debian.gz
 .
-.LP
 .SH AUTHOR
 Marc Haber <mh+debian-packages@zugschlus.de> with help from Ross Boylan.
 .
-.LP
