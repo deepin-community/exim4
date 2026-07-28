@@ -19,4 +19,7 @@
 81-03-Expansions-harden-for-malformed-UTF-8.patch
 81-04-SPA-authenticator-harden-buffer-usage.patch
 82-TLS-on-rxd-close-with-CHUNKING-active-clean-the-inpu.patch
+83-Security-fix-PROXYv2-uninitialised-stack-disclosure-.patch
+84_01-Restrict-names-permitted-for-named-queues.patch
+84_02-Do-not-expand-local_part-in-a-pipe-transport-under-f.patch
 90_localscan_dlopen.dpatch

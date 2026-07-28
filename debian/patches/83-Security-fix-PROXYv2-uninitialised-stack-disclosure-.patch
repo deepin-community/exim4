@@ -1,0 +1,90 @@
+From aae0c4c3fba1f7e50971ba250ddbbedb583d48a6 Mon Sep 17 00:00:00 2001
+From: "Heiko Schlittermann (HS12-RIPE)" <hs@schlittermann.de>
+Date: Tue, 19 May 2026 16:06:43 +0200
+Subject: [PATCH] Security: fix PROXYv2 uninitialised-stack disclosure
+ (EXIM-Security-2026-05-16.1)
+
+A PROXYv2 frame with address family 0x21 (TCPv6) and payload length 0
+passes the upper-bound check at the only existing length guard, then
+the TCPv6 dispatch arm reads 16 bytes of uninitialised stack from the
+union into sender_host_address, which is subsequently rendered in the
+SMTP greeting banner.  Any attacker whose source IP matches hosts_proxy
+can thus leak stack content (useful as an ASLR-defeat primitive) with
+a single unauthenticated connection.
+
+Fix: add minimum-length checks for each address family before the union
+is accessed (12 bytes for TCPv4/0x11, 36 bytes for TCPv6/0x21).
+
+Affects: all Exim releases with SUPPORT_PROXY enabled.
+Reported by: Warisjeet Singh (sin99xx)
+---
+ doc/ChangeLog | 14 ++++++++++++++
+ src/proxy.c       | 12 ++++++++++++
+ 2 files changed, 26 insertions(+)
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -1,11 +1,19 @@
+ This document describes *changes* to previous versions, that might
+ affect Exim's operation, with an unchanged configuration file.  For new
+ options, and new features, see the NewStuff file next to this ChangeLog.
+ 
++HS/01 Security: PROXYv2 parser: reject PROXY frames whose declared payload
++      length is too short for the claimed address family (12 bytes for
++      TCPv4/0x11, 36 bytes for TCPv6/0x21).  Previously a frame with
++      family=0x21 and len=0 caused 16 bytes of uninitialized stack to be
++      formatted as the sender's IPv6 address and disclosed in the SMTP
++      greeting banner.  Affects configurations with SUPPORT_PROXY and
++      `hosts_proxy` set.  Reported by Warisjeet Singh (sin99xx).
++
+ JH/01 GnuTLS: when a TLS close alert was received with CHUNKING still active
+       a one-byte write into a freed buffer was possible.  Fix by reinstating
+       the plaintext input handlers on TLS close while maintaining the bdat
+       handlers.
+ 
+ JH/36 CVE-2026-40687: The spa authenticator used an unitialized buffer, which
+       could result in a leak of data. It also had potential for wrting past the
+--- a/src/proxy.c
++++ b/src/proxy.c
+@@ -293,14 +293,20 @@ if (ret >= 16 && memcmp(&hdr.v2, v2sig,
+ 
+   switch (cmd)
+     {
+     case 0x01: /* PROXY command */
+       switch (hdr.v2.fam)
+         {
+         case 0x11:  /* TCPv4 address type */
++          if (ntohs(hdr.v2.len) < 12)
++            {
++            DEBUG(D_receive) debug_printf("PROXYv2 TCPv4 payload too short (%d)\n",
++                ntohs(hdr.v2.len));
++            goto proxyfail;
++            }
+           iptype = US"IPv4";
+           tmpaddr.sin_addr.s_addr = hdr.v2.addr.ip4.src_addr;
+           inet_ntop(AF_INET, &tmpaddr.sin_addr, CS &tmpip, sizeof(tmpip));
+           if (!string_is_ip_address(US tmpip, NULL))
+             {
+             DEBUG(D_receive) debug_printf("Invalid %s source IP\n", iptype);
+             goto proxyfail;
+@@ -319,14 +325,20 @@ if (ret >= 16 && memcmp(&hdr.v2, v2sig,
+             goto proxyfail;
+             }
+           proxy_external_address = string_copy(US tmpip);
+           tmpport              = ntohs(hdr.v2.addr.ip4.dst_port);
+           proxy_external_port  = tmpport;
+           goto done;
+         case 0x21:  /* TCPv6 address type */
++          if (ntohs(hdr.v2.len) < 36)
++            {
++            DEBUG(D_receive) debug_printf("PROXYv2 TCPv6 payload too short (%d)\n",
++                ntohs(hdr.v2.len));
++            goto proxyfail;
++            }
+           iptype = US"IPv6";
+           memmove(tmpaddr6.sin6_addr.s6_addr, hdr.v2.addr.ip6.src_addr, 16);
+           inet_ntop(AF_INET6, &tmpaddr6.sin6_addr, CS &tmpip6, sizeof(tmpip6));
+           if (!string_is_ip_address(US tmpip6, NULL))
+             {
+             DEBUG(D_receive) debug_printf("Invalid %s source IP\n", iptype);
+             goto proxyfail;

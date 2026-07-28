@@ -1,3 +1,30 @@
+exim4 (4.98.2-1+deb13u4) trixie-security; urgency=high
+
+  * Fix two local privilege escalation issues.
+    EXIM-Security-2026-06-22.1 (GCVE-25-2026-07-45-1)
+    Using command-line arguments intended for transferring queue-name
+    through an Exim execution chain, files outside the spool area can be
+    accessed.  This can be used for a privilege escalation. CVE-2026-66140
+    EXIM-Security-2026-06-22.3 (GCVE-25-2026-07-45-3)
+    A local user having a .forward file can use a string-expansion there.
+    With certain Exim configurations this can be used as a privilege
+    escalation. CVE-2026-66141
+
+ -- Andreas Metzler <ametzler@debian.org>  Thu, 23 Jul 2026 19:04:03 +0200
+
+exim4 (4.98.2-1+deb13u3) trixie-security; urgency=high
+
+  * Cherry-pick fix for EXIM-Security-2026-05-19.1 from 4.99.4.
+    Security: PROXYv2 parser: reject PROXY frames whose declared payload
+    length is too short for the claimed address family (12 bytes for
+    TCPv4/0x11, 36 bytes for TCPv6/0x21).  Previously a frame with
+    family=0x21 and len=0 caused 16 bytes of uninitialized stack to be
+    formatted as the sender's IPv6 address and disclosed in the SMTP
+    greeting banner.  Affects configurations with SUPPORT_PROXY and
+    `hosts_proxy` set.  Reported by Warisjeet Singh (sin99xx).
+
+ -- Andreas Metzler <ametzler@debian.org>  Wed, 27 May 2026 18:58:40 +0200
+
 exim4 (4.98.2-1+deb13u2) trixie-security; urgency=high
 
   * Backport fix for Use-After-Free in GnuTLS BDAT/CHUNKING code path.
