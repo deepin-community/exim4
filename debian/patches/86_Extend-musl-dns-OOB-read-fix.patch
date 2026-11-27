@@ -1,0 +1,30 @@
+From e81c3d3ac33d7ea65a418e479d2ccb91ef9327e6 Mon Sep 17 00:00:00 2001
+From: Jeremy Harris <jgh146exb@wizmail.org>
+Date: Sat, 8 Aug 2026 16:49:50 +0100
+Subject: [PATCH] Extend musl dns OOB read fix
+
+Broken-by: 628bbaca7672
+---
+ src/string.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/string.c b/src/string.c
+index b7500bd5f..e81c2f084 100644
+--- a/src/string.c
++++ b/src/string.c
+@@ -634,11 +634,11 @@ while (*s)
+     uschar c = *s++ - '0';
+     if (isdigit(*s)) c = c * 10 + *s++ - '0';
+     if (isdigit(*s)) c = c * 10 + *s++ - '0';
+     *ss++ = c;
+     }
+-  else if (*++s)
++  else if (*s)
+     *ss++ = *s++;
+ 
+ *ss = 0;
+ return yield;
+ }
+-- 
+2.53.0
+
