@@ -1,0 +1,169 @@
+From fb7ccaa78db25a5816a3c4413d2e6caa44aaf822 Mon Sep 17 00:00:00 2001
+From: Jeremy Harris <jgh146exb@wizmail.org>
+Date: Fri, 11 Sep 2026 12:53:24 +0100
+Subject: [PATCH 4/4] Avoid more "SMTP smuggling" attack types
+
+---
+ doc/ChangeLog |  3 +++
+ src/receive.c     | 25 ++++++++++++-------------
+ 2 files changed, 15 insertions(+), 13 deletions(-)
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -8,10 +8,13 @@ JH/01 Proxy Protocol: fix an OOB read in
+ JH/02 Proxy-protocol: account for incomplete V2 protocol header reception.
+       Previously uninitialised data was then used for the length field of the
+       header, giving possible data leakage to an attacker.  This would require
+       a buggy or compromised proxy.  (GCVE-25-2026-09-55-1).
+ 
++JH/04 Avoid more "SMTP smuggling" attack types.  This extends the fixes for
++      CVE-2023-51766.  (GCVE-25-2026-09-56-1).
++
+ JH/02 Do not expand a local_part gotten from a .forward file, under
+       force_command in a pipe transport. (GCVE-25-2026-07-45-3)
+ 
+ JH/01 Restrict named-queue names.  Previously, files could be corrupted by
+       poor choices of name. (GCVE-25-2026-07-45-1)
+--- a/src/receive.c
++++ b/src/receive.c
+@@ -26,10 +26,11 @@ extern int dcc_ok;
+ 
+ static int     data_fd = -1;
+ static uschar *spool_name = US"";
+ 
+ enum CH_STATE {LF_SEEN, MID_LINE, CR_SEEN};
++static BOOL first_line_ended_crlf;
+ 
+ #ifdef HAVE_LOCAL_SCAN
+ jmp_buf local_scan_env;		/* error-handling context for local_scan */
+ unsigned had_local_scan_crash;
+ unsigned had_local_scan_timeout;
+@@ -833,17 +834,16 @@ followed by SMTP commands is a possible
+ the first (header) line for the message has a proper CRLF then enforce
+ that for the body: convert bare LF to a space.
+ 
+ Arguments:
+   fout		a FILE to which to write the message; NULL if skipping
+-  strict_crlf	require full CRLF sequence as a line ending
+ 
+ Returns:    One of the END_xxx values indicating why it stopped reading
+ */
+ 
+ static int
+-read_message_data_smtp(FILE * fout, BOOL strict_crlf)
++read_message_data_smtp(FILE * fout)
+ {
+ enum { s_linestart, s_normal, s_had_cr, s_had_nl_dot, s_had_dot_cr } ch_state =
+ 	      s_linestart;
+ int linelength = 0, ch;
+ 
+@@ -867,11 +867,11 @@ while ((ch = (receive_getc)(GETC_BUFFER_
+ 	{
+ 	ch_state = s_had_cr;
+ 	continue;			/* Don't write the CR */
+ 	}
+       if (ch == '\n')			/* Bare LF at end of line */
+-	if (strict_crlf)
++	if (first_line_ended_crlf)	/* strict CRLF mode (normal case) */
+ 	  ch = ' ';			/* replace LF with space */
+ 	else
+ 	  {				/* treat as line ending */
+ 	  ch_state = s_linestart;
+ 	  body_linecount++;
+@@ -899,11 +899,11 @@ while ((ch = (receive_getc)(GETC_BUFFER_
+ 	}
+       break;
+ 
+     case s_had_nl_dot:			/* After [CR] LF . */
+       if (ch == '\n')			/* [CR] LF . LF */
+-	if (strict_crlf)
++	if (first_line_ended_crlf)	/* strict CRLF mode (normal case) */
+ 	  ch = ' ';			/* replace LF with space */
+ 	else
+ 	  return END_DOT;
+       else if (ch == '\r')		/* [CR] LF . CR */
+ 	{
+@@ -1145,16 +1145,15 @@ tidily.
+ Argument:    a FILE from which to read the message
+ Returns:     nothing
+ */
+ 
+ void
+-receive_swallow_smtp(void)
++receive_swallow_smtp()
+ {
+ if (message_ended >= END_NOTENDED)
+   message_ended = chunking_state <= CHUNKING_OFFERED
+-     ? read_message_data_smtp(NULL, FALSE)
+-     : read_message_bdat_smtp_wire(NULL);
++     ? read_message_data_smtp(NULL) : read_message_bdat_smtp_wire(NULL);
+ }
+ 
+ 
+ 
+ /*************************************************
+@@ -1717,11 +1716,10 @@ const int id_resolution = BASE_62 == 62
+ 
+ int ptr = 0;
+ 
+ BOOL contains_resent_headers = FALSE;
+ BOOL extracted_ignored = FALSE;
+-BOOL first_line_ended_crlf = TRUE_UNSET;
+ BOOL smtp_yield = TRUE;
+ BOOL yield = FALSE;
+ 
+ BOOL resents_exist = FALSE;
+ uschar *resent_prefix = US"";
+@@ -1909,11 +1907,11 @@ inside them, so that writing them out re
+ 
+ Loop for each character of each header; the next structure for chaining the
+ header is set up already, with ptr the offset of the next character in
+ next->text. */
+ 
+-for (;;)
++for (first_line_ended_crlf = TRUE_UNSET; ;)
+   {
+   int ch = (receive_getc)(GETC_BUFFER_UNLIMITED);
+ 
+   /* If we hit EOF on a SMTP connection, it's an error, since incoming
+   SMTP must have a correct "." terminator. */
+@@ -3188,11 +3186,12 @@ Having created it, send the headers to t
+ if (cutthrough.cctx.sock >= 0 && cutthrough.delivery)
+   {
+   if (received_count > received_headers_max)
+     {
+     cancel_cutthrough_connection(TRUE, US"too many headers");
+-    if (smtp_input) receive_swallow_smtp();  /* Swallow incoming SMTP */
++    if (smtp_input)
++      receive_swallow_smtp();
+     log_write(0, LOG_MAIN|LOG_REJECT, "rejected from <%s>%s%s%s%s: "
+       "Too many \"Received\" headers",
+       sender_address,
+       sender_fullhost ? "H=" : "", sender_fullhost ? sender_fullhost : US"",
+       sender_ident ? "U=" : "", sender_ident ? sender_ident : US"");
+@@ -3273,11 +3272,11 @@ message id or "next" line. */
+ if (!ferror(spool_data_file) && !(receive_feof)() && message_ended != END_DOT)
+   {
+   if (smtp_input)
+     {
+     message_ended = chunking_state <= CHUNKING_OFFERED
+-      ? read_message_data_smtp(spool_data_file, first_line_ended_crlf)
++      ? read_message_data_smtp(spool_data_file)
+       : spool_wireformat
+       ? read_message_bdat_smtp_wire(spool_data_file)
+       : read_message_bdat_smtp(spool_data_file);
+     receive_linecount++;                /* The terminating "." line */
+     }
+@@ -3306,11 +3305,11 @@ if (!ferror(spool_data_file) && !(receiv
+     message; we want to see the ident value even for non-remote messages. */
+ 
+     case END_SIZE:
+       Uunlink(spool_name);                /* Lose the data file when closed */
+       cancel_cutthrough_connection(TRUE, US"mail too big");
+-      if (smtp_input) receive_swallow_smtp();  /* Swallow incoming SMTP */
++      if (smtp_input) receive_swallow_smtp();
+ 
+       log_write(L_size_reject, LOG_MAIN|LOG_REJECT, "rejected from <%s>%s%s%s%s: "
+ 	"message too big: read=%d max=%d",
+ 	sender_address,
+ 	sender_fullhost ? " H=" : "",

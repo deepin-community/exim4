@@ -1,0 +1,87 @@
+From eac152d113babed951f3cc52f548c4b4ba974ae3 Mon Sep 17 00:00:00 2001
+From: Jeremy Harris <jgh146exb@wizmail.org>
+Date: Thu, 19 Nov 2026 11:14:12 +0000
+Subject: [PATCH] Fix iconv failure handling
+
+---
+ doc/ChangeLog |  7 +++++++
+ src/expand.c      | 21 ++++++++++++++-------
+ 2 files changed, 21 insertions(+), 7 deletions(-)
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -1,9 +1,18 @@
+ This document describes *changes* to previous versions, that might
+ affect Exim's operation, with an unchanged configuration file.  For new
+ options, and new features, see the NewStuff file next to this ChangeLog.
+ 
++Exim version 4.100.2
++--------------------
++
++This is a security release.
++
++JH/01 Fix an OOB write resulting from header decode.  (GCVE-25-2026-11-82-1).
++
++
++
+ JH/01 Proxy Protocol: fix an OOB read in V1 protocol header parsing
+       (GCVE-25-2026-09-50-1).
+ 
+ JH/02 Proxy-protocol: account for incomplete V2 protocol header reception.
+       Previously uninitialised data was then used for the length field of the
+--- a/src/expand.c
++++ b/src/expand.c
+@@ -1672,11 +1672,11 @@ Arguments:
+ Returns:        NULL if the header does not exist, else a pointer to a new
+                 store block
+ */
+ 
+ static uschar *
+-find_header(uschar * name, int * newsize, unsigned flags, const uschar * charset)
++find_header(uschar * name, int * newsizep, unsigned flags, const uschar * charset)
+ {
+ BOOL found = !name;
+ int len = name ? Ustrlen(name) : 0;
+ BOOL comma = FALSE;
+ gstring * g = NULL;
+@@ -1740,27 +1740,34 @@ for (header_line * h = header_list; h; h
+ if (!found) return NULL;	/* No header found */
+ if (!g) return US"";
+ 
+ /* That's all we do for raw header expansion. */
+ 
+-*newsize = g->size;
++*newsizep = g->size;
+ rawhdr = string_from_gstring(g);
+ if (flags & FH_WANT_RAW)
+   return rawhdr;
+ 
+ /* Otherwise do RFC 2047 decoding, translating the charset if requested.
+ The rfc2047_decode2() function can return an error with decoded data if the
+ charset translation fails. If decoding fails, it returns NULL. */
+ 
+ else
+   {
++  int newsize;
+   uschar * error, * decoded = rfc2047_decode2(rawhdr,
+-    check_rfc2047_length, charset, '?', NULL, newsize, &error);
+-  if (error)
+-    DEBUG(D_any) debug_printf("*** error in RFC 2047 decoding: %s\n"
+-      "    input was: %s\n", error, rawhdr);
+-  return decoded ? decoded : rawhdr;
++    check_rfc2047_length, charset, '?', NULL, &newsize, &error);
++  if (decoded && !error)
++    {
++    *newsizep = newsize;
++    return decoded;
++    }
++
++  if (error) DEBUG(D_any)
++    debug_printf("*** error in RFC 2047 decoding: %s\n    input was: %s\n",
++		error, rawhdr);
++  return rawhdr;
+   }
+ }
+ 
+ 
+ 

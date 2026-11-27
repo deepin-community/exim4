@@ -1,0 +1,286 @@
+From a2ceac7c7e1183f7e35792480cb4a06a71b915ba Mon Sep 17 00:00:00 2001
+From: Jeremy Harris <jgh146exb@wizmail.org>
+Date: Tue, 23 Jun 2026 12:57:39 +0100
+Subject: [PATCH 1/2] Restrict names permitted for named-queues.
+
+---
+ doc/ChangeLog         |  9 +++++++++
+ exim_monitor/em_globals.c |  2 +-
+ src/child.c               |  4 ++--
+ src/exim.c                | 29 +++++++++++++++++++++++++----
+ src/exim_dbmbuild.c       |  2 +-
+ src/exim_dbutil.c         |  2 +-
+ src/functions.h           |  2 +-
+ src/globals.c             |  2 +-
+ src/globals.h             |  2 +-
+ src/spool_out.c           |  2 +-
+ src/structs.h             |  2 +-
+ 11 files changed, 44 insertions(+), 14 deletions(-)
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -1,9 +1,12 @@
+ This document describes *changes* to previous versions, that might
+ affect Exim's operation, with an unchanged configuration file.  For new
+ options, and new features, see the NewStuff file next to this ChangeLog.
+ 
++JH/01 Restrict named-queue names.  Previously, files could be corrupted by
++      poor choices of name. (GCVE-25-2026-07-45-1)
++
+ HS/01 Security: PROXYv2 parser: reject PROXY frames whose declared payload
+       length is too short for the claimed address family (12 bytes for
+       TCPv4/0x11, 36 bytes for TCPv6/0x21).  Previously a frame with
+       family=0x21 and len=0 caused 16 bytes of uninitialized stack to be
+       formatted as the sender's IPv6 address and disclosed in the SMTP
+--- a/exim_monitor/em_globals.c
++++ b/exim_monitor/em_globals.c
+@@ -191,11 +191,11 @@ gid_t   originator_gid;
+ uschar *originator_login;
+ uid_t   originator_uid;
+ 
+ uschar *primary_hostname       = NULL;
+ 
+-uschar *queue_name             = US"";
++const uschar *queue_name       = US"";
+ 
+ int     received_count         = 0;
+ uschar *received_protocol      = NULL;
+ struct timeval received_time   = { 0, 0 };
+ struct timeval received_time_complete = { 0, 0 };
+--- a/src/child.c
++++ b/src/child.c
+@@ -66,18 +66,18 @@ Arguments:
+ 
+ Returns:         if CEE_RETURN_ARGV is given, returns a pointer to argv;
+                  otherwise, does not return
+ */
+ 
+-uschar **
++const uschar **
+ child_exec_exim(int exec_type, BOOL kill_v, int *pcount, BOOL minimal,
+   int acount, ...)
+ {
+ int first_special = -1;
+ int n = 0;
+ int extra = pcount ? *pcount : 0;
+-uschar **argv;
++const uschar ** argv;
+ 
+ argv = store_get((extra + acount + MAX_CLMACROS + 24) * sizeof(char *), GET_UNTAINTED);
+ 
+ /* In all case, the list starts out with the path, any macros, and a changed
+ config file. */
+--- a/src/exim.c
++++ b/src/exim.c
+@@ -1747,10 +1747,23 @@ qrunners->next_tick = time(NULL);		/* ru
+ qrunners->run_max = 1;
+ return qrunners;
+ }
+ 
+ 
++#define MAX_QNAME 32
++static const uschar *
++validate_queue_name(const uschar * offered_qn)
++{
++const uschar * s = US strchrnul(CS offered_qn, '/');
++if (*s || s - offered_qn > MAX_QNAME
++   || Ustrcmp(offered_qn, "input") == 0 || Ustrcmp(offered_qn, "db") == 0
++   || Ustrcmp(offered_qn, "msglog") == 0 || Ustrcmp(offered_qn, "scan") == 0
++   )
++  log_write(0, LOG_PANIC_DIE, "Bad qname arg: \"%s\"", offered_qn);
++return offered_qn;
++}
++
+ /*************************************************
+ *          Entry point and high-level code       *
+ *************************************************/
+ 
+ /* Entry point for the Exim mailer. Analyse the arguments and arrange to take
+@@ -1790,10 +1803,11 @@ int  perl_start_option = 0;
+ int  recipients_arg = argc;
+ int  sender_address_domain = 0;
+ int  test_retry_arg = -1;
+ int  test_rewrite_arg = -1;
+ gid_t original_egid;
++BOOL admin_only_arg = FALSE;
+ BOOL arg_queue_only = FALSE;
+ BOOL bi_option = FALSE;
+ BOOL checking = FALSE;
+ BOOL count_queue = FALSE;
+ BOOL expansion_test = FALSE;
+@@ -2943,10 +2957,12 @@ on the second character (the one after '
+     if (Ustrcmp(argrest, "C") == 0)
+       {
+       union sockaddr_46 interface_sock;
+       EXIM_SOCKLEN_T size = sizeof(interface_sock);
+ 
++      admin_only_arg = TRUE;
++
+       if (argc != i + 6)
+         exim_fail("exim: too many or too few arguments after -MC\n");
+ 
+       if (msg_action_arg >= 0)
+         exim_fail("exim: incompatible arguments\n");
+@@ -2986,10 +3002,11 @@ on the second character (the one after '
+       break;
+       }
+ 
+     else if (*argrest == 'C' && argrest[1] && !argrest[2])
+       {
++      admin_only_arg = TRUE;		/* All -MCx are restricted */
+       switch(argrest[1])
+ 	{
+     /* -MCA: set the smtp_authenticated flag; this is useful only when it
+     precedes -MC (see above). The flag indicates that the host to which
+     Exim is connected has accepted an AUTH sequence. */
+@@ -3012,13 +3029,14 @@ on the second character (the one after '
+ 
+     /* -MCG: set the queue name, to a non-default value. Arguably, anything
+        from the commandline should be tainted - but we will need an untainted
+        value for the spoolfile when doing a -odi delivery process. */
+ 
+-	case 'G': if (++i < argc) queue_name = string_copy_taint(
++	case 'G': if (++i < argc)
++		    queue_name = validate_queue_name(string_copy_taint(
+ 		      exim_str_fail_toolong(argv[i], EXIM_DRIVERNAME_MAX, "-MCG"),
+-		      GET_UNTAINTED);
++		      GET_UNTAINTED));
+ 		  else badarg = TRUE;
+ 		  break;
+ 
+     /* -MCK: the peer offered CHUNKING.  Must precede -MC */
+ 
+@@ -3619,11 +3637,11 @@ on the second character (the one after '
+       if (*argrest == 'G')
+ 	{
+ 	int i;
+ 	for (argrest++, i = 0; argrest[i] && argrest[i] != '/'; ) i++;
+ 	exim_len_fail_toolong(i, EXIM_DRIVERNAME_MAX, "-q*G<name>");
+-	queue_name = string_copyn(argrest, i);
++	queue_name = validate_queue_name(string_copyn(argrest, i));
+ 	argrest += i;
+ 	if (*argrest == '/') argrest++;
+ 	}
+ 
+       /* -q[f][f][l][G<name>]: Run the queue, optionally forced, optionally local
+@@ -4203,11 +4221,14 @@ else
+   }
+ 
+ /* At this point, we know if the user is privileged and some command-line
+ options become possibly impermissible, depending upon the configuration file. */
+ 
+-if (checking && commandline_checks_require_admin && !f.admin_user)
++if (  !f.admin_user
++   && (  checking && commandline_checks_require_admin
++      || admin_only_arg
++   )  )
+   exim_fail("exim: those command-line flags are set to require admin\n");
+ 
+ /* Handle the decoding of logging options. */
+ 
+ decode_bits(log_selector, log_selector_size, log_notall,
+--- a/src/exim_dbmbuild.c
++++ b/src/exim_dbmbuild.c
+@@ -70,11 +70,11 @@ log_write(unsigned int selector, int fla
+ { }
+ 
+ 
+ struct global_flags	f;
+ unsigned int		log_selector[1];
+-uschar *		queue_name;
++const uschar *		queue_name;
+ BOOL			split_spool_directory;
+ 
+ 
+ /******************************************************************************/
+ 
+--- a/src/exim_dbutil.c
++++ b/src/exim_dbutil.c
+@@ -75,11 +75,11 @@ string_format_trc(uschar * buf, int len,
+   const char * fmt, ...)
+ { return FALSE; }
+ 
+ struct global_flags	f;
+ unsigned int		log_selector[1];
+-uschar *		queue_name;
++const uschar *		queue_name;
+ BOOL			split_spool_directory;
+ 
+ 
+ /******************************************************************************/
+ 
+--- a/src/functions.h
++++ b/src/functions.h
+@@ -170,11 +170,11 @@ extern void    bits_set(unsigned int *,
+ 
+ extern void    cancel_cutthrough_connection(BOOL, const uschar *);
+ extern gstring *cat_file(FILE *, gstring *, uschar *);
+ extern gstring *cat_file_tls(void *, gstring *, uschar *);
+ extern int     check_host(void *, const uschar *, const uschar **, uschar **);
+-extern uschar **child_exec_exim(int, BOOL, int *, BOOL, int, ...);
++extern const uschar **child_exec_exim(int, BOOL, int *, BOOL, int, ...);
+ extern pid_t   child_open_exim_function(int *, const uschar *);
+ extern pid_t   child_open_exim2_function(int *, uschar *, uschar *,
+ 		 const uschar *);
+ extern pid_t   child_open_function(uschar **, uschar **, int,
+ 		 int *, int *, BOOL, const uschar *);
+--- a/src/globals.c
++++ b/src/globals.c
+@@ -1261,11 +1261,11 @@ qrunner *qrunners	       = NULL;
+ 
+ const uschar *qualify_domain_recipient = NULL;
+ uschar *qualify_domain_sender  = NULL;
+ uschar *queue_domains          = NULL;
+ int     queue_interval         = -1;
+-uschar *queue_name             = US"";
++const uschar *queue_name       = US"";
+ uschar *queue_name_dest        = NULL;
+ uschar *queue_only_file        = NULL;
+ int     queue_only_load        = -1;
+ uschar *queue_run_max          = US"5";
+ pid_t   queue_run_pid          = (pid_t)0;
+--- a/src/globals.h
++++ b/src/globals.h
+@@ -856,11 +856,11 @@ extern BOOL    queue_fast_ramp;        /
+ extern BOOL    queue_list_requires_admin; /* TRUE if -bp requires admin */
+                                        /*   immediate children */
+ extern pid_t   queue_run_pid;          /* PID of the queue running process or 0 */
+ extern int     queue_run_pipe;         /* Pipe for synchronizing */
+ extern int     queue_interval;         /* Queue running interval */
+-extern uschar *queue_name;             /* Name of queue, if nondefault spooling */
++extern const uschar *queue_name;       /* Name of queue, if nondefault spooling */
+ extern uschar *queue_name_dest;	       /* Destination queue, for moving messages */
+ extern BOOL    queue_only;             /* TRUE to disable immediate delivery */
+ extern int     queue_only_load;        /* Max load before auto-queue */
+ extern BOOL    queue_only_load_latch;  /* Latch queue_only_load TRUE */
+ extern uschar *queue_only_file;        /* Queue if file exists/not-exists */
+--- a/src/spool_out.c
++++ b/src/spool_out.c
+@@ -529,11 +529,11 @@ Returns:      TRUE if all is well
+ 
+ BOOL
+ spool_move_message(const uschar * id, const uschar * subdir,
+   const uschar * from, const uschar * to)
+ {
+-uschar * dest_qname = queue_name_dest ? queue_name_dest : queue_name;
++const uschar * dest_qname = queue_name_dest ? queue_name_dest : queue_name;
+ 
+ /* Since we are working within the spool, de-taint the dest queue name */
+ dest_qname = string_copy_taint(dest_qname, GET_UNTAINTED);
+ 
+ /* Create any output directories that do not exist. */
+--- a/src/structs.h
++++ b/src/structs.h
+@@ -964,11 +964,11 @@ struct ob_dkim {
+ 
+ /* per-queue-runner info */
+ typedef struct qrunner {
+   struct qrunner * next;	/* list sorted by next tick */
+ 
+-  uschar *	name;		/* NULL for the default queue */
++  const uschar * name;		/* NULL for the default queue */
+   unsigned	interval;	/* tick rate, seconds. Zero for a one-time run */
+   time_t	next_tick;	/* next run should, or should have, start(ed) */
+   unsigned	run_max;	/* concurrent queue runner limit */
+   unsigned	run_count;	/* current runners */
+ 

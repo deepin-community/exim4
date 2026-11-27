@@ -19,4 +19,12 @@
 81-03-Expansions-harden-for-malformed-UTF-8.patch
 81-04-SPA-authenticator-harden-buffer-usage.patch
 82-TLS-on-rxd-close-with-CHUNKING-active-clean-the-inpu.patch
+83-Security-fix-PROXYv2-uninitialised-stack-disclosure-.patch
+84_01-Restrict-names-permitted-for-named-queues.patch
+84_02-Do-not-expand-local_part-in-a-pipe-transport-under-f.patch
+85_0001-Proxy-protocol-Fix-OOB-read.patch
+85_0002-Proxy-protocol-account-for-short-received-V2-header.patch
+85_0004-Avoid-more-SMTP-smuggling-attack-types.patch
+86_Extend-musl-dns-OOB-read-fix.patch
+86_Fix-iconv-failure-handling.patch
 90_localscan_dlopen.dpatch

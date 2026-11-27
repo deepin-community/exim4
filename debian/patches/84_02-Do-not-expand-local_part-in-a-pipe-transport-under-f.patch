@@ -1,0 +1,104 @@
+From 950c1361764fe30e90b39e3594f4b93149c686b2 Mon Sep 17 00:00:00 2001
+From: Jeremy Harris <jgh146exb@wizmail.org>
+Date: Tue, 23 Jun 2026 15:31:11 +0100
+Subject: [PATCH 2/2] Do not expand local_part in a pipe transport under
+ force_command.
+
+---
+ doc/ChangeLog |  3 +++
+ src/rda.c         |  3 +++
+ src/transport.c   | 36 +++++++++++++++++++++++-------------
+ 3 files changed, 29 insertions(+), 13 deletions(-)
+
+--- a/doc/ChangeLog
++++ b/doc/ChangeLog
+@@ -1,9 +1,12 @@
+ This document describes *changes* to previous versions, that might
+ affect Exim's operation, with an unchanged configuration file.  For new
+ options, and new features, see the NewStuff file next to this ChangeLog.
+ 
++JH/02 Do not expand a local_part gotten from a .forward file, under
++      force_command in a pipe transport. (GCVE-25-2026-07-45-3)
++
+ JH/01 Restrict named-queue names.  Previously, files could be corrupted by
+       poor choices of name. (GCVE-25-2026-07-45-1)
+ 
+ HS/01 Security: PROXYv2 parser: reject PROXY frames whose declared payload
+       length is too short for the claimed address family (12 bytes for
+--- a/src/rda.c
++++ b/src/rda.c
+@@ -282,10 +282,13 @@ if (statbuf.st_size > MAX_FILTER_SIZE)
+   *error = string_sprintf("%s is too big (max %d)", filename, MAX_FILTER_SIZE);
+   goto ERROR_RETURN;
+   }
+ 
+ /* Read the file in one go in order to minimize the time we have it open. */
++/*XXX it is far from obvious that not having this data tainted is wise.
++A local-user can supply expansions here. Unfortunately, testcase 0115 (at least)
++fails when taint is applied. */
+ 
+ filebuf = store_get(statbuf.st_size + 1, filename);
+ 
+ if (fread(filebuf, 1, statbuf.st_size, fwd) != statbuf.st_size)
+   {
+--- a/src/transport.c
++++ b/src/transport.c
+@@ -2286,36 +2286,46 @@ if (flags & TSUC_EXPAND_ARGS)
+       i--;
+       }
+ 
+       /* Handle special case of $address_pipe when af_force_command is set */
+ 
+-    else if (addr && testflag(addr,af_force_command) &&
+-        (Ustrcmp(argv[i], "$address_pipe") == 0 ||
+-         Ustrcmp(argv[i], "${address_pipe}") == 0))
++    else if (addr && testflag(addr,af_force_command)
++	    && (  Ustrcmp(argv[i], "$address_pipe") == 0
++	       || Ustrcmp(argv[i], "${address_pipe}") == 0
++	    )  )
+       {
+-      int address_pipe_argcount = 0;
+-      int address_pipe_max_args;
+-      uschar **address_pipe_argv;
++      int address_pipe_argcount = 0, address_pipe_max_args;
++      uschar ** address_pipe_argv;
+ 
+       /* We can never have more then the argv we will be loading into */
+       address_pipe_max_args = max_args - argcount + 1;
+ 
+       DEBUG(D_transport)
+         debug_printf("address_pipe_max_args=%d\n", address_pipe_max_args);
+ 
+       /* We allocate an additional for (uschar *)0 */
+       address_pipe_argv = store_get((address_pipe_max_args+1)*sizeof(uschar *), GET_UNTAINTED);
+ 
+-      /* +1 because addr->local_part[0] == '|' since af_force_command is set */
+-      s = expand_cstring(addr->local_part + 1);
++      /* +1 because addr->local_part[0] == '|' since af_force_command is set.
+ 
+-      if (!s || !*s)
++      We used to expand local_part here, under force_command.  This was done
++      since the intro of that feature.  However, it potentially was supplied
++      by a (local) user, and expansion could cause undesired file alterations
++      if this transport is configured to run as some other user. We could
++      possibly taint everything from that .forward (but at present that breaks
++      in the testsuite [0115] ).  And it would break user-owned Exim filters
++      (which can contain general expansions, ouch).  Possibly we could permit
++      expansion if the .forward file had a trusted owner - but implementation
++      would be convoluted, needing to transfer that knowlege from the code
++      reading the file to here.  So not right now. */
++
++      s = addr->local_part + 1;
++      if (!*s)
+         {
+         addr->transport_return = FAIL;
+-        addr->message = string_sprintf("Expansion of \"%s\" "
+-           "from command \"%s\" in %s failed: %s",
+-           (addr->local_part + 1), cmd, etext, expand_string_message);
++        addr->message = string_sprintf("bad local_part from command \"%s\" in %s",
++           cmd, etext);
+         return FALSE;
+         }
+ 
+       Uskip_whitespace(&s);			/* strip leading space */
+ 
